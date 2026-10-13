@@ -11,19 +11,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   const [aiProvider, setAiProvider] = useState<string>('template');
   const [apiKey, setApiKey] = useState<string>('');
+  const [adzunaAppId, setAdzunaAppId] = useState<string>('');
+  const [adzunaAppKey, setAdzunaAppKey] = useState<string>('');
   const [savedBanner, setSavedBanner] = useState(false);
 
   useEffect(() => {
     const savedProvider = localStorage.getItem('job_pulse_ai_provider') || 'template';
     const savedKey = localStorage.getItem('job_pulse_api_key') || '';
+    const savedAdzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || '';
+    const savedAdzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || '';
     setAiProvider(savedProvider);
     setApiKey(savedKey);
+    setAdzunaAppId(savedAdzunaId);
+    setAdzunaAppKey(savedAdzunaKey);
   }, []);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('job_pulse_ai_provider', aiProvider);
     localStorage.setItem('job_pulse_api_key', apiKey);
+    localStorage.setItem('job_pulse_adzuna_app_id', adzunaAppId);
+    localStorage.setItem('job_pulse_adzuna_app_key', adzunaAppKey);
     setSavedBanner(true);
     setTimeout(() => {
       setSavedBanner(false);
@@ -103,6 +111,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               </p>
             </div>
           )}
+
+          {/* Adzuna API for Indeed / ZipRecruiter aggregator */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                Adzuna API (Indeed & ZipRecruiter Aggregator)
+              </label>
+              <a
+                href="https://developer.adzuna.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-emerald-400 hover:underline"
+              >
+                Get Free API Key →
+              </a>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Enables live searches across millions of jobs indexed from Indeed, ZipRecruiter, and company career sites.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-0.5">App ID:</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 52c9..."
+                  value={adzunaAppId}
+                  onChange={(e) => setAdzunaAppId(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-0.5">App Key:</label>
+                <input
+                  type="password"
+                  placeholder="e.g. 841b..."
+                  value={adzunaAppKey}
+                  onChange={(e) => setAdzunaAppKey(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+            </div>
+          </div>
 
           {/* Local Security Badge */}
           <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs text-slate-400 flex items-center space-x-2.5">

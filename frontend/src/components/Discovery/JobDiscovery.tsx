@@ -9,7 +9,8 @@ import {
   Plus, 
   Check, 
   RefreshCw,
-  Compass
+  Compass,
+  Filter
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -20,17 +21,31 @@ interface JobDiscoveryProps {
 
 const QUICK_TAGS = ['Python', 'React', 'Full Stack', 'Backend', 'DevOps', 'TypeScript', 'Remote'];
 
+const SOURCE_FILTERS = [
+  { id: 'all', label: 'All Sources' },
+  { id: 'weworkremotely', label: 'We Work Remotely' },
+  { id: 'himalayas', label: 'Himalayas' },
+  { id: 'hackernews', label: 'HN "Who is Hiring?"' },
+  { id: 'adzuna', label: 'Adzuna (Indeed & ZipRecruiter)' },
+  { id: 'remoteok', label: 'RemoteOK' },
+  { id: 'arbeitnow', label: 'Arbeitnow' },
+  { id: 'jobicy', label: 'Jobicy' },
+];
+
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   const [query, setQuery] = useState('developer');
+  const [selectedSource, setSelectedSource] = useState('all');
   const [loading, setLoading] = useState(false);
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
-  const fetchJobs = async (searchQuery: string) => {
+  const fetchJobs = async (searchQuery: string, source: string = selectedSource) => {
     setLoading(true);
     try {
-      const results = await api.searchDiscoveredJobs(searchQuery);
+      const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
+      const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
+      const results = await api.searchDiscoveredJobs(searchQuery, source, adzunaId, adzunaKey);
       setJobs(results);
     } catch (err) {
       console.error('Failed to search jobs:', err);
@@ -40,12 +55,17 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   };
 
   useEffect(() => {
-    fetchJobs('developer');
+    fetchJobs('developer', 'all');
   }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) fetchJobs(query.trim());
+    if (query.trim()) fetchJobs(query.trim(), selectedSource);
+  };
+
+  const handleSourceSelect = (sourceId: string) => {
+    setSelectedSource(sourceId);
+    fetchJobs(query.trim(), sourceId);
   };
 
   const handleAddJob = async (job: DiscoveredJob) => {
@@ -73,6 +93,27 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     }
   };
 
+  const getSourceBadge = (source: string) => {
+    switch (source.toLowerCase()) {
+      case 'weworkremotely':
+        return 'bg-red-950/60 text-red-300 border-red-800/50';
+      case 'himalayas':
+        return 'bg-indigo-950/60 text-indigo-300 border-indigo-800/50';
+      case 'hackernews':
+        return 'bg-orange-950/60 text-orange-300 border-orange-800/50';
+      case 'adzuna':
+        return 'bg-emerald-950/60 text-emerald-300 border-emerald-800/50';
+      case 'remoteok':
+        return 'bg-purple-950/60 text-purple-300 border-purple-800/50';
+      case 'arbeitnow':
+        return 'bg-sky-950/60 text-sky-300 border-sky-800/50';
+      case 'jobicy':
+        return 'bg-teal-950/60 text-teal-300 border-teal-800/50';
+      default:
+        return 'bg-slate-900/80 text-slate-400 border-slate-700/50';
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Header Banner */}
@@ -80,13 +121,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
         <div className="max-w-3xl space-y-3">
           <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-xs tracking-wide uppercase">
             <Compass className="w-4 h-4" />
-            <span>Live Remote Job Aggregator</span>
+            <span>Multi-Board Live Job Aggregator</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             Discover Active Tech Opportunities
           </h1>
           <p className="text-slate-400 text-sm">
-            Searches directly across public remote and software engineering boards (RemoteOK, Arbeitnow, Jobicy). Add any listing to your Kanban pipeline in one click.
+            Searches directly across <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News "Who is Hiring?"</span>, <span className="text-slate-200 font-medium">RemoteOK</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, and <span className="text-slate-200 font-medium">Adzuna (Indeed/ZipRecruiter)</span>.
           </p>
 
           {/* Search Box */}
@@ -111,6 +152,29 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             </button>
           </form>
 
+          {/* Source Selectors */}
+          <div className="pt-2">
+            <div className="flex items-center space-x-2 text-xs text-slate-400 mb-2">
+              <Filter className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="font-semibold text-slate-300">Source Platform:</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {SOURCE_FILTERS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => handleSourceSelect(s.id)}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium border transition ${
+                    selectedSource === s.id
+                      ? 'bg-emerald-600 border-emerald-500 text-white shadow-xs font-semibold'
+                      : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Quick Filter Chips */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
             <span className="text-xs text-slate-500 mr-1">Trending:</span>
@@ -119,9 +183,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                 key={tag}
                 onClick={() => {
                   setQuery(tag);
-                  fetchJobs(tag);
+                  fetchJobs(tag, selectedSource);
                 }}
-                className="px-2.5 py-1 rounded-lg text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+                className="px-2.5 py-0.5 rounded-lg text-xs bg-slate-800/70 hover:bg-slate-700 text-slate-300 border border-slate-700/60 transition"
               >
                 {tag}
               </button>
@@ -134,14 +198,16 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       <div className="space-y-4">
         <div className="flex items-center justify-between text-xs text-slate-400 px-1">
           <span>Found {jobs.length} listings</span>
-          {loading && <span className="text-emerald-400 animate-pulse">Fetching fresh jobs...</span>}
+          {loading && <span className="text-emerald-400 animate-pulse">Fetching fresh jobs across boards...</span>}
         </div>
 
         {jobs.length === 0 && !loading ? (
           <div className="text-center py-16 bg-slate-900/40 rounded-2xl border border-slate-800">
             <Compass className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <p className="text-slate-300 font-medium text-sm">No jobs found matching "{query}"</p>
-            <p className="text-slate-500 text-xs mt-1">Try another keyword like "Python", "Frontend", or "Engineer".</p>
+            <p className="text-slate-500 text-xs mt-1">
+              Try another keyword like "Python", "Full Stack", or switch the Source filter to "All Sources".
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -161,7 +227,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                         <Building2 className="w-3.5 h-3.5 text-slate-400" />
                         <span className="truncate max-w-[160px]">{job.company}</span>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900/80 text-slate-400 border border-slate-700/50 uppercase font-mono">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase ${getSourceBadge(job.source)}`}>
                         {job.source}
                       </span>
                     </div>

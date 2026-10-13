@@ -54,9 +54,18 @@ export const api = {
   },
 
   // Discovery & URL import
-  async searchDiscoveredJobs(query?: string): Promise<DiscoveredJob[]> {
+  async searchDiscoveredJobs(
+    query?: string,
+    source?: string,
+    adzunaAppId?: string,
+    adzunaAppKey?: string
+  ): Promise<DiscoveredJob[]> {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
+    if (source && source !== 'all') params.append('source', source);
+    if (adzunaAppId) params.append('adzuna_app_id', adzunaAppId);
+    if (adzunaAppKey) params.append('adzuna_app_key', adzunaAppKey);
+
     const res = await fetch(`${API_BASE}/discovery/search?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to search jobs');
     return res.json();

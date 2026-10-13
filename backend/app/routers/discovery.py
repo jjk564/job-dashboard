@@ -7,9 +7,19 @@ from ..services.job_extractor import extract_job_from_url
 router = APIRouter(prefix="/api/discovery", tags=["Discovery"])
 
 @router.get("/search")
-async def search_jobs(query: Optional[str] = Query(None)) -> List[Dict[str, Any]]:
-    """Search active listings across public job boards (RemoteOK, Arbeitnow, Jobicy)."""
-    jobs = await search_aggregated_jobs(query)
+async def search_jobs(
+    query: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    adzuna_app_id: Optional[str] = Query(None),
+    adzuna_app_key: Optional[str] = Query(None),
+) -> List[Dict[str, Any]]:
+    """Search active listings across public job boards (WWR, Himalayas, HN, RemoteOK, Arbeitnow, Jobicy, Adzuna)."""
+    jobs = await search_aggregated_jobs(
+        query=query,
+        source=source,
+        adzuna_app_id=adzuna_app_id,
+        adzuna_app_key=adzuna_app_key,
+    )
     return jobs
 
 @router.post("/import-url", response_model=URLImportResponse)

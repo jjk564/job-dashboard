@@ -67,3 +67,11 @@ def test_generate_offline_template():
     assert "Acme Cloud" in letter
     assert "Justin Kilpatrick" in letter
     assert "Lead Backend Engineer" in letter
+
+@pytest.mark.asyncio
+async def test_search_aggregated_jobs_sources():
+    from app.services.job_fetcher import search_aggregated_jobs
+    jobs_wwr = await search_aggregated_jobs(query="engineer", source="weworkremotely")
+    assert isinstance(jobs_wwr, list)
+    if jobs_wwr:
+        assert jobs_wwr[0]["source"] == "weworkremotely"

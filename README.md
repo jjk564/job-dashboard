@@ -12,8 +12,9 @@ JobPulse is an autonomous, local-first dashboard designed to accelerate and auto
    - Filter by workplace type (Remote, Hybrid, Onsite), priority, and calculated ATS fit score.
    - Quick stage advancement buttons and deep inspection drawers.
 
-2. **Live Remote Job Aggregator & Explorer**
-   - Searches free public developer job boards (RemoteOK, Arbeitnow, Jobicy).
+2. **Live Multi-Board Job Aggregator & Explorer**
+   - Searches across top developer & tech sources: **We Work Remotely**, **Himalayas**, **Hacker News "Who is Hiring?"**, **Adzuna (Indeed & ZipRecruiter aggregator)**, **RemoteOK**, **Arbeitnow**, and **Jobicy**.
+   - Filter by specific platform or search across all boards simultaneously.
    - One-click import directly into your Kanban pipeline with automated ATS match scoring.
 
 3. **Smart Job URL Scraper**
