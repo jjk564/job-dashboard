@@ -23,13 +23,14 @@ const QUICK_TAGS = ['Python', 'React', 'Full Stack', 'Backend', 'DevOps', 'TypeS
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
+  { id: 'indeed', label: 'Indeed' },
+  { id: 'arbeitnow', label: 'Arbeitnow' },
+  { id: 'jobicy', label: 'Jobicy' },
   { id: 'weworkremotely', label: 'We Work Remotely' },
   { id: 'himalayas', label: 'Himalayas' },
   { id: 'hackernews', label: 'HN "Who is Hiring?"' },
-  { id: 'adzuna', label: 'Adzuna (Indeed & ZipRecruiter)' },
   { id: 'remoteok', label: 'RemoteOK' },
-  { id: 'arbeitnow', label: 'Arbeitnow' },
-  { id: 'jobicy', label: 'Jobicy' },
+  { id: 'adzuna', label: 'Adzuna API' },
 ];
 
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
@@ -100,6 +101,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
   const getSourceBadge = (source: string) => {
     switch (source.toLowerCase()) {
+      case 'indeed':
+        return 'bg-blue-950/60 text-blue-300 border-blue-800/50';
       case 'weworkremotely':
         return 'bg-red-950/60 text-red-300 border-red-800/50';
       case 'himalayas':
@@ -132,8 +135,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             Discover Active Tech Opportunities
           </h1>
           <p className="text-slate-400 text-sm">
-            Searches directly across <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News "Who is Hiring?"</span>, <span className="text-slate-200 font-medium">RemoteOK</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, and <span className="text-slate-200 font-medium">Adzuna (Indeed/ZipRecruiter)</span>.
+            Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
           </p>
+
 
           {/* Search Box */}
           <form onSubmit={handleSearchSubmit} className="flex gap-2 pt-2">

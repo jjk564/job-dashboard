@@ -70,8 +70,23 @@ def test_generate_offline_template():
 
 @pytest.mark.asyncio
 async def test_search_aggregated_jobs_sources():
-    from app.services.job_fetcher import search_aggregated_jobs
+    from app.services.job_fetcher import search_aggregated_jobs, matches_query, is_us_eligible
+    
+    # Test keyword & synonym matching
+    assert matches_query("developer", "Senior Software Engineer", "Acme", [], "Python FastAPI")
+    assert matches_query("frontend", "React UI Developer", "Acme", [], "Building sleek web apps")
+    assert matches_query("devops", "Site Reliability Engineer", "Acme", [], "Kubernetes AWS")
+    assert not matches_query("accounting", "Software Engineer", "Acme", [], "Python code")
+
+    # Test US eligibility filter
+    assert is_us_eligible("Remote, USA", "Software Engineer", "US-based remote role")
+    assert is_us_eligible("USA", "Developer", "Anywhere in the US")
+    assert not is_us_eligible("Berlin, Germany", "Software Engineer (m/w/d)", "Festanstellung in Berlin")
+    assert not is_us_eligible("London, UK", "Senior Backend Engineer", "Europe only role")
+
+    # Test aggregated search with WWR
     jobs_wwr = await search_aggregated_jobs(query="engineer", source="weworkremotely")
     assert isinstance(jobs_wwr, list)
     if jobs_wwr:
         assert jobs_wwr[0]["source"] == "weworkremotely"
+

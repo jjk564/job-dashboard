@@ -47,11 +47,11 @@ def is_us_eligible(
         if marker in full_header or marker in text[:400].lower():
             return False
 
-    # 2. Check structured location restrictions (e.g. Himalayas locationRestrictions list)
+    # 2. Check structured location restrictions (e.g. Himalayas, Jobicy)
     if location_list is not None and len(location_list) > 0:
         locs_lower = [str(l).lower() for l in location_list]
         has_us = any(
-            any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas"])
+            any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas", "anywhere"])
             for l in locs_lower
         )
         if not has_us:
@@ -64,7 +64,7 @@ def is_us_eligible(
                 "india", "united kingdom", "uk", "france", "spain", "poland", "netherlands",
                 "australia", "japan", "italy", "switzerland", "sweden", "austria", "belgium"
             ]) for l in locs_lower
-        ) and not any("united states" in l or "usa" in l for l in locs_lower)
+        ) and not any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas", "anywhere"] for l in locs_lower)
         if has_foreign_only:
             return False
 
@@ -78,11 +78,57 @@ def is_us_eligible(
     ]
     for region in explicit_foreign_regions:
         if region in loc_lower:
-            # If it doesn't also explicitly state US / Worldwide, reject
-            if not any(u in loc_lower for u in ["united states", "usa", "u.s.", "us remote", "worldwide", "global"]):
+            # If it doesn't also explicitly state US / Worldwide / Americas / Anywhere, reject
+            if not any(u in loc_lower for u in ["united states", "usa", "u.s.", "us remote", "worldwide", "global", "americas", "anywhere"]):
                 return False
 
     return True
+
+def matches_query(
+    query: Optional[str],
+    title: str,
+    company: str,
+    tags: List[Any],
+    description: str
+) -> bool:
+    """
+    Smart keyword and synonym matching across title, company, tags, and description.
+    Enables developer searches to match software engineer roles, etc.
+    """
+    if not query:
+        return True
+    q = query.lower().strip()
+    if not q:
+        return True
+
+    tag_str = " ".join(str(t) for t in tags)
+    full_text = f"{title} {company} {tag_str} {description[:1200]}".lower()
+
+    # 1. Direct substring match
+    if q in full_text:
+        return True
+
+    # 2. Tech synonyms expansion
+    synonym_groups = [
+        {"developer", "engineer", "dev", "programmer", "software", "coder", "architect"},
+        {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
+        {"backend", "back-end", "api", "server", "python", "node", "golang", "java", "django", "fastapi"},
+        {"fullstack", "full-stack", "full stack"},
+        {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker"},
+        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist"},
+    ]
+    for group in synonym_groups:
+        if any(term in q for term in group):
+            if any(term in full_text for term in group):
+                return True
+
+    # 3. Individual words all present
+    words = [w for w in q.split() if len(w) > 2]
+    if words and all(w in full_text for w in words):
+        return True
+
+    return False
+
 
 # 1. RemoteOK
 async def fetch_remoteok_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
@@ -95,7 +141,7 @@ async def fetch_remoteok_jobs(query: Optional[str] = None, us_only: bool = True)
             if resp.status_code == 200:
                 data = resp.json()
                 jobs = [j for j in data if isinstance(j, dict) and "position" in j]
-                for j in jobs[:40]:
+                for j in jobs:
                     title = j.get("position", "")
                     company = j.get("company", "")
                     tags = j.get("tags", [])
@@ -109,15 +155,8 @@ async def fetch_remoteok_jobs(query: Optional[str] = None, us_only: bool = True)
                     if us_only and not is_us_eligible(location=location, title=title, text=description):
                         continue
 
-                    if query:
-                        q_lower = query.lower()
-                        match = (
-                            q_lower in title.lower()
-                            or q_lower in company.lower()
-                            or any(q_lower in str(t).lower() for t in tags)
-                        )
-                        if not match:
-                            continue
+                    if not matches_query(query, title, company, tags, description):
+                        continue
 
                     results.append({
                         "title": title,
@@ -132,6 +171,8 @@ async def fetch_remoteok_jobs(query: Optional[str] = None, us_only: bool = True)
                         "description": description,
                         "source": "remoteok",
                     })
+                    if len(results) >= 40:
+                        break
     except Exception as e:
         logger.warning(f"Error fetching RemoteOK jobs: {e}")
     return results
@@ -147,33 +188,26 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None, us_only: bool = True
             if resp.status_code == 200:
                 data = resp.json()
                 jobs = data.get("data", [])
-                for j in jobs[:40]:
+                for j in jobs:
                     title = j.get("title", "")
                     company = j.get("company_name", "")
                     tags = j.get("tags", [])
                     description = clean_html(j.get("description", ""))
                     apply_url = j.get("url", "")
                     is_remote = j.get("remote", False)
-                    location = j.get("location", "Remote" if is_remote else "Onsite")
+                    location = j.get("location", "Remote" if is_remote else "Onsite") or "Remote"
 
                     # US filter
                     if us_only and not is_us_eligible(location=location, title=title, text=description):
                         continue
 
-                    if query:
-                        q_lower = query.lower()
-                        match = (
-                            q_lower in title.lower()
-                            or q_lower in company.lower()
-                            or any(q_lower in str(t).lower() for t in tags)
-                        )
-                        if not match:
-                            continue
+                    if not matches_query(query, title, company, tags, description):
+                        continue
 
                     results.append({
                         "title": title,
                         "company": company,
-                        "location": location or "Remote",
+                        "location": location,
                         "workplace_type": "remote" if is_remote else "hybrid",
                         "url": apply_url,
                         "salary_min": None,
@@ -183,6 +217,8 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None, us_only: bool = True
                         "description": description,
                         "source": "arbeitnow",
                     })
+                    if len(results) >= 40:
+                        break
     except Exception as e:
         logger.warning(f"Error fetching Arbeitnow jobs: {e}")
     return results
@@ -190,7 +226,7 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None, us_only: bool = True
 # 3. Jobicy
 async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch jobs from Jobicy public API."""
-    url = "https://jobicy.com/api/v2/remote-jobs?count=30"
+    url = "https://jobicy.com/api/v2/remote-jobs?count=50&geo=usa" if us_only else "https://jobicy.com/api/v2/remote-jobs?count=50"
     results = []
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -204,7 +240,7 @@ async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -
                     tags = [j.get("jobCategory", "")] if j.get("jobCategory") else []
                     description = clean_html(j.get("jobDescription", ""))
                     apply_url = j.get("url", "")
-                    location = j.get("jobGeo", "Remote")
+                    location = j.get("jobGeo", "Remote") or "Remote"
                     salary_min = float(j.get("annualSalaryMin", 0)) if j.get("annualSalaryMin") else None
                     salary_max = float(j.get("annualSalaryMax", 0)) if j.get("annualSalaryMax") else None
 
@@ -212,32 +248,28 @@ async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -
                     if us_only and not is_us_eligible(location=location, title=title, text=description):
                         continue
 
-                    if query:
-                        q_lower = query.lower()
-                        match = (
-                            q_lower in title.lower()
-                            or q_lower in company.lower()
-                            or any(q_lower in t.lower() for t in tags)
-                        )
-                        if not match:
-                            continue
+                    if not matches_query(query, title, company, tags, description):
+                        continue
 
                     results.append({
                         "title": title,
                         "company": company,
-                        "location": location or "Remote",
+                        "location": location,
                         "workplace_type": "remote",
                         "url": apply_url,
                         "salary_min": salary_min,
                         "salary_max": salary_max,
-                        "salary_currency": j.get("salaryCurrency", "USD"),
+                        "salary_currency": j.get("salaryCurrency", "USD") or "USD",
                         "tags": tags,
                         "description": description,
                         "source": "jobicy",
                     })
+                    if len(results) >= 40:
+                        break
     except Exception as e:
         logger.warning(f"Error fetching Jobicy jobs: {e}")
     return results
+
 
 # 4. We Work Remotely (RSS Feeds)
 async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
@@ -279,10 +311,8 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool =
                         if us_only and not is_us_eligible(location=location, title=title, text=desc):
                             continue
 
-                        if query:
-                            q_lower = query.lower()
-                            if q_lower not in title.lower() and q_lower not in company.lower() and q_lower not in desc.lower():
-                                continue
+                        if not matches_query(query, title, company, ["remote", "weworkremotely"], desc):
+                            continue
 
                         results.append({
                             "title": title,
@@ -334,16 +364,9 @@ async def fetch_himalayas_jobs(query: Optional[str] = None, us_only: bool = True
                     ):
                         continue
 
-                    if query:
-                        q_lower = query.lower()
-                        match = (
-                            q_lower in title.lower()
-                            or q_lower in company.lower()
-                            or any(q_lower in str(c).lower() for c in categories)
-                            or q_lower in description[:500].lower()
-                        )
-                        if not match:
-                            continue
+                    if not matches_query(query, title, company, categories, description):
+                        continue
+
 
                     results.append({
                         "title": title,
@@ -437,7 +460,70 @@ async def fetch_hackernews_jobs(query: Optional[str] = None, us_only: bool = Tru
         logger.warning(f"Error fetching Hacker News Who is Hiring jobs: {e}")
     return results
 
-# 7. Adzuna API (US Jobs across Indeed, ZipRecruiter, etc.)
+# 7. Indeed (Direct Scraper via JobSpy)
+def _scrape_indeed_sync(search_term: str, location: str, results_wanted: int = 25) -> List[Dict[str, Any]]:
+    """Synchronous worker that scrapes live Indeed postings via JobSpy."""
+    try:
+        from jobspy import scrape_jobs
+        df = scrape_jobs(
+            site_name=["indeed"],
+            search_term=search_term,
+            location=location,
+            results_wanted=results_wanted,
+            country_indeed="USA",
+        )
+        if df is None or df.empty:
+            return []
+
+        jobs_list = []
+        for _, row in df.iterrows():
+            title = str(row.get("title") or "").strip()
+            company = str(row.get("company") or "").strip()
+            loc = str(row.get("location") or "USA").strip()
+            url = str(row.get("job_url") or "").strip()
+            if not title or not url or title.lower() == "nan" or url.lower() == "nan":
+                continue
+
+            desc = clean_html(str(row.get("description") or ""))
+            min_sal = float(row.get("min_amount")) if row.get("min_amount") is not None and str(row.get("min_amount")) != "nan" else None
+            max_sal = float(row.get("max_amount")) if row.get("max_amount") is not None and str(row.get("max_amount")) != "nan" else None
+            is_remote = bool(row.get("is_remote", False)) or "remote" in loc.lower()
+
+            jobs_list.append({
+                "title": title,
+                "company": company or "Indeed Employer",
+                "location": loc,
+                "workplace_type": "remote" if is_remote else "hybrid",
+                "url": url,
+                "salary_min": min_sal,
+                "salary_max": max_sal,
+                "salary_currency": str(row.get("currency") or "USD") if str(row.get("currency")) != "nan" else "USD",
+                "tags": ["indeed", "direct-hire"],
+                "description": desc,
+                "source": "indeed",
+            })
+        return jobs_list
+    except Exception as e:
+        logger.warning(f"Error in Indeed JobSpy scraper: {e}")
+        return []
+
+async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
+    """Fetch live US listings directly from Indeed."""
+    search_term = query.strip() if query and query.strip() else "Software Developer"
+    location = "United States" if us_only else "Remote"
+    try:
+        raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, location, 25)
+        filtered = []
+        for j in raw_jobs:
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            filtered.append(j)
+        return filtered
+    except Exception as e:
+        logger.warning(f"Error fetching Indeed jobs: {e}")
+        return []
+
+# 8. Adzuna API (US Jobs across Indeed, ZipRecruiter, etc.)
 async def fetch_adzuna_jobs(
     query: Optional[str] = None,
     app_id: Optional[str] = None,
@@ -512,6 +598,12 @@ async def search_aggregated_jobs(
     tasks = []
     source_lower = (source or "all").lower()
 
+    if source_lower in ("all", "indeed"):
+        tasks.append(fetch_indeed_jobs(query, us_only=us_only))
+    if source_lower in ("all", "arbeitnow"):
+        tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
+    if source_lower in ("all", "jobicy"):
+        tasks.append(fetch_jobicy_jobs(query, us_only=us_only))
     if source_lower in ("all", "weworkremotely"):
         tasks.append(fetch_weworkremotely_jobs(query, us_only=us_only))
     if source_lower in ("all", "himalayas"):
@@ -520,10 +612,6 @@ async def search_aggregated_jobs(
         tasks.append(fetch_hackernews_jobs(query, us_only=us_only))
     if source_lower in ("all", "remoteok"):
         tasks.append(fetch_remoteok_jobs(query, us_only=us_only))
-    if source_lower in ("all", "arbeitnow"):
-        tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
-    if source_lower in ("all", "jobicy"):
-        tasks.append(fetch_jobicy_jobs(query, us_only=us_only))
     if source_lower in ("all", "adzuna"):
         tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only))
 
@@ -546,3 +634,4 @@ async def search_aggregated_jobs(
             unique_jobs.append(j)
 
     return unique_jobs
+
