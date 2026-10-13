@@ -84,6 +84,37 @@ def is_us_eligible(
 
     return True
 
+def _term_matches(term: str, full_text: str) -> bool:
+    t = term.lower().strip()
+    if not t:
+        return True
+    # Word boundary match for short tokens (<= 3 chars, e.g. ui, ai, ml, go)
+    if len(t) <= 3:
+        if re.search(r'\b' + re.escape(t) + r'\b', full_text):
+            return True
+    else:
+        if t in full_text:
+            return True
+
+    synonym_groups = [
+        {"developer", "engineer", "dev", "programmer", "software", "coder", "architect"},
+        {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
+        {"backend", "back-end", "api", "server", "django", "fastapi"},
+        {"fullstack", "full-stack", "full stack"},
+        {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker"},
+        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist"},
+    ]
+    for group in synonym_groups:
+        if t in group:
+            for syn in group:
+                if len(syn) <= 3:
+                    if re.search(r'\b' + re.escape(syn) + r'\b', full_text):
+                        return True
+                else:
+                    if syn in full_text:
+                        return True
+    return False
+
 def matches_query(
     query: Optional[str],
     title: str,
@@ -92,8 +123,9 @@ def matches_query(
     description: str
 ) -> bool:
     """
-    Smart keyword and synonym matching across title, company, tags, and description.
-    Enables developer searches to match software engineer roles, etc.
+    Smart multi-keyword and synonym matching across title, company, tags, and description.
+    When multiple keywords are queried (e.g. 'python remote' or 'react fullstack'),
+    every keyword or concept must be satisfied.
     """
     if not query:
         return True
@@ -102,32 +134,21 @@ def matches_query(
         return True
 
     tag_str = " ".join(str(t) for t in tags)
-    full_text = f"{title} {company} {tag_str} {description[:1200]}".lower()
+    full_text = f"{title} {company} {tag_str} {description[:1500]}".lower()
 
-    # 1. Direct substring match
+    # Direct exact substring match
     if q in full_text:
         return True
 
-    # 2. Tech synonyms expansion
-    synonym_groups = [
-        {"developer", "engineer", "dev", "programmer", "software", "coder", "architect"},
-        {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
-        {"backend", "back-end", "api", "server", "python", "node", "golang", "java", "django", "fastapi"},
-        {"fullstack", "full-stack", "full stack"},
-        {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker"},
-        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist"},
-    ]
-    for group in synonym_groups:
-        if any(term in q for term in group):
-            if any(term in full_text for term in group):
-                return True
-
-    # 3. Individual words all present
-    words = [w for w in q.split() if len(w) > 2]
-    if words and all(w in full_text for w in words):
+    # Normalize common composite expressions into single tokens
+    normalized_q = q.replace("full stack", "fullstack").replace("front end", "frontend").replace("back end", "backend")
+    terms = [t for t in normalized_q.split() if len(t) > 1]
+    if not terms:
         return True
 
-    return False
+    # Every term must match
+    return all(_term_matches(term, full_text) for term in terms)
+
 
 
 # 1. RemoteOK

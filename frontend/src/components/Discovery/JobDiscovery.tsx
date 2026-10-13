@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, 
   Sparkles, 
@@ -20,7 +20,7 @@ interface JobDiscoveryProps {
   onJobAdded: (job: Job) => void;
 }
 
-const QUICK_TAGS = ['Python', 'React', 'Full Stack', 'Backend', 'DevOps', 'TypeScript', 'Remote'];
+const QUICK_TAGS = ['Remote', 'Python', 'React', 'Full Stack', 'Backend', 'Frontend', 'DevOps', 'TypeScript', 'Senior'];
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
@@ -35,7 +35,8 @@ const SOURCE_FILTERS = [
 ];
 
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
-  const [query, setQuery] = useState('developer');
+  const [query, setQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
   const [usOnly, setUsOnly] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -44,7 +45,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
   const fetchJobs = async (
-    searchQuery: string,
+    searchQuery: string = '',
     source: string = selectedSource,
     isUsOnly: boolean = usOnly
   ) => {
@@ -52,7 +53,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
       const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
-      const results = await api.searchDiscoveredJobs(searchQuery, source, adzunaId, adzunaKey, isUsOnly);
+      const effectiveQuery = searchQuery.trim() || 'developer';
+      const results = await api.searchDiscoveredJobs(effectiveQuery, source, adzunaId, adzunaKey, isUsOnly);
       setJobs(results);
     } catch (err) {
       console.error('Failed to search jobs:', err);
@@ -65,15 +67,105 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     fetchJobs('developer', 'all', true);
   }, []);
 
+  const handleTagToggle = (tag: string) => {
+    let nextTags: string[];
+    if (selectedTags.includes(tag)) {
+      nextTags = selectedTags.filter((t) => t !== tag);
+    } else {
+      nextTags = [...selectedTags, tag];
+    }
+    setSelectedTags(nextTags);
+
+    const combinedQuery = [query.trim(), ...nextTags].filter(Boolean).join(' ');
+    fetchJobs(combinedQuery || 'developer', selectedSource, usOnly);
+  };
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) fetchJobs(query.trim(), selectedSource);
+    const combinedQuery = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
+    fetchJobs(combinedQuery || 'developer', selectedSource, usOnly);
   };
 
   const handleSourceSelect = (sourceId: string) => {
     setSelectedSource(sourceId);
-    fetchJobs(query.trim(), sourceId);
+    const combinedQuery = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
+    fetchJobs(combinedQuery || 'developer', sourceId, usOnly);
   };
+
+  const handleResetFilters = () => {
+    setQuery('');
+    setSelectedTags([]);
+    setSelectedSource('all');
+    fetchJobs('developer', 'all', usOnly);
+  };
+
+  // Compound client-side filtering across all active filters simultaneously
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      // 1. Source board filter
+      if (selectedSource !== 'all' && job.source.toLowerCase() !== selectedSource.toLowerCase()) {
+        return false;
+      }
+
+      const titleLower = (job.title || '').toLowerCase();
+      const compLower = (job.company || '').toLowerCase();
+      const locLower = (job.location || '').toLowerCase();
+      const typeLower = (job.workplace_type || '').toLowerCase();
+      const descLower = (job.description || '').toLowerCase();
+      const tagsStr = (job.tags || []).join(' ').toLowerCase();
+      const fullText = `${titleLower} ${compLower} ${locLower} ${tagsStr} ${descLower}`;
+
+      // 2. Multi-tag filters (EVERY active tag must match)
+      for (const tag of selectedTags) {
+        const tLower = tag.toLowerCase();
+        if (tLower === 'remote') {
+          const isRemote = typeLower === 'remote' || locLower.includes('remote') || titleLower.includes('remote');
+          if (!isRemote) return false;
+        } else if (tLower === 'full stack') {
+          if (!fullText.includes('fullstack') && !fullText.includes('full-stack') && !fullText.includes('full stack')) {
+            return false;
+          }
+        } else if (tLower === 'react') {
+          if (!fullText.includes('react') && !fullText.includes('frontend') && !fullText.includes('front-end')) {
+            return false;
+          }
+        } else if (tLower === 'backend') {
+          if (!fullText.includes('backend') && !fullText.includes('back-end') && !fullText.includes('api')) {
+            return false;
+          }
+        } else if (tLower === 'frontend') {
+          if (!fullText.includes('frontend') && !fullText.includes('front-end') && !fullText.includes('ui') && !fullText.includes('react')) {
+            return false;
+          }
+        } else if (tLower === 'devops') {
+          if (!fullText.includes('devops') && !fullText.includes('sre') && !fullText.includes('cloud') && !fullText.includes('infrastructure')) {
+            return false;
+          }
+        } else if (tLower === 'typescript') {
+          if (!fullText.includes('typescript') && !fullText.includes('ts')) {
+            return false;
+          }
+        } else if (tLower === 'senior') {
+          if (!fullText.includes('senior') && !fullText.includes('sr.') && !fullText.includes('lead') && !fullText.includes('staff')) {
+            return false;
+          }
+        } else {
+          if (!fullText.includes(tLower)) {
+            return false;
+          }
+        }
+      }
+
+      // 3. Typed keyword filter (every word in custom query must match)
+      if (query.trim()) {
+        const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+        const matchesAll = words.every((w) => fullText.includes(w));
+        if (!matchesAll) return false;
+      }
+
+      return true;
+    });
+  }, [jobs, selectedSource, selectedTags, query]);
 
   const handleAddJob = async (job: DiscoveredJob) => {
     setAddingUrl(job.url);
@@ -220,31 +312,34 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
           {/* Quick Filter Chips */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-xs text-slate-400 mr-1 font-medium">Trending:</span>
+            <span className="text-xs text-slate-400 mr-1 font-medium">
+              Trending Filters:
+              {selectedTags.length > 0 && (
+                <span className="text-emerald-400 font-semibold text-xs ml-1">
+                  ({selectedTags.length} active)
+                </span>
+              )}
+            </span>
             {QUICK_TAGS.map((tag) => {
-              const isTagActive = query.trim().toLowerCase() === tag.toLowerCase();
+              const isTagActive = selectedTags.includes(tag);
               return (
                 <button
                   key={tag}
-                  onClick={() => {
-                    if (isTagActive) {
-                      setQuery('');
-                      fetchJobs('', selectedSource);
-                    } else {
-                      setQuery(tag);
-                      fetchJobs(tag, selectedSource);
-                    }
-                  }}
+                  onClick={() => handleTagToggle(tag)}
                   className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
                     isTagActive
                       ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
                       : 'bg-slate-800/70 hover:bg-slate-700 text-slate-300 border-slate-700/60'
                   }`}
-                  title={isTagActive ? `Click to clear "${tag}" filter` : `Filter by "${tag}"`}
+                  title={isTagActive ? `Click to remove "${tag}" filter` : `Click to add "${tag}" filter`}
                 >
                   {isTagActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
                   <span>{tag}</span>
-                  {isTagActive && <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />}
+                  {isTagActive ? (
+                    <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
+                  ) : (
+                    <Plus className="w-3 h-3 ml-0.5 opacity-40 hover:opacity-100" />
+                  )}
                 </button>
               );
             })}
@@ -255,28 +350,51 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       {/* Results Count, Active Filters Bar & Grid */}
       <div className="space-y-4">
         {/* Active Filter Indicators Bar */}
-        {(query.trim() || selectedSource !== 'all' || usOnly) && (
+        {(query.trim() || selectedTags.length > 0 || selectedSource !== 'all' || usOnly) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
             <span className="text-slate-400 flex items-center gap-1.5 font-medium">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Active filters:</span>
+              <span>Active filters ({[query.trim(), ...selectedTags, selectedSource !== 'all' ? selectedSource : ''].filter(Boolean).length}):</span>
             </span>
+
+            {/* Custom Search Query Pill */}
             {query.trim() && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs">
-                <span>Keyword: <strong>"{query}"</strong></span>
+                <span>Search: <strong>"{query}"</strong></span>
                 <button
                   type="button"
                   onClick={() => {
                     setQuery('');
-                    fetchJobs('', selectedSource);
+                    const combined = selectedTags.join(' ');
+                    fetchJobs(combined || 'developer', selectedSource, usOnly);
                   }}
                   className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
-                  title="Remove keyword filter"
+                  title="Remove search query"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </span>
             )}
+
+            {/* Selected Tag Pills */}
+            {selectedTags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs"
+              >
+                <span>Tag: <strong>{tag}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => handleTagToggle(tag)}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
+                  title={`Remove ${tag} filter`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+
+            {/* Source Board Pill */}
             {selectedSource !== 'all' && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-200 border border-slate-700 font-medium">
                 <span>Source: <strong>{SOURCE_FILTERS.find((s) => s.id === selectedSource)?.label || selectedSource}</strong></span>
@@ -290,20 +408,20 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                 </button>
               </span>
             )}
+
+            {/* US Only Pill */}
             {usOnly && (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800/80 text-emerald-400 border border-emerald-900/40 font-medium">
                 <span>🇺🇸 US Jobs Only</span>
               </span>
             )}
-            {(query.trim() || selectedSource !== 'all') && (
+
+            {/* Clear All Filters Button */}
+            {(query.trim() || selectedTags.length > 0 || selectedSource !== 'all') && (
               <button
                 type="button"
-                onClick={() => {
-                  setQuery('');
-                  setSelectedSource('all');
-                  fetchJobs('', 'all');
-                }}
-                className="text-slate-400 hover:text-emerald-400 text-xs ml-auto transition underline"
+                onClick={handleResetFilters}
+                className="text-slate-400 hover:text-emerald-400 text-xs ml-auto transition underline font-medium"
               >
                 Clear all filters
               </button>
@@ -311,29 +429,59 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
           </div>
         )}
 
+        {/* Results Counter */}
         <div className="flex items-center justify-between text-xs text-slate-400 px-1">
           <span>
-            Found <strong className="text-slate-200">{jobs.length}</strong> listings
-            {query.trim() && (
-              <span> matching <span className="text-emerald-400 font-semibold">"{query}"</span></span>
+            Found <strong className="text-slate-200">{filteredJobs.length}</strong> matching listings
+            {jobs.length !== filteredJobs.length && (
+              <span className="text-slate-500"> (filtered from {jobs.length} total)</span>
+            )}
+            {(selectedTags.length > 0 || query.trim()) && (
+              <span className="ml-1 text-slate-400">
+                for <span className="text-emerald-400 font-semibold">{[query.trim() ? `"${query}"` : '', ...selectedTags].filter(Boolean).join(', ')}</span>
+              </span>
             )}
           </span>
           {loading && <span className="text-emerald-400 animate-pulse font-medium">Fetching fresh jobs across boards...</span>}
         </div>
 
-        {jobs.length === 0 && !loading ? (
-          <div className="text-center py-16 bg-slate-900/40 rounded-2xl border border-slate-800">
-            <Compass className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-            <p className="text-slate-300 font-medium text-sm">No jobs found matching "{query}"</p>
-            <p className="text-slate-500 text-xs mt-1">
-              Try another keyword like "Python", "Full Stack", or switch the Source filter to "All Sources".
+        {/* Empty State */}
+        {filteredJobs.length === 0 && !loading ? (
+          <div className="text-center py-16 bg-slate-900/40 rounded-2xl border border-slate-800 space-y-3">
+            <Compass className="w-10 h-10 text-slate-600 mx-auto" />
+            <p className="text-slate-300 font-medium text-sm">
+              No jobs found matching your active filter combination
             </p>
+            <p className="text-slate-500 text-xs max-w-md mx-auto">
+              Try toggling off one or more filters, or search the live boards directly for this combination.
+            </p>
+            <div className="pt-2 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const combined = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
+                  fetchJobs(combined || 'developer', selectedSource, usOnly);
+                }}
+                className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Fetch Live Across Boards</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition"
+              >
+                Reset All Filters
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {jobs.map((job, idx) => {
+            {filteredJobs.map((job, idx) => {
               const isAdded = addedUrls.has(job.url);
               const isAddingThis = addingUrl === job.url;
+
 
               return (
                 <div
