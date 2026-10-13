@@ -10,7 +10,8 @@ import {
   Check, 
   RefreshCw,
   Compass,
-  Filter
+  Filter,
+  X
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -148,8 +149,21 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                 placeholder="Search job title, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                className="w-full pl-10 pr-10 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    fetchJobs('', selectedSource);
+                  }}
+                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-100 transition"
+                  title="Clear search query"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
             <button
               type="submit"
@@ -206,28 +220,105 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
           {/* Quick Filter Chips */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-xs text-slate-500 mr-1">Trending:</span>
-            {QUICK_TAGS.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => {
-                  setQuery(tag);
-                  fetchJobs(tag, selectedSource);
-                }}
-                className="px-2.5 py-0.5 rounded-lg text-xs bg-slate-800/70 hover:bg-slate-700 text-slate-300 border border-slate-700/60 transition"
-              >
-                {tag}
-              </button>
-            ))}
+            <span className="text-xs text-slate-400 mr-1 font-medium">Trending:</span>
+            {QUICK_TAGS.map((tag) => {
+              const isTagActive = query.trim().toLowerCase() === tag.toLowerCase();
+              return (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    if (isTagActive) {
+                      setQuery('');
+                      fetchJobs('', selectedSource);
+                    } else {
+                      setQuery(tag);
+                      fetchJobs(tag, selectedSource);
+                    }
+                  }}
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
+                    isTagActive
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
+                      : 'bg-slate-800/70 hover:bg-slate-700 text-slate-300 border-slate-700/60'
+                  }`}
+                  title={isTagActive ? `Click to clear "${tag}" filter` : `Filter by "${tag}"`}
+                >
+                  {isTagActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                  <span>{tag}</span>
+                  {isTagActive && <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* Results Count & Grid */}
+      {/* Results Count, Active Filters Bar & Grid */}
       <div className="space-y-4">
+        {/* Active Filter Indicators Bar */}
+        {(query.trim() || selectedSource !== 'all' || usOnly) && (
+          <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
+            <span className="text-slate-400 flex items-center gap-1.5 font-medium">
+              <Filter className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Active filters:</span>
+            </span>
+            {query.trim() && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs">
+                <span>Keyword: <strong>"{query}"</strong></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    fetchJobs('', selectedSource);
+                  }}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
+                  title="Remove keyword filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedSource !== 'all' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-200 border border-slate-700 font-medium">
+                <span>Source: <strong>{SOURCE_FILTERS.find((s) => s.id === selectedSource)?.label || selectedSource}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => handleSourceSelect('all')}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-slate-700"
+                  title="Reset to All Sources"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {usOnly && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800/80 text-emerald-400 border border-emerald-900/40 font-medium">
+                <span>🇺🇸 US Jobs Only</span>
+              </span>
+            )}
+            {(query.trim() || selectedSource !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery('');
+                  setSelectedSource('all');
+                  fetchJobs('', 'all');
+                }}
+                className="text-slate-400 hover:text-emerald-400 text-xs ml-auto transition underline"
+              >
+                Clear all filters
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-          <span>Found {jobs.length} listings</span>
-          {loading && <span className="text-emerald-400 animate-pulse">Fetching fresh jobs across boards...</span>}
+          <span>
+            Found <strong className="text-slate-200">{jobs.length}</strong> listings
+            {query.trim() && (
+              <span> matching <span className="text-emerald-400 font-semibold">"{query}"</span></span>
+            )}
+          </span>
+          {loading && <span className="text-emerald-400 animate-pulse font-medium">Fetching fresh jobs across boards...</span>}
         </div>
 
         {jobs.length === 0 && !loading ? (
