@@ -544,7 +544,95 @@ async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -
         logger.warning(f"Error fetching Indeed jobs: {e}")
         return []
 
-# 8. Adzuna API (US Jobs across Indeed, ZipRecruiter, etc.)
+# 8. ZipRecruiter (Direct Live Scraper via curl_cffi)
+def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True) -> List[Dict[str, Any]]:
+    """Synchronous worker that scrapes live ZipRecruiter postings via curl_cffi with browser impersonation."""
+    try:
+        from curl_cffi import requests as cffi_requests
+        s = cffi_requests.Session(impersonate="safari")
+        search_q = search_term or "software developer"
+        encoded_q = search_q.replace(" ", "+")
+        loc_param = "United+States" if us_only else "Remote"
+        url = f"https://www.ziprecruiter.com/jobs-search?search={encoded_q}&location={loc_param}"
+        r = s.get(url, timeout=12)
+        if r.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        articles = soup.find_all("article")
+        jobs_list = []
+        for art in articles:
+            h2 = art.find("h2")
+            if not h2:
+                continue
+            title = h2.text.strip()
+            link_el = h2.find("a") or art.find("a")
+            link = link_el["href"] if link_el and "href" in link_el.attrs else ""
+            if link.startswith("/"):
+                link = f"https://www.ziprecruiter.com{link}"
+
+            comp_el = art.find("a", {"data-testid": "job-card-company"}) or art.find("p")
+            company = comp_el.text.strip() if comp_el else "ZipRecruiter Employer"
+
+            loc_el = art.find("a", {"data-testid": "job-card-location"})
+            location = loc_el.text.strip() if loc_el else "USA"
+
+            is_remote = False
+            salary_min = None
+            salary_max = None
+            tags = ["ziprecruiter", "direct-hire"]
+
+            for p in art.find_all(["p", "span"]):
+                t = p.text.strip()
+                if "remote" in t.lower():
+                    is_remote = True
+                if t.startswith("$"):
+                    m = re.findall(r"\$([0-9,]+(?:\.[0-9]+)?)(k)?", t, re.IGNORECASE)
+                    if m:
+                        nums = [float(n[0].replace(",", "")) * (1000 if n[1] else 1) for n in m]
+                        salary_min = min(nums)
+                        salary_max = max(nums)
+                if t in ["Full-time", "Part-time", "Contract"]:
+                    tags.append(t.lower())
+
+            jobs_list.append({
+                "title": title,
+                "company": company,
+                "location": location,
+                "workplace_type": "remote" if is_remote else "hybrid",
+                "url": link,
+                "salary_min": salary_min,
+                "salary_max": salary_max,
+                "salary_currency": "USD",
+                "tags": tags,
+                "description": f"{title} at {company} in {location}. Full listing available on ZipRecruiter.",
+                "source": "ziprecruiter",
+            })
+            if len(jobs_list) >= 30:
+                break
+        return jobs_list
+    except Exception as e:
+        logger.warning(f"Error scraping ZipRecruiter: {e}")
+        return []
+
+async def fetch_ziprecruiter_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
+    """Fetch live US listings directly from ZipRecruiter."""
+    search_term = query.strip() if query and query.strip() else "Software Developer"
+    try:
+        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only)
+        filtered = []
+        for j in raw_jobs:
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            if not matches_query(query, j["title"], j["company"], j["tags"], j["description"]):
+                continue
+            filtered.append(j)
+        return filtered
+    except Exception as e:
+        logger.warning(f"Error fetching ZipRecruiter jobs: {e}")
+        return []
+
+# 9. Adzuna API (US Jobs across Indeed, ZipRecruiter, etc.)
 async def fetch_adzuna_jobs(
     query: Optional[str] = None,
     app_id: Optional[str] = None,
@@ -621,6 +709,8 @@ async def search_aggregated_jobs(
 
     if source_lower in ("all", "indeed"):
         tasks.append(fetch_indeed_jobs(query, us_only=us_only))
+    if source_lower in ("all", "ziprecruiter"):
+        tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only))
     if source_lower in ("all", "arbeitnow"):
         tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
     if source_lower in ("all", "jobicy"):

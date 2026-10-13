@@ -25,6 +25,7 @@ const QUICK_TAGS = ['Remote', 'Python', 'React', 'Full Stack', 'Backend', 'Front
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
   { id: 'indeed', label: 'Indeed' },
+  { id: 'ziprecruiter', label: 'ZipRecruiter' },
   { id: 'arbeitnow', label: 'Arbeitnow' },
   { id: 'jobicy', label: 'Jobicy' },
   { id: 'weworkremotely', label: 'We Work Remotely' },
@@ -196,6 +197,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     switch (source.toLowerCase()) {
       case 'indeed':
         return 'bg-blue-950/60 text-blue-300 border-blue-800/50';
+      case 'ziprecruiter':
+        return 'bg-green-950/60 text-green-300 border-green-800/50';
       case 'weworkremotely':
         return 'bg-red-950/60 text-red-300 border-red-800/50';
       case 'himalayas':
@@ -228,7 +231,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             Discover Active Tech Opportunities
           </h1>
           <p className="text-slate-400 text-sm">
-            Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
+            Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
           </p>
 
 
