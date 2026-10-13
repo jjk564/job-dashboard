@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   UserCheck, 
   Save, 
   Plus, 
   Trash2, 
   Check, 
-  Sparkles,
-  Link2,
-  FileText
+  Sparkles, 
+  Link2, 
+  FileText 
 } from 'lucide-react';
 import { Profile, Skill } from '../../types';
 import { api } from '../../api/client';
 
 export const ProfileManager: React.FC = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [initialProfile, setInitialProfile] = useState<Profile | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,6 +37,7 @@ export const ProfileManager: React.FC = () => {
         api.getSkills(),
       ]);
       setProfile(profData);
+      setInitialProfile(profData);
       setSkills(skillsData);
     } catch (err) {
       console.error('Failed to load profile data:', err);
@@ -49,13 +51,33 @@ export const ProfileManager: React.FC = () => {
     setProfile({ ...profile, [key]: value });
   };
 
+  const hasChanges = useMemo(() => {
+    if (!profile || !initialProfile) return false;
+    return (
+      (profile.full_name || '') !== (initialProfile.full_name || '') ||
+      (profile.title || '') !== (initialProfile.title || '') ||
+      (profile.email || '') !== (initialProfile.email || '') ||
+      (profile.phone || '') !== (initialProfile.phone || '') ||
+      (profile.location || '') !== (initialProfile.location || '') ||
+      (profile.summary || '') !== (initialProfile.summary || '') ||
+      (profile.linkedin_url || '') !== (initialProfile.linkedin_url || '') ||
+      (profile.github_url || '') !== (initialProfile.github_url || '') ||
+      (profile.portfolio_url || '') !== (initialProfile.portfolio_url || '') ||
+      (profile.work_authorization || '') !== (initialProfile.work_authorization || '') ||
+      (profile.desired_salary || '') !== (initialProfile.desired_salary || '') ||
+      (profile.notice_period || '') !== (initialProfile.notice_period || '') ||
+      (profile.master_resume_text || '') !== (initialProfile.master_resume_text || '')
+    );
+  }, [profile, initialProfile]);
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!profile || !hasChanges) return;
     setSaving(true);
     try {
       const updated = await api.updateProfile(profile);
       setProfile(updated);
+      setInitialProfile(updated);
       setSavedBanner(true);
       setTimeout(() => setSavedBanner(false), 3000);
     } catch (err) {
@@ -363,10 +385,14 @@ export const ProfileManager: React.FC = () => {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              disabled={saving}
-              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-500/20 flex items-center space-x-2 transition disabled:opacity-50"
+              disabled={!hasChanges || saving}
+              className={`px-6 py-2.5 rounded-xl font-bold text-sm flex items-center space-x-2 transition ${
+                hasChanges && !saving
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 cursor-pointer'
+                  : 'bg-slate-800/80 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60 shadow-none'
+              }`}
             >
-              <Save className="w-4 h-4" />
+              <Save className={`w-4 h-4 ${hasChanges ? 'text-white' : 'text-slate-500'}`} />
               <span>{saving ? 'Saving Profile...' : 'Save All Changes'}</span>
             </button>
           </div>
