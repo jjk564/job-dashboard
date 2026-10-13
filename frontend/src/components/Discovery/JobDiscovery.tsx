@@ -35,17 +35,22 @@ const SOURCE_FILTERS = [
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   const [query, setQuery] = useState('developer');
   const [selectedSource, setSelectedSource] = useState('all');
+  const [usOnly, setUsOnly] = useState(true);
   const [loading, setLoading] = useState(false);
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
-  const fetchJobs = async (searchQuery: string, source: string = selectedSource) => {
+  const fetchJobs = async (
+    searchQuery: string,
+    source: string = selectedSource,
+    isUsOnly: boolean = usOnly
+  ) => {
     setLoading(true);
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
       const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
-      const results = await api.searchDiscoveredJobs(searchQuery, source, adzunaId, adzunaKey);
+      const results = await api.searchDiscoveredJobs(searchQuery, source, adzunaId, adzunaKey, isUsOnly);
       setJobs(results);
     } catch (err) {
       console.error('Failed to search jobs:', err);
@@ -55,7 +60,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   };
 
   useEffect(() => {
-    fetchJobs('developer', 'all');
+    fetchJobs('developer', 'all', true);
   }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -152,11 +157,31 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             </button>
           </form>
 
-          {/* Source Selectors */}
+          {/* Source Selectors & US Filter */}
           <div className="pt-2">
-            <div className="flex items-center space-x-2 text-xs text-slate-400 mb-2">
-              <Filter className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="font-semibold text-slate-300">Source Platform:</span>
+            <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+              <div className="flex items-center space-x-2">
+                <Filter className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-semibold text-slate-300">Source Platform:</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const newVal = !usOnly;
+                  setUsOnly(newVal);
+                  fetchJobs(query.trim(), selectedSource, newVal);
+                }}
+                className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition ${
+                  usOnly
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 shadow-xs'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                }`}
+                title="Toggle US-Only jobs filter"
+              >
+                <span>🇺🇸</span>
+                <span>US Jobs Only</span>
+                <span className={`w-2 h-2 rounded-full ${usOnly ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              </button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {SOURCE_FILTERS.map((s) => (

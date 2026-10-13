@@ -58,13 +58,15 @@ export const api = {
     query?: string,
     source?: string,
     adzunaAppId?: string,
-    adzunaAppKey?: string
+    adzunaAppKey?: string,
+    usOnly: boolean = true
   ): Promise<DiscoveredJob[]> {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
     if (source && source !== 'all') params.append('source', source);
     if (adzunaAppId) params.append('adzuna_app_id', adzunaAppId);
     if (adzunaAppKey) params.append('adzuna_app_key', adzunaAppKey);
+    params.append('us_only', String(usOnly));
 
     const res = await fetch(`${API_BASE}/discovery/search?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to search jobs');

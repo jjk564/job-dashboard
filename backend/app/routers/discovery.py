@@ -12,13 +12,15 @@ async def search_jobs(
     source: Optional[str] = Query(None),
     adzuna_app_id: Optional[str] = Query(None),
     adzuna_app_key: Optional[str] = Query(None),
+    us_only: bool = Query(True),
 ) -> List[Dict[str, Any]]:
-    """Search active listings across public job boards (WWR, Himalayas, HN, RemoteOK, Arbeitnow, Jobicy, Adzuna)."""
+    """Search active listings across public job boards with optional US filtering."""
     jobs = await search_aggregated_jobs(
         query=query,
         source=source,
         adzuna_app_id=adzuna_app_id,
         adzuna_app_key=adzuna_app_key,
+        us_only=us_only,
     )
     return jobs
 

@@ -23,8 +23,69 @@ def clean_html(raw_html: str) -> str:
     text = soup.get_text(separator=" ")
     return " ".join(text.split())
 
+def is_us_eligible(
+    location: str,
+    title: str = "",
+    text: str = "",
+    location_list: Optional[List[str]] = None
+) -> bool:
+    """
+    Filters out foreign and non-US jobs.
+    Ensures jobs are either based in the US, US-remote, or global remote open to US.
+    """
+    loc_lower = (location or "").lower()
+    title_lower = (title or "").lower()
+    full_header = f"{title_lower} {loc_lower}"
+
+    # 1. Reject German / foreign specific hiring abbreviations and markers
+    foreign_markers = [
+        "(m/w/d)", "(d/m/w)", "(w/m/d)", "m/w/d", "d/m/w", "w/m/d",
+        "festanstellung", "vollzeit", "standort", "stellenanzeige",
+        "zur verstärkung", "sobre a vaga", "vaga afirmativa",
+    ]
+    for marker in foreign_markers:
+        if marker in full_header or marker in text[:400].lower():
+            return False
+
+    # 2. Check structured location restrictions (e.g. Himalayas locationRestrictions list)
+    if location_list is not None and len(location_list) > 0:
+        locs_lower = [str(l).lower() for l in location_list]
+        has_us = any(
+            any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas"])
+            for l in locs_lower
+        )
+        if not has_us:
+            return False
+
+        # If it specifically lists foreign country without US, reject
+        has_foreign_only = any(
+            any(f in l for f in [
+                "germany", "deutschland", "brazil", "brasil", "portugal", "singapore",
+                "india", "united kingdom", "uk", "france", "spain", "poland", "netherlands",
+                "australia", "japan", "italy", "switzerland", "sweden", "austria", "belgium"
+            ]) for l in locs_lower
+        ) and not any("united states" in l or "usa" in l for l in locs_lower)
+        if has_foreign_only:
+            return False
+
+    # 3. Check location string for explicit foreign exclusivity
+    explicit_foreign_regions = [
+        "europe only", "eu only", "uk only", "emea only", "apac only", "latam only",
+        "germany", "deutschland", "berlin", "munich", "frankfurt", "london", "paris",
+        "tokyo", "japan", "singapore", "brazil", "são paulo", "portugal", "lisbon",
+        "india", "bangalore", "mumbai", "sydney", "melbourne", "australia",
+        "netherlands", "amsterdam", "poland", "warsaw", "madrid", "spain",
+    ]
+    for region in explicit_foreign_regions:
+        if region in loc_lower:
+            # If it doesn't also explicitly state US / Worldwide, reject
+            if not any(u in loc_lower for u in ["united states", "usa", "u.s.", "us remote", "worldwide", "global"]):
+                return False
+
+    return True
+
 # 1. RemoteOK
-async def fetch_remoteok_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
+async def fetch_remoteok_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch tech & remote jobs from RemoteOK public API."""
     url = "https://remoteok.com/api"
     results = []
@@ -43,6 +104,10 @@ async def fetch_remoteok_jobs(query: Optional[str] = None) -> List[Dict[str, Any
                     location = j.get("location", "Remote") or "Remote"
                     salary_min = float(j.get("salary_min", 0)) if j.get("salary_min") else None
                     salary_max = float(j.get("salary_max", 0)) if j.get("salary_max") else None
+
+                    # US filter
+                    if us_only and not is_us_eligible(location=location, title=title, text=description):
+                        continue
 
                     if query:
                         q_lower = query.lower()
@@ -72,7 +137,7 @@ async def fetch_remoteok_jobs(query: Optional[str] = None) -> List[Dict[str, Any
     return results
 
 # 2. Arbeitnow
-async def fetch_arbeitnow_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
+async def fetch_arbeitnow_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch jobs from Arbeitnow public API."""
     url = "https://www.arbeitnow.com/api/job-board-api"
     results = []
@@ -90,6 +155,10 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None) -> List[Dict[str, An
                     apply_url = j.get("url", "")
                     is_remote = j.get("remote", False)
                     location = j.get("location", "Remote" if is_remote else "Onsite")
+
+                    # US filter
+                    if us_only and not is_us_eligible(location=location, title=title, text=description):
+                        continue
 
                     if query:
                         q_lower = query.lower()
@@ -119,7 +188,7 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None) -> List[Dict[str, An
     return results
 
 # 3. Jobicy
-async def fetch_jobicy_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
+async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch jobs from Jobicy public API."""
     url = "https://jobicy.com/api/v2/remote-jobs?count=30"
     results = []
@@ -138,6 +207,10 @@ async def fetch_jobicy_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]
                     location = j.get("jobGeo", "Remote")
                     salary_min = float(j.get("annualSalaryMin", 0)) if j.get("annualSalaryMin") else None
                     salary_max = float(j.get("annualSalaryMax", 0)) if j.get("annualSalaryMax") else None
+
+                    # US filter
+                    if us_only and not is_us_eligible(location=location, title=title, text=description):
+                        continue
 
                     if query:
                         q_lower = query.lower()
@@ -167,7 +240,7 @@ async def fetch_jobicy_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]
     return results
 
 # 4. We Work Remotely (RSS Feeds)
-async def fetch_weworkremotely_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
+async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch top tech roles from We Work Remotely official RSS feeds."""
     feeds = [
         "https://weworkremotely.com/categories/remote-programming-jobs.rss",
@@ -200,6 +273,12 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None) -> List[Dict[st
                             company = parts[0].strip()
                             title = parts[1].strip()
 
+                        location = "Remote (USA/Global)"
+
+                        # US filter
+                        if us_only and not is_us_eligible(location=location, title=title, text=desc):
+                            continue
+
                         if query:
                             q_lower = query.lower()
                             if q_lower not in title.lower() and q_lower not in company.lower() and q_lower not in desc.lower():
@@ -208,7 +287,7 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None) -> List[Dict[st
                         results.append({
                             "title": title,
                             "company": company,
-                            "location": "Remote",
+                            "location": location,
                             "workplace_type": "remote",
                             "url": link,
                             "salary_min": None,
@@ -224,9 +303,9 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None) -> List[Dict[st
         logger.warning(f"Error fetching We Work Remotely jobs: {e}")
     return results
 
-# 5. Himalayas (Public API)
-async def fetch_himalayas_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Fetch remote opportunities from Himalayas public API."""
+# 5. Himalayas (Public API) - Filtered to US Only
+async def fetch_himalayas_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
+    """Fetch remote opportunities from Himalayas public API (filtered for US eligibility)."""
     url = "https://himalayas.app/jobs/api?limit=50"
     results = []
     try:
@@ -242,9 +321,18 @@ async def fetch_himalayas_jobs(query: Optional[str] = None) -> List[Dict[str, An
                     description = clean_html(j.get("description", ""))
                     apply_url = j.get("applicationLink") or f"https://himalayas.app/companies/{j.get('companySlug')}/jobs/{j.get('guid')}"
                     location_restrictions = j.get("locationRestrictions", [])
-                    location = ", ".join(location_restrictions) if location_restrictions else "Worldwide Remote"
+                    location = ", ".join(location_restrictions) if location_restrictions else "United States / Remote"
                     salary_min = float(j.get("minSalary", 0)) if j.get("minSalary") else None
                     salary_max = float(j.get("maxSalary", 0)) if j.get("maxSalary") else None
+
+                    # Strict US filtering for Himalayas
+                    if us_only and not is_us_eligible(
+                        location=location,
+                        title=title,
+                        text=description,
+                        location_list=location_restrictions
+                    ):
+                        continue
 
                     if query:
                         q_lower = query.lower()
@@ -275,12 +363,11 @@ async def fetch_himalayas_jobs(query: Optional[str] = None) -> List[Dict[str, An
     return results
 
 # 6. Hacker News "Who is Hiring?" (Algolia API)
-async def fetch_hackernews_jobs(query: Optional[str] = None) -> List[Dict[str, Any]]:
+async def fetch_hackernews_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch startup & tech roles from the latest monthly Hacker News Who is Hiring thread."""
     results = []
     try:
         async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            # 1. Find latest 'Ask HN: Who is hiring?' thread by author 'whoishiring'
             story_res = await client.get(
                 "https://hn.algolia.com/api/v1/search_by_date?query=Ask+HN:+Who+is+hiring&tags=story,author_whoishiring&hitsPerPage=1"
             )
@@ -291,9 +378,7 @@ async def fetch_hackernews_jobs(query: Optional[str] = None) -> List[Dict[str, A
                 return []
 
             story_id = hits[0].get("objectID")
-            thread_title = hits[0].get("title", "Ask HN: Who is hiring?")
 
-            # 2. Fetch comments in this thread (filtered by query if provided)
             params: Dict[str, Any] = {
                 "tags": f"comment,story_{story_id}",
                 "hitsPerPage": 40,
@@ -316,7 +401,7 @@ async def fetch_hackernews_jobs(query: Optional[str] = None) -> List[Dict[str, A
                 # Parse company and title: common format "Company | Role | Location | Remote"
                 company = "YC / Tech Startup"
                 title = first_line[:60]
-                location = "Remote"
+                location = "Remote (USA)"
                 is_remote = "remote" in clean_desc.lower()
 
                 if "|" in first_line:
@@ -327,6 +412,10 @@ async def fetch_hackernews_jobs(query: Optional[str] = None) -> List[Dict[str, A
                         title = parts[1].strip()
                     if len(parts) >= 3 and parts[2]:
                         location = parts[2].strip()
+
+                # US filter
+                if us_only and not is_us_eligible(location=location, title=title, text=clean_desc):
+                    continue
 
                 cid = c.get("objectID")
                 hn_url = f"https://news.ycombinator.com/item?id={cid}"
@@ -348,14 +437,14 @@ async def fetch_hackernews_jobs(query: Optional[str] = None) -> List[Dict[str, A
         logger.warning(f"Error fetching Hacker News Who is Hiring jobs: {e}")
     return results
 
-# 7. Adzuna API (Indexes Indeed, Monster, ZipRecruiter, LinkedIn, etc.)
+# 7. Adzuna API (US Jobs across Indeed, ZipRecruiter, etc.)
 async def fetch_adzuna_jobs(
     query: Optional[str] = None,
     app_id: Optional[str] = None,
-    app_key: Optional[str] = None
+    app_key: Optional[str] = None,
+    us_only: bool = True
 ) -> List[Dict[str, Any]]:
-    """Fetch live jobs across Indeed, ZipRecruiter & major boards via Adzuna API."""
-    # Check env vars if not passed
+    """Fetch live US jobs across Indeed, ZipRecruiter & major boards via Adzuna API."""
     app_id = app_id or os.getenv("ADZUNA_APP_ID")
     app_key = app_key or os.getenv("ADZUNA_APP_KEY")
 
@@ -364,7 +453,7 @@ async def fetch_adzuna_jobs(
         return []
 
     search_query = query or "software developer"
-    url = f"https://api.adzuna.com/v1/api/jobs/us/search/1"
+    url = "https://api.adzuna.com/v1/api/jobs/us/search/1"
     params = {
         "app_id": app_id,
         "app_key": app_key,
@@ -382,13 +471,16 @@ async def fetch_adzuna_jobs(
                 for item in items:
                     title = item.get("title", "")
                     company = item.get("company", {}).get("display_name", "Company")
-                    loc_display = item.get("location", {}).get("display_name", "USA")
+                    loc_display = item.get("location", {}).get("display_name", "United States")
                     salary_min = float(item.get("salary_min", 0)) if item.get("salary_min") else None
                     salary_max = float(item.get("salary_max", 0)) if item.get("salary_max") else None
                     desc = clean_html(item.get("description", ""))
                     apply_url = item.get("redirect_url", "")
                     category = item.get("category", {}).get("label", "IT Jobs")
                     is_remote = "remote" in title.lower() or "remote" in desc.lower() or "remote" in loc_display.lower()
+
+                    if us_only and not is_us_eligible(location=loc_display, title=title, text=desc):
+                        continue
 
                     results.append({
                         "title": title,
@@ -407,34 +499,34 @@ async def fetch_adzuna_jobs(
         logger.warning(f"Error fetching Adzuna jobs: {e}")
     return results
 
-# Aggregated Search with Source Filtering
+# Aggregated Search with Source Filtering & US-Only Enforcement
 async def search_aggregated_jobs(
     query: Optional[str] = None,
     source: Optional[str] = None,
     adzuna_app_id: Optional[str] = None,
-    adzuna_app_key: Optional[str] = None
+    adzuna_app_key: Optional[str] = None,
+    us_only: bool = True
 ) -> List[Dict[str, Any]]:
-    """Aggregates listings concurrently across all supported boards with deduplication."""
+    """Aggregates listings concurrently across all supported boards with US filtering."""
 
     tasks = []
     source_lower = (source or "all").lower()
 
     if source_lower in ("all", "weworkremotely"):
-        tasks.append(fetch_weworkremotely_jobs(query))
+        tasks.append(fetch_weworkremotely_jobs(query, us_only=us_only))
     if source_lower in ("all", "himalayas"):
-        tasks.append(fetch_himalayas_jobs(query))
+        tasks.append(fetch_himalayas_jobs(query, us_only=us_only))
     if source_lower in ("all", "hackernews"):
-        tasks.append(fetch_hackernews_jobs(query))
+        tasks.append(fetch_hackernews_jobs(query, us_only=us_only))
     if source_lower in ("all", "remoteok"):
-        tasks.append(fetch_remoteok_jobs(query))
+        tasks.append(fetch_remoteok_jobs(query, us_only=us_only))
     if source_lower in ("all", "arbeitnow"):
-        tasks.append(fetch_arbeitnow_jobs(query))
+        tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
     if source_lower in ("all", "jobicy"):
-        tasks.append(fetch_jobicy_jobs(query))
+        tasks.append(fetch_jobicy_jobs(query, us_only=us_only))
     if source_lower in ("all", "adzuna"):
-        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key))
+        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only))
 
-    # Run selected sources in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
 
     combined = []
