@@ -88,7 +88,7 @@ def _term_matches(term: str, full_text: str) -> bool:
     t = term.lower().strip()
     if not t:
         return True
-    # Word boundary match for short tokens (<= 3 chars, e.g. ui, ai, ml, go)
+    # Word boundary match for short tokens (<= 3 chars, e.g. ui, ai, ml, go, jr, sr)
     if len(t) <= 3:
         if re.search(r'\b' + re.escape(t) + r'\b', full_text):
             return True
@@ -98,11 +98,14 @@ def _term_matches(term: str, full_text: str) -> bool:
 
     synonym_groups = [
         {"developer", "engineer", "dev", "programmer", "software", "coder", "architect"},
+        {"junior", "jr", "entry", "entry-level", "associate", "new grad", "graduate", "apprentice"},
+        {"senior", "sr", "lead", "principal", "staff"},
         {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
         {"backend", "back-end", "api", "server", "django", "fastapi"},
         {"fullstack", "full-stack", "full stack"},
         {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker"},
         {"data", "machine learning", "ml", "ai", "data engineer", "data scientist"},
+        {"remote", "wfh", "work from home", "anywhere", "telecommute"},
     ]
     for group in synonym_groups:
         if t in group:
@@ -113,6 +116,9 @@ def _term_matches(term: str, full_text: str) -> bool:
                 else:
                     if syn in full_text:
                         return True
+            if t in {"junior", "jr", "entry", "entry-level", "associate"}:
+                if re.search(r'\b(i|1)\b', full_text) or "early career" in full_text:
+                    return True
     return False
 
 def matches_query(
@@ -124,8 +130,8 @@ def matches_query(
 ) -> bool:
     """
     Smart multi-keyword and synonym matching across title, company, tags, and description.
-    When multiple keywords are queried (e.g. 'python remote' or 'react fullstack'),
-    every keyword or concept must be satisfied.
+    When multiple keywords are queried (e.g. 'python remote' or 'junior react developer'),
+    every keyword or concept cluster is evaluated flexibly.
     """
     if not query:
         return True
@@ -140,13 +146,14 @@ def matches_query(
     if q in full_text:
         return True
 
-    # Normalize common composite expressions into single tokens
-    normalized_q = q.replace("full stack", "fullstack").replace("front end", "frontend").replace("back end", "backend")
-    terms = [t for t in normalized_q.split() if len(t) > 1]
+    # Normalize punctuation, composite phrases, and separators
+    normalized_q = re.sub(r"[/,()+-]", " ", q)
+    normalized_q = normalized_q.replace("full stack", "fullstack").replace("front end", "frontend").replace("back end", "backend")
+    terms = [t for t in normalized_q.split() if len(t) > 1 and t not in ("and", "or", "the", "for", "with", "in")]
     if not terms:
         return True
 
-    # Every term must match
+    # Every distinct term concept must be satisfied
     return all(_term_matches(term, full_text) for term in terms)
 
 
@@ -247,7 +254,7 @@ async def fetch_arbeitnow_jobs(query: Optional[str] = None, us_only: bool = True
 # 3. Jobicy
 async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch jobs from Jobicy public API."""
-    url = "https://jobicy.com/api/v2/remote-jobs?count=50&geo=usa" if us_only else "https://jobicy.com/api/v2/remote-jobs?count=50"
+    url = "https://jobicy.com/api/v2/remote-jobs?count=50&tag=dev&geo=usa" if us_only else "https://jobicy.com/api/v2/remote-jobs?count=50&tag=dev"
     results = []
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -482,7 +489,7 @@ async def fetch_hackernews_jobs(query: Optional[str] = None, us_only: bool = Tru
     return results
 
 # 7. Indeed (Direct Scraper via JobSpy)
-def _scrape_indeed_sync(search_term: str, location: str, results_wanted: int = 25) -> List[Dict[str, Any]]:
+def _scrape_indeed_sync(search_term: str, location: str, is_remote: bool = False, results_wanted: int = 25) -> List[Dict[str, Any]]:
     """Synchronous worker that scrapes live Indeed postings via JobSpy."""
     try:
         from jobspy import scrape_jobs
@@ -490,6 +497,7 @@ def _scrape_indeed_sync(search_term: str, location: str, results_wanted: int = 2
             site_name=["indeed"],
             search_term=search_term,
             location=location,
+            is_remote=is_remote,
             results_wanted=results_wanted,
             country_indeed="USA",
         )
@@ -508,18 +516,22 @@ def _scrape_indeed_sync(search_term: str, location: str, results_wanted: int = 2
             desc = clean_html(str(row.get("description") or ""))
             min_sal = float(row.get("min_amount")) if row.get("min_amount") is not None and str(row.get("min_amount")) != "nan" else None
             max_sal = float(row.get("max_amount")) if row.get("max_amount") is not None and str(row.get("max_amount")) != "nan" else None
-            is_remote = bool(row.get("is_remote", False)) or "remote" in loc.lower()
+            job_is_remote = bool(row.get("is_remote", False)) or "remote" in loc.lower() or is_remote
+
+            tags = ["indeed", "direct-hire"]
+            if job_is_remote:
+                tags.append("remote")
 
             jobs_list.append({
                 "title": title,
                 "company": company or "Indeed Employer",
-                "location": loc,
-                "workplace_type": "remote" if is_remote else "hybrid",
+                "location": "Remote" if job_is_remote and loc in ("", "USA") else loc,
+                "workplace_type": "remote" if job_is_remote else "hybrid",
                 "url": url,
                 "salary_min": min_sal,
                 "salary_max": max_sal,
                 "salary_currency": str(row.get("currency") or "USD") if str(row.get("currency")) != "nan" else "USD",
-                "tags": ["indeed", "direct-hire"],
+                "tags": tags,
                 "description": desc,
                 "source": "indeed",
             })
@@ -530,13 +542,23 @@ def _scrape_indeed_sync(search_term: str, location: str, results_wanted: int = 2
 
 async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch live US listings directly from Indeed."""
-    search_term = query.strip() if query and query.strip() else "Software Developer"
-    location = "United States" if us_only else "Remote"
+    q_lower = (query or "").lower().strip()
+    is_remote_query = "remote" in q_lower or "wfh" in q_lower or "work from home" in q_lower
+
+    # Clean query for search_term: remove the word 'remote' so Indeed gets the pure job title
+    clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower).strip()
+    clean_term = re.sub(r"[/,()+-]", " ", clean_term)
+    clean_term = " ".join(clean_term.split())
+    search_term = clean_term if clean_term else "Software Developer"
+
+    location = "Remote" if is_remote_query else ("United States" if us_only else "Remote")
     try:
-        raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, location, 25)
+        raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, location, is_remote_query, 25)
         filtered = []
         for j in raw_jobs:
             if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            if not matches_query(query, j["title"], j["company"], j["tags"], j["description"]):
                 continue
             filtered.append(j)
         return filtered
@@ -545,14 +567,15 @@ async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -
         return []
 
 # 8. ZipRecruiter (Direct Live Scraper via curl_cffi)
-def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True) -> List[Dict[str, Any]]:
+def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote: bool = False) -> List[Dict[str, Any]]:
     """Synchronous worker that scrapes live ZipRecruiter postings via curl_cffi with browser impersonation."""
     try:
         from curl_cffi import requests as cffi_requests
         s = cffi_requests.Session(impersonate="safari")
         search_q = search_term or "software developer"
-        encoded_q = search_q.replace(" ", "+")
-        loc_param = "United+States" if us_only else "Remote"
+        clean_q = re.sub(r"[/,()+-]", " ", search_q)
+        encoded_q = "+".join(clean_q.split())
+        loc_param = "Remote" if is_remote else ("United+States" if us_only else "Remote")
         url = f"https://www.ziprecruiter.com/jobs-search?search={encoded_q}&location={loc_param}"
         r = s.get(url, timeout=12)
         if r.status_code != 200:
@@ -575,17 +598,21 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True) -> List[Di
             company = comp_el.text.strip() if comp_el else "ZipRecruiter Employer"
 
             loc_el = art.find("a", {"data-testid": "job-card-location"})
-            location = loc_el.text.strip() if loc_el else "USA"
+            location = loc_el.text.strip() if loc_el else ("Remote" if is_remote else "USA")
 
-            is_remote = False
+            card_is_remote = is_remote or "remote" in location.lower() or "remote" in title.lower()
             salary_min = None
             salary_max = None
             tags = ["ziprecruiter", "direct-hire"]
+            if card_is_remote:
+                tags.append("remote")
 
             for p in art.find_all(["p", "span"]):
                 t = p.text.strip()
                 if "remote" in t.lower():
-                    is_remote = True
+                    card_is_remote = True
+                    if "remote" not in tags:
+                        tags.append("remote")
                 if t.startswith("$"):
                     m = re.findall(r"\$([0-9,]+(?:\.[0-9]+)?)(k)?", t, re.IGNORECASE)
                     if m:
@@ -595,17 +622,18 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True) -> List[Di
                 if t in ["Full-time", "Part-time", "Contract"]:
                     tags.append(t.lower())
 
+            desc_loc = "Remote" if card_is_remote else location
             jobs_list.append({
                 "title": title,
                 "company": company,
-                "location": location,
-                "workplace_type": "remote" if is_remote else "hybrid",
+                "location": desc_loc,
+                "workplace_type": "remote" if card_is_remote else "hybrid",
                 "url": link,
                 "salary_min": salary_min,
                 "salary_max": salary_max,
                 "salary_currency": "USD",
                 "tags": tags,
-                "description": f"{title} at {company} in {location}. Full listing available on ZipRecruiter.",
+                "description": f"{title} ({desc_loc}) at {company}. Full listing available on ZipRecruiter.",
                 "source": "ziprecruiter",
             })
             if len(jobs_list) >= 30:
@@ -617,9 +645,11 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True) -> List[Di
 
 async def fetch_ziprecruiter_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
     """Fetch live US listings directly from ZipRecruiter."""
+    q_lower = (query or "").lower().strip()
+    is_remote_query = "remote" in q_lower or "wfh" in q_lower or "work from home" in q_lower
     search_term = query.strip() if query and query.strip() else "Software Developer"
     try:
-        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only)
+        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query)
         filtered = []
         for j in raw_jobs:
             if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):

@@ -130,9 +130,15 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         fullText.includes('entry-level') ||
         fullText.includes('associate') ||
         fullText.includes('new grad') ||
+        fullText.includes('graduate') ||
+        fullText.includes('early career') ||
+        fullText.includes('apprentice') ||
         fullText.includes('0-2 years') ||
         fullText.includes('1-2 years') ||
-        /\bjr\.?\b/i.test(title)
+        fullText.includes('0-1 year') ||
+        /\bjr\.?\b/i.test(title) ||
+        /\b(software engineer|developer|engineer|analyst|programmer)\s+(i|1)\b/i.test(title) ||
+        /\b(level|tier)\s+(i|1)\b/i.test(title)
       );
     case 'mid':
       return (
@@ -307,7 +313,10 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         loc.includes('remote') ||
         title.includes('remote') ||
         fullText.includes('work from home') ||
-        fullText.includes('anywhere')
+        fullText.includes('wfh') ||
+        fullText.includes('anywhere') ||
+        fullText.includes('telecommute') ||
+        Boolean(job.tags && job.tags.some((t) => t.toLowerCase().includes('remote')))
       );
     case 'hybrid':
       return (
@@ -348,31 +357,90 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
   }
 };
 
+const FILTER_SEARCH_TERMS: Record<string, string> = {
+  // Experience
+  junior: 'junior',
+  mid: 'mid-level',
+  senior: 'senior',
+  lead: 'lead',
+  manager: 'manager',
+
+  // Workplace
+  remote: 'remote',
+  hybrid: 'hybrid',
+  onsite: 'onsite',
+  contract: 'contract',
+  internship: 'intern',
+  fulltime: 'full-time',
+
+  // Role
+  fullstack: 'full stack',
+  frontend: 'frontend',
+  backend: 'backend',
+  devops: 'devops',
+  data_ai: 'data',
+  mobile: 'mobile',
+  security: 'security',
+  qa: 'qa',
+
+  // Tech / Language
+  python: 'python',
+  javascript: 'javascript',
+  typescript: 'typescript',
+  react: 'react',
+  nodejs: 'nodejs',
+  golang: 'golang',
+  java: 'java',
+  csharp: 'c#',
+  cpp: 'c++',
+  rust: 'rust',
+  sql: 'sql',
+  aws: 'aws',
+};
+
 const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[]): string => {
+  const parts: string[] = [];
+
   if (customQuery.trim()) {
-    return customQuery.trim();
-  }
-  // Find active language or role options to use as search keywords
-  const activeRoles = FILTER_GROUPS.find((g) => g.id === 'role')
-    ?.options.filter((o) => activeFilterIds.includes(o.id))
-    .map((o) => o.label) || [];
-  const activeLangs = FILTER_GROUPS.find((g) => g.id === 'language')
-    ?.options.filter((o) => activeFilterIds.includes(o.id))
-    .map((o) => o.label) || [];
-
-  const keywords = [...activeRoles, ...activeLangs].slice(0, 2);
-  if (keywords.length > 0) {
-    return keywords.join(' ');
+    parts.push(customQuery.trim());
   }
 
-  const activeExp = FILTER_GROUPS.find((g) => g.id === 'experience')
-    ?.options.filter((o) => activeFilterIds.includes(o.id))
-    .map((o) => o.label) || [];
-  if (activeExp.length > 0) {
-    return `${activeExp[0]} developer`;
+  // 1. Experience keywords
+  const expFilters = activeFilterIds.filter((id) =>
+    ['junior', 'mid', 'senior', 'lead', 'manager'].includes(id)
+  );
+  if (expFilters.length > 0) {
+    parts.push(FILTER_SEARCH_TERMS[expFilters[0]] || expFilters[0]);
   }
 
-  return 'developer';
+  // 2. Tech / Language keywords
+  const langFilters = activeFilterIds.filter((id) =>
+    ['python', 'javascript', 'typescript', 'react', 'nodejs', 'golang', 'java', 'csharp', 'cpp', 'rust', 'sql', 'aws'].includes(id)
+  );
+  if (langFilters.length > 0) {
+    parts.push(FILTER_SEARCH_TERMS[langFilters[0]] || langFilters[0]);
+  }
+
+  // 3. Role keywords
+  const roleFilters = activeFilterIds.filter((id) =>
+    ['fullstack', 'frontend', 'backend', 'devops', 'data_ai', 'mobile', 'security', 'qa'].includes(id)
+  );
+  if (roleFilters.length > 0) {
+    parts.push(FILTER_SEARCH_TERMS[roleFilters[0]] || roleFilters[0]);
+  } else if (!customQuery.trim() && langFilters.length === 0) {
+    // Default core discipline so the query is recognized on job boards
+    parts.push('developer');
+  }
+
+  // 4. Workplace keywords (e.g. remote)
+  const wpFilters = activeFilterIds.filter((id) =>
+    ['remote', 'hybrid', 'contract', 'internship'].includes(id)
+  );
+  if (wpFilters.length > 0) {
+    parts.push(FILTER_SEARCH_TERMS[wpFilters[0]] || wpFilters[0]);
+  }
+
+  return parts.join(' ').trim() || 'developer';
 };
 
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
