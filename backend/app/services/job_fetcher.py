@@ -582,6 +582,23 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
             return []
 
         soup = BeautifulSoup(r.text, "html.parser")
+
+        # Parse canonical direct job URLs from Schema.org ItemList script tag
+        url_map = {}
+        for sc in soup.find_all("script"):
+            txt = sc.text or ""
+            if "schema.org" in txt and "ItemList" in txt:
+                try:
+                    import json
+                    data = json.loads(txt)
+                    for it in data.get("itemListElement", []):
+                        name = it.get("name", "").strip()
+                        u = it.get("url", "").strip()
+                        if name and u:
+                            url_map[name.lower()] = u
+                except Exception:
+                    pass
+
         articles = soup.find_all("article")
         jobs_list = []
         for art in articles:
@@ -589,16 +606,26 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
             if not h2:
                 continue
             title = h2.text.strip()
-            link_el = h2.find("a") or art.find("a")
-            link = link_el["href"] if link_el and "href" in link_el.attrs else ""
-            if link.startswith("/"):
-                link = f"https://www.ziprecruiter.com{link}"
 
-            comp_el = art.find("a", {"data-testid": "job-card-company"}) or art.find("p")
-            company = comp_el.text.strip() if comp_el else "ZipRecruiter Employer"
+            # Resolve direct job posting link
+            link = url_map.get(title.lower(), "")
+            if not link:
+                for a in art.find_all("a"):
+                    href = a.get("href", "")
+                    if "/Job/" in href or "jid=" in href:
+                        link = href if href.startswith("http") else f"https://www.ziprecruiter.com{href}"
+                        break
+            if not link:
+                link_el = h2.find("a") or art.find("a")
+                link = link_el["href"] if link_el and "href" in link_el.attrs else ""
+                if link.startswith("/"):
+                    link = f"https://www.ziprecruiter.com{link}"
 
-            loc_el = art.find("a", {"data-testid": "job-card-location"})
-            location = loc_el.text.strip() if loc_el else ("Remote" if is_remote else "USA")
+            co_link = art.find("a", href=re.compile(r"/co/")) or art.find("a", {"data-testid": "job-card-company"})
+            company = co_link.text.strip() if co_link else "ZipRecruiter Employer"
+
+            loc_link = art.find("a", href=re.compile(r"location=")) or art.find("a", {"data-testid": "job-card-location"})
+            location = loc_link.text.strip() if loc_link else ("Remote" if is_remote else "USA")
 
             card_is_remote = is_remote or "remote" in location.lower() or "remote" in title.lower()
             salary_min = None
