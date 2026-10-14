@@ -18,6 +18,8 @@ import {
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   EyeOff,
   Eye,
   Undo2
@@ -482,6 +484,11 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
   const [isManageHiddenOpen, setIsManageHiddenOpen] = useState(false);
   const [toastJob, setToastJob] = useState<DiscoveredJob | null>(null);
 
+  // Pagination State (Limit 30 listings per page)
+  const ITEMS_PER_PAGE = 30;
+  const [currentPage, setCurrentPage] = useState(1);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -694,6 +701,42 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
       return true;
     });
   }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies]);
+
+  // Reset pagination to page 1 whenever search, filters, source, or view mode changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * ITEMS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, filteredJobs.length);
+
+  const paginatedJobs = useMemo(() => {
+    return filteredJobs.slice(startIndex, endIndex);
+  }, [filteredJobs, startIndex, endIndex]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages || newPage === safePage) return;
+    setCurrentPage(newPage);
+    mainScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (safePage <= 4) {
+        pages.push(1, 2, 3, 4, 5, '...', totalPages);
+      } else if (safePage >= totalPages - 3) {
+        pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+      } else {
+        pages.push(1, '...', safePage - 1, safePage, safePage + 1, '...', totalPages);
+      }
+    }
+    return pages;
+  };
 
   const handleAddJob = async (job: DiscoveredJob) => {
     setAddingUrl(job.url);
@@ -980,7 +1023,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
       </aside>
 
       {/* Right Main Content Area: Independent Vertical Scroll Container */}
-      <main className="flex-1 min-w-0 min-h-0 flex flex-col h-full max-h-full overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8 space-y-6">
+      <main ref={mainScrollRef} className="flex-1 min-w-0 min-h-0 flex flex-col h-full max-h-full overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Header Banner */}
         <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/30 rounded-3xl p-6 sm:p-8 shrink-0">
           <div className="max-w-3xl space-y-3">
@@ -1171,6 +1214,11 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
         <div className="flex items-center justify-between text-xs text-slate-400 px-1">
           <span>
             Found <strong className="text-slate-200">{filteredJobs.length}</strong> {showHiddenOnly ? 'hidden' : 'matching'} listings
+            {filteredJobs.length > 0 && totalPages > 1 && (
+              <span className="text-slate-400">
+                {' '}• Showing <strong className="text-emerald-400">{startIndex + 1}–{endIndex}</strong> (Page {safePage} of {totalPages})
+              </span>
+            )}
             {!showHiddenOnly && jobs.length !== filteredJobs.length && (
               <span className="text-slate-500"> (filtered from {jobs.length} total)</span>
             )}
@@ -1248,8 +1296,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filteredJobs.map((job, idx) => {
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {paginatedJobs.map((job, idx) => {
               const isAdded = addedUrls.has(job.url);
               const isAddingThis = addingUrl === job.url;
 
@@ -1365,6 +1414,69 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                 </div>
               );
             })}
+          </div>
+
+            {/* Pagination Controls Bar */}
+            {totalPages > 1 && (
+              <div className="pt-3 pb-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+                <div className="text-slate-400">
+                  Showing <strong className="text-slate-200">{startIndex + 1}</strong> to{' '}
+                  <strong className="text-slate-200">{endIndex}</strong> of{' '}
+                  <strong className="text-slate-200">{filteredJobs.length}</strong> listings
+                </div>
+
+                <div className="flex items-center space-x-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handlePageChange(safePage - 1)}
+                    disabled={safePage <= 1}
+                    className="flex items-center space-x-1 px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800/80 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-300 hover:text-white transition font-medium"
+                    title="Previous page"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span>Prev</span>
+                  </button>
+
+                  <div className="flex items-center space-x-1 px-1">
+                    {getPageNumbers().map((p, idx) => {
+                      if (typeof p === 'string') {
+                        return (
+                          <span key={`ellipsis-${idx}`} className="px-2 text-slate-500 font-bold select-none">
+                            ...
+                          </span>
+                        );
+                      }
+                      const isCurrent = p === safePage;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => handlePageChange(p)}
+                          className={`min-w-[32px] h-8 px-2 rounded-xl text-xs font-semibold border transition flex items-center justify-center ${
+                            isCurrent
+                              ? 'bg-emerald-600 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40'
+                              : 'bg-slate-800/70 border-slate-700/70 text-slate-300 hover:text-white hover:bg-slate-700'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePageChange(safePage + 1)}
+                    disabled={safePage >= totalPages}
+                    className="flex items-center space-x-1 px-3 py-1.5 rounded-xl border border-slate-700 bg-slate-800/80 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-300 hover:text-white transition font-medium"
+                    title="Next page"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
