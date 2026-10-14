@@ -17,7 +17,10 @@ import {
   Globe,
   SlidersHorizontal,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  EyeOff,
+  Eye,
+  Undo2
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -454,7 +457,69 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
+  // Hidden Jobs State (persisted in localStorage)
+  const [hiddenJobsMap, setHiddenJobsMap] = useState<Record<string, DiscoveredJob & { hiddenAt: string }>>(() => {
+    try {
+      const raw = localStorage.getItem('job_pulse_hidden_jobs');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [showHiddenOnly, setShowHiddenOnly] = useState(false);
+  const [isManageHiddenOpen, setIsManageHiddenOpen] = useState(false);
+  const [toastJob, setToastJob] = useState<DiscoveredJob | null>(null);
+
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hiddenUrls = useMemo(() => new Set(Object.keys(hiddenJobsMap)), [hiddenJobsMap]);
+  const hiddenCount = hiddenUrls.size;
+
+  const saveHiddenMap = (newMap: Record<string, DiscoveredJob & { hiddenAt: string }>) => {
+    setHiddenJobsMap(newMap);
+    try {
+      localStorage.setItem('job_pulse_hidden_jobs', JSON.stringify(newMap));
+    } catch (err) {
+      console.error('Failed to save hidden jobs to localStorage:', err);
+    }
+  };
+
+  const handleHideJob = (job: DiscoveredJob) => {
+    const updated = {
+      ...hiddenJobsMap,
+      [job.url]: {
+        ...job,
+        hiddenAt: new Date().toISOString(),
+      },
+    };
+    saveHiddenMap(updated);
+
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastJob(job);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastJob(null);
+    }, 6000);
+  };
+
+  const handleUnhideJob = (jobUrl: string) => {
+    const updated = { ...hiddenJobsMap };
+    delete updated[jobUrl];
+    saveHiddenMap(updated);
+  };
+
+  const handleUnhideAll = () => {
+    saveHiddenMap({});
+    setShowHiddenOnly(false);
+    setIsManageHiddenOpen(false);
+  };
+
+  const handleUndoHide = () => {
+    if (toastJob) {
+      handleUnhideJob(toastJob.url);
+      setToastJob(null);
+    }
+  };
 
   const fetchJobs = async (
     searchQuery: string = '',
@@ -479,6 +544,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     fetchJobs('developer', 'all', true);
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, []);
 
@@ -542,11 +608,16 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   };
 
   // Compound client-side filtering:
+  // - Handles hidden listings pool (either active or hidden only)
   // - Matches source platform
   // - Matches every custom search query word
   // - Category logic: AND across categories, OR within same category
   const filteredJobs = useMemo(() => {
-    return jobs.filter((job) => {
+    const pool = showHiddenOnly
+      ? Object.values(hiddenJobsMap)
+      : jobs.filter((job) => !hiddenUrls.has(job.url));
+
+    return pool.filter((job) => {
       // 1. Source board filter
       if (selectedSource !== 'all' && job.source.toLowerCase() !== selectedSource.toLowerCase()) {
         return false;
@@ -567,8 +638,6 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       }
 
       // 3. Category Group filtering:
-      // Across different categories: AND (job must satisfy EVERY active category)
-      // Within the same category: OR (job matches ANY selected option in that category)
       for (const group of FILTER_GROUPS) {
         const selectedInGroup = group.options.filter((opt) => selectedFilters.includes(opt.id));
         if (selectedInGroup.length > 0) {
@@ -581,7 +650,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
       return true;
     });
-  }, [jobs, selectedSource, selectedFilters, query]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query]);
 
   const handleAddJob = async (job: DiscoveredJob) => {
     setAddingUrl(job.url);
@@ -707,6 +776,42 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
           </div>
           <span className={`w-2.5 h-2.5 rounded-full ${usOnly ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
         </button>
+
+        {/* Hidden Listings Toggle */}
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={() => setShowHiddenOnly(!showHiddenOnly)}
+            className={`flex-1 flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition ${
+              showHiddenOnly
+                ? 'bg-amber-950/70 border-amber-500/60 text-amber-300 shadow-xs ring-1 ring-amber-500/30'
+                : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Toggle between active and hidden listings"
+          >
+            <div className="flex items-center space-x-2">
+              {showHiddenOnly ? <Eye className="w-4 h-4 text-amber-400" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
+              <span>{showHiddenOnly ? 'Viewing Hidden' : 'Hidden Listings'}</span>
+            </div>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              showHiddenOnly
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'bg-slate-900 text-slate-400 border border-slate-700'
+            }`}>
+              {hiddenCount}
+            </span>
+          </button>
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsManageHiddenOpen(true)}
+              className="px-2.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/80 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+              title="Manage and restore hidden jobs"
+            >
+              Manage
+            </button>
+          )}
+        </div>
 
         {/* Source Platform Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800/80">
@@ -961,11 +1066,45 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
           </div>
         )}
 
+        {/* Hidden Listings Active Banner */}
+        {showHiddenOnly && (
+          <div className="bg-amber-950/40 border border-amber-800/50 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-200 shrink-0">
+            <div className="flex items-center space-x-2.5">
+              <EyeOff className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <span className="font-bold text-amber-300">Viewing Hidden Listings</span>
+                <span className="text-amber-200/80 ml-1.5">
+                  ({filteredJobs.length} hidden {filteredJobs.length === 1 ? 'listing' : 'listings'} match active filters)
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              {hiddenCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleUnhideAll}
+                  className="text-slate-300 hover:text-white underline font-medium transition"
+                >
+                  Unhide All ({hiddenCount})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowHiddenOnly(false)}
+                className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded-xl font-bold transition flex items-center space-x-1.5"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Return to Active Listings</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Results Counter */}
         <div className="flex items-center justify-between text-xs text-slate-400 px-1">
           <span>
-            Found <strong className="text-slate-200">{filteredJobs.length}</strong> matching listings
-            {jobs.length !== filteredJobs.length && (
+            Found <strong className="text-slate-200">{filteredJobs.length}</strong> {showHiddenOnly ? 'hidden' : 'matching'} listings
+            {!showHiddenOnly && jobs.length !== filteredJobs.length && (
               <span className="text-slate-500"> (filtered from {jobs.length} total)</span>
             )}
             {(selectedFilters.length > 0 || query.trim()) && (
@@ -988,33 +1127,58 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
         {/* Empty State */}
         {filteredJobs.length === 0 && !loading ? (
           <div className="text-center py-16 bg-slate-900/40 rounded-2xl border border-slate-800 space-y-3">
-            <Compass className="w-10 h-10 text-slate-600 mx-auto" />
-            <p className="text-slate-300 font-medium text-sm">
-              No jobs found matching your active filter combination
-            </p>
-            <p className="text-slate-500 text-xs max-w-md mx-auto">
-              Try toggling off one or more filters, or search the live boards directly for this combination.
-            </p>
-            <div className="pt-2 flex justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  const effective = getEffectiveSearchQuery(query, selectedFilters);
-                  fetchJobs(effective, selectedSource, usOnly);
-                }}
-                className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Fetch Live Across Boards</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleResetFilters}
-                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition"
-              >
-                Reset All Filters
-              </button>
-            </div>
+            {showHiddenOnly ? (
+              <>
+                <EyeOff className="w-10 h-10 text-slate-600 mx-auto" />
+                <p className="text-slate-300 font-medium text-sm">
+                  No hidden listings found
+                </p>
+                <p className="text-slate-500 text-xs max-w-md mx-auto">
+                  {hiddenCount === 0
+                    ? 'You have not hidden any job listings yet. Click the "Hide" button on any job card to hide it from your feed.'
+                    : 'None of your hidden listings match the current active search and filters.'}
+                </p>
+                <div className="pt-2 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowHiddenOnly(false)}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
+                  >
+                    <span>Return to Active Listings</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Compass className="w-10 h-10 text-slate-600 mx-auto" />
+                <p className="text-slate-300 font-medium text-sm">
+                  No jobs found matching your active filter combination
+                </p>
+                <p className="text-slate-500 text-xs max-w-md mx-auto">
+                  Try toggling off one or more filters, or search the live boards directly for this combination.
+                </p>
+                <div className="pt-2 flex justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const effective = getEffectiveSearchQuery(query, selectedFilters);
+                      fetchJobs(effective, selectedSource, usOnly);
+                    }}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Fetch Live Across Boards</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition"
+                  >
+                    Reset All Filters
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1034,9 +1198,30 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                         <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="truncate max-w-[150px] sm:max-w-[180px]">{job.company}</span>
                       </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
-                        {job.source}
-                      </span>
+                      <div className="flex items-center space-x-1.5 shrink-0">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
+                          {job.source}
+                        </span>
+                        {showHiddenOnly ? (
+                          <button
+                            type="button"
+                            onClick={() => handleUnhideJob(job.url)}
+                            className="text-amber-400 hover:text-amber-300 p-1 rounded-lg transition hover:bg-amber-950/40"
+                            title="Unhide this listing"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleHideJob(job)}
+                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition hover:bg-slate-700/60"
+                            title="Hide this listing"
+                          >
+                            <EyeOff className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Role Title */}
@@ -1076,15 +1261,38 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
                   {/* Actions */}
                   <div className="pt-4 mt-4 border-t border-slate-700/60 flex items-center justify-between gap-2">
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition shrink-0"
-                    >
-                      <span>Posting</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <div className="flex items-center space-x-3 shrink-0">
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition shrink-0"
+                      >
+                        <span>Posting</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                      {showHiddenOnly ? (
+                        <button
+                          type="button"
+                          onClick={() => handleUnhideJob(job.url)}
+                          className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center space-x-1 transition shrink-0 font-medium"
+                          title="Restore listing to active feed"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Unhide</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleHideJob(job)}
+                          className="text-xs text-slate-500 hover:text-rose-400 flex items-center space-x-1 transition shrink-0"
+                          title="Hide this listing"
+                        >
+                          <EyeOff className="w-3 h-3" />
+                          <span>Hide</span>
+                        </button>
+                      )}
+                    </div>
 
                     <button
                       onClick={() => handleAddJob(job)}
@@ -1114,6 +1322,132 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
           </div>
         )}
       </main>
+
+      {/* Manage Hidden Listings Modal */}
+      {isManageHiddenOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl">
+                  <EyeOff className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Hidden Listings</h3>
+                  <p className="text-xs text-slate-400">{hiddenCount} total hidden {hiddenCount === 1 ? 'listing' : 'listings'}</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                {hiddenCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleUnhideAll}
+                    className="px-3 py-1.5 rounded-xl text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 border border-rose-900/40 transition"
+                  >
+                    Unhide All
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsManageHiddenOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {hiddenCount === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+                  <EyeOff className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-slate-300 font-medium">No hidden listings</p>
+                  <p className="text-slate-500 max-w-xs mx-auto">When you click "Hide" on any job card, it will be saved here so you can easily restore it anytime.</p>
+                </div>
+              ) : (
+                Object.values(hiddenJobsMap).map((job) => (
+                  <div
+                    key={job.url}
+                    className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5 flex items-center justify-between gap-3 hover:bg-slate-800 transition"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-semibold text-slate-200 text-sm truncate">{job.title}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full border uppercase font-mono ${getSourceBadge(job.source)}`}>
+                          {job.source}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3 text-xs text-slate-400">
+                        <span>{job.company}</span>
+                        <span>•</span>
+                        <span>{job.location || 'Remote'}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-700 transition"
+                        title="Open posting"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleUnhideJob(job.url)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/40 transition flex items-center space-x-1"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Unhide</span>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsManageHiddenOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Undo Toast */}
+      {toastJob && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-3 bg-slate-800 text-white border border-slate-700 px-4 py-3 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-bottom-5 duration-200">
+          <EyeOff className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="text-xs max-w-xs truncate">
+            Hidden <span className="font-semibold text-slate-200">{toastJob.title}</span> at <span className="text-slate-300">{toastJob.company}</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleUndoHide}
+            className="text-xs font-bold text-emerald-400 hover:text-emerald-300 underline pl-1 shrink-0 flex items-center space-x-1"
+          >
+            <Undo2 className="w-3 h-3" />
+            <span>Undo</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setToastJob(null)}
+            className="text-slate-400 hover:text-white p-0.5 ml-1"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };
