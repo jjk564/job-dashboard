@@ -27,10 +27,93 @@ import {
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
 
-interface JobDiscoveryProps {
+export interface JobDiscoveryProps {
+  pipelineJobs?: Job[];
   onJobAdded: (job: Job) => void;
   onOpenSettings?: (tab?: 'ai' | 'hidden') => void;
 }
+
+export const normalizeUrl = (rawUrl?: string): string => {
+  if (!rawUrl) return '';
+  try {
+    const parsed = new URL(rawUrl);
+    const keepParams = new URLSearchParams();
+    for (const [key, val] of parsed.searchParams.entries()) {
+      if (
+        !['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'ref', 'source', 'from', 'fbclid', 'gclid', 'jid'].includes(key.toLowerCase())
+      ) {
+        keepParams.append(key, val);
+      }
+    }
+    const cleanSearch = keepParams.toString() ? `?${keepParams.toString()}` : '';
+    return `${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}${cleanSearch}`.toLowerCase();
+  } catch {
+    return rawUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
+  }
+};
+
+export const normalizeJobText = (text?: string): string => {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+export const findMatchingPipelineJob = (
+  discovered: DiscoveredJob,
+  pipelineJobs: Job[]
+): Job | undefined => {
+  if (!pipelineJobs || pipelineJobs.length === 0) return undefined;
+  const discUrlNorm = normalizeUrl(discovered.url);
+  const discTitleNorm = normalizeJobText(discovered.title);
+  const discCompNorm = normalizeJobText(discovered.company);
+
+  return pipelineJobs.find((pj) => {
+    // 1. Direct or normalized URL match
+    if (pj.url) {
+      if (pj.url === discovered.url) return true;
+      const pjUrlNorm = normalizeUrl(pj.url);
+      if (pjUrlNorm && discUrlNorm && pjUrlNorm === discUrlNorm) return true;
+    }
+
+    // 2. Exact Title + Company match
+    const pjTitleNorm = normalizeJobText(pj.title);
+    const pjCompNorm = normalizeJobText(pj.company);
+    if (
+      discTitleNorm &&
+      pjTitleNorm &&
+      discCompNorm &&
+      pjCompNorm &&
+      discTitleNorm === pjTitleNorm &&
+      discCompNorm === pjCompNorm
+    ) {
+      return true;
+    }
+
+    // 3. Substring Title match within same company
+    if (discCompNorm && pjCompNorm && discCompNorm === pjCompNorm) {
+      if (
+        (discTitleNorm.length > 5 && pjTitleNorm.includes(discTitleNorm)) ||
+        (pjTitleNorm.length > 5 && discTitleNorm.includes(pjTitleNorm))
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+};
+
+export const PIPELINE_STATUS_LABELS: Record<string, string> = {
+  WISHLIST: 'Saved',
+  TO_APPLY: 'Ready to Apply',
+  APPLIED: 'Applied',
+  INTERVIEWING: 'Interviewing',
+  OFFER: 'Offer',
+  REJECTED: 'Rejected',
+  ARCHIVED: 'Archived',
+};
 
 export interface FilterOption {
   id: string;
@@ -553,7 +636,50 @@ const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[])
   return parts.join(' ').trim() || 'developer';
 };
 
-export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSettings }) => {
+export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobAdded, onOpenSettings }) => {
+  const [internalPipelineJobs, setInternalPipelineJobs] = useState<Job[]>([]);
+  const [hidePipelineJobs, setHidePipelineJobs] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('job_pulse_hide_pipeline_jobs');
+      return stored !== null ? JSON.parse(stored) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleHidePipelineJobs = () => {
+    const nextVal = !hidePipelineJobs;
+    setHidePipelineJobs(nextVal);
+    try {
+      localStorage.setItem('job_pulse_hide_pipeline_jobs', JSON.stringify(nextVal));
+    } catch (err) {
+      console.error('Failed to save hidePipelineJobs preference:', err);
+    }
+  };
+
+  // Fetch pipeline jobs on mount to guarantee fresh pipeline data
+  useEffect(() => {
+    const syncPipeline = async () => {
+      try {
+        const data = await api.getJobs();
+        setInternalPipelineJobs(data);
+      } catch (err) {
+        console.error('Failed to fetch pipeline jobs in Discovery:', err);
+      }
+    };
+    syncPipeline();
+  }, []);
+
+  const allPipelineJobs = useMemo(() => {
+    const combined = [...(pipelineJobs || []), ...internalPipelineJobs];
+    const seen = new Set<number>();
+    return combined.filter((j) => {
+      if (seen.has(j.id)) return false;
+      seen.add(j.id);
+      return true;
+    });
+  }, [pipelineJobs, internalPipelineJobs]);
+
   const [query, setQuery] = useState('');
   const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
@@ -563,6 +689,23 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
+
+  // Map of discovered job URL -> matching pipeline Job
+  const pipelineMatchMap = useMemo(() => {
+    const map = new Map<string, Job>();
+    for (const job of jobs) {
+      const match = findMatchingPipelineJob(job, allPipelineJobs);
+      if (match) {
+        map.set(job.url, match);
+      }
+    }
+    return map;
+  }, [jobs, allPipelineJobs]);
+
+  // Count of discovered jobs that match pipeline
+  const inPipelineCount = useMemo(() => {
+    return pipelineMatchMap.size;
+  }, [pipelineMatchMap]);
 
   // Hidden Jobs State (persisted in localStorage)
   const [hiddenJobsMap, setHiddenJobsMap] = useState<Record<string, DiscoveredJob & { hiddenAt: string }>>(() => {
@@ -764,7 +907,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
       : jobs.filter((job) => !hiddenUrls.has(job.url));
 
     return pool.filter((job) => {
-      // 0. Company blacklist filter (excludes recruiter/company postings permanently when active)
+      // 0. Hide in-pipeline jobs when active
+      if (!showHiddenOnly && hidePipelineJobs && pipelineMatchMap.has(job.url)) {
+        return false;
+      }
+
+      // 0b. Company blacklist filter (excludes recruiter/company postings permanently when active)
       if (!showHiddenOnly && blockedCompanies.length > 0) {
         const comp = (job.company || '').toLowerCase();
         if (blockedCompanies.some((b) => b && comp.includes(b.toLowerCase()))) {
@@ -804,12 +952,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
 
       return true;
     });
-  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap]);
 
   // Reset pagination to page 1 whenever search, filters, source, or view mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly]);
+  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs]);
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -859,6 +1007,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
         status: 'WISHLIST',
       });
       setAddedUrls((prev) => new Set(prev).add(job.url));
+      setInternalPipelineJobs((prev) => [created, ...prev]);
       onJobAdded(created);
     } catch (err) {
       console.error('Failed to add job:', err);
@@ -1000,6 +1149,30 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
             Manage
           </button>
         </div>
+
+        {/* Hide In-Pipeline Toggle */}
+        <button
+          type="button"
+          onClick={toggleHidePipelineJobs}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition ${
+            hidePipelineJobs
+              ? 'bg-purple-950/70 border-purple-500/60 text-purple-300 shadow-xs'
+              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle hiding jobs that are already tracked in your Pipeline Kanban"
+        >
+          <div className="flex items-center space-x-2">
+            <Briefcase className="w-4 h-4 text-purple-400" />
+            <span>Hide In Pipeline</span>
+          </div>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+            hidePipelineJobs
+              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+              : 'bg-slate-900 text-slate-400 border border-slate-700'
+          }`}>
+            {inPipelineCount}
+          </span>
+        </button>
 
         {/* Source Platform Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800/80">
@@ -1267,6 +1440,22 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
               </span>
             )}
 
+            {/* Hide In Pipeline Pill */}
+            {hidePipelineJobs && inPipelineCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-950/70 text-purple-300 border border-purple-500/40 font-medium shadow-xs">
+                <Briefcase className="w-3 h-3 text-purple-400" />
+                <span>Hide In Pipeline</span>
+                <button
+                  type="button"
+                  onClick={toggleHidePipelineJobs}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-purple-800/50"
+                  title="Show in-pipeline jobs in discovery"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+
             {/* Clear All Filters Button */}
             {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all') && (
               <button
@@ -1315,19 +1504,43 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
         )}
 
         {/* Results Counter */}
-        <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-          <span>
-            Found <strong className="text-slate-200">{filteredJobs.length}</strong> {showHiddenOnly ? 'hidden' : 'matching'} listings
-            {filteredJobs.length > 0 && totalPages > 1 && (
-              <span className="text-slate-400">
-                {' '}• Showing <strong className="text-emerald-400">{startIndex + 1}–{endIndex}</strong> (Page {safePage} of {totalPages})
-              </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-1">
+          <div className="flex items-center flex-wrap gap-1.5">
+            <span>
+              Found <strong className="text-slate-200">{filteredJobs.length}</strong> {showHiddenOnly ? 'hidden' : 'matching'} listings
+              {filteredJobs.length > 0 && totalPages > 1 && (
+                <span className="text-slate-400">
+                  {' '}• Showing <strong className="text-emerald-400">{startIndex + 1}–{endIndex}</strong> (Page {safePage} of {totalPages})
+                </span>
+              )}
+            </span>
+
+            {/* In-Pipeline indicator badge/button */}
+            {!showHiddenOnly && inPipelineCount > 0 && (
+              <button
+                type="button"
+                onClick={toggleHidePipelineJobs}
+                className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition ${
+                  hidePipelineJobs
+                    ? 'bg-purple-950/60 text-purple-300 border-purple-800/60 hover:bg-purple-900/60'
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
+                }`}
+                title={hidePipelineJobs ? 'Click to show in-pipeline jobs in discovery feed' : 'Click to hide in-pipeline jobs from discovery feed'}
+              >
+                <Briefcase className="w-3 h-3 text-purple-400" />
+                <span>
+                  {hidePipelineJobs
+                    ? `${inPipelineCount} in pipeline (hidden)`
+                    : `Showing ${inPipelineCount} in pipeline (click to hide)`}
+                </span>
+              </button>
             )}
+
             {!showHiddenOnly && jobs.length !== filteredJobs.length && (
               <span className="text-slate-500"> (filtered from {jobs.length} total)</span>
             )}
             {(selectedFilters.length > 0 || query.trim()) && (
-              <span className="ml-1 text-slate-400">
+              <span className="text-slate-400">
                 for{' '}
                 <span className="text-emerald-400 font-semibold">
                   {[
@@ -1339,7 +1552,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                 </span>
               </span>
             )}
-          </span>
+          </div>
           {loading && <span className="text-emerald-400 animate-pulse font-medium">Fetching fresh jobs across boards...</span>}
         </div>
 
@@ -1403,13 +1616,18 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {paginatedJobs.map((job, idx) => {
-              const isAdded = addedUrls.has(job.url);
+              const matchingPipelineJob = pipelineMatchMap.get(job.url) || (addedUrls.has(job.url) ? { status: 'WISHLIST' } as Job : undefined);
+              const isAdded = Boolean(matchingPipelineJob || addedUrls.has(job.url));
               const isAddingThis = addingUrl === job.url;
 
               return (
                 <div
                   key={`${job.company}-${job.title}-${idx}`}
-                  className="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 rounded-2xl p-5 flex flex-col justify-between shadow-md hover:shadow-xl transition"
+                  className={`bg-slate-800/80 hover:bg-slate-800 border rounded-2xl p-5 flex flex-col justify-between shadow-md hover:shadow-xl transition ${
+                    matchingPipelineJob
+                      ? 'border-purple-500/60 ring-1 ring-purple-500/30'
+                      : 'border-slate-700/60'
+                  }`}
                 >
                   <div className="space-y-2.5">
                     {/* Header */}
@@ -1418,9 +1636,20 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                         <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="truncate max-w-[150px] sm:max-w-[180px]">{job.company}</span>
                       </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
-                        {job.source}
-                      </span>
+                      <div className="flex items-center space-x-1.5 shrink-0">
+                        {matchingPipelineJob && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full border font-semibold flex items-center space-x-1 bg-purple-950/80 text-purple-300 border-purple-700/60 shrink-0"
+                            title={`Already in your pipeline under "${PIPELINE_STATUS_LABELS[matchingPipelineJob.status] || matchingPipelineJob.status}"`}
+                          >
+                            <Briefcase className="w-3 h-3 text-purple-400 shrink-0" />
+                            <span>In Pipeline: {PIPELINE_STATUS_LABELS[matchingPipelineJob.status] || matchingPipelineJob.status}</span>
+                          </span>
+                        )}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
+                          {job.source}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Role Title */}
@@ -1493,27 +1722,39 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                       )}
                     </div>
 
-                    <button
-                      onClick={() => handleAddJob(job)}
-                      disabled={isAdded || isAddingThis}
-                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs shrink-0 ${
-                        isAdded
-                          ? 'bg-slate-700 text-emerald-400 cursor-default'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                      } disabled:opacity-70`}
-                    >
-                      {isAdded ? (
-                        <>
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Added to Pipeline</span>
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>{isAddingThis ? 'Adding...' : 'Add to Pipeline'}</span>
-                        </>
-                      )}
-                    </button>
+                    {matchingPipelineJob ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-950/70 text-purple-300 border border-purple-800/60 cursor-default shadow-xs shrink-0"
+                        title={`This job is already tracked in your pipeline under "${PIPELINE_STATUS_LABELS[matchingPipelineJob.status] || matchingPipelineJob.status}"`}
+                      >
+                        <Check className="w-3.5 h-3.5 text-purple-400" />
+                        <span>In Pipeline ({PIPELINE_STATUS_LABELS[matchingPipelineJob.status] || matchingPipelineJob.status})</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleAddJob(job)}
+                        disabled={isAdded || isAddingThis}
+                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs shrink-0 ${
+                          isAdded
+                            ? 'bg-slate-700 text-emerald-400 cursor-default'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        } disabled:opacity-70`}
+                      >
+                        {isAdded ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Added to Pipeline</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>{isAddingThis ? 'Adding...' : 'Add to Pipeline'}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               );

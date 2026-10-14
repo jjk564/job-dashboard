@@ -115,6 +115,7 @@ export const App: React.FC = () => {
 
             {activeTab === 'discovery' && (
               <JobDiscovery
+                pipelineJobs={jobs}
                 onJobAdded={handleJobAdded}
                 onOpenSettings={(tab) => {
                   setSettingsTab(tab || 'hidden');
