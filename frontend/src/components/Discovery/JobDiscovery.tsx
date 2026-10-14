@@ -566,7 +566,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row h-full overflow-hidden w-full bg-slate-900">
+    <div className="flex-1 min-h-0 flex flex-col lg:flex-row h-full max-h-full overflow-hidden w-full bg-slate-900">
       {/* Mobile Filter Toggle Bar (Small screens only) */}
       <div className="w-full lg:hidden p-3 bg-slate-950 border-b border-slate-800 shrink-0">
         <button
@@ -594,7 +594,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       <aside
         className={`${
           isFiltersExpanded ? 'flex' : 'hidden'
-        } lg:flex w-full lg:w-80 xl:w-88 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-950/60 backdrop-blur-md flex-col h-auto lg:h-full overflow-y-auto p-4 sm:p-5 space-y-4 shadow-xl z-10`}
+        } lg:flex w-full lg:w-80 xl:w-88 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-950/60 backdrop-blur-md flex-col h-auto lg:h-full lg:max-h-full min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4 shadow-xl z-10`}
       >
         {/* Sidebar Title & Reset All */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -741,7 +741,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       </aside>
 
       {/* Right Main Content Area: Independent Vertical Scroll Container */}
-      <main className="flex-1 min-w-0 flex flex-col h-full overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 min-w-0 min-h-0 flex flex-col h-full max-h-full overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Header Banner */}
         <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/30 rounded-3xl p-6 sm:p-8 shrink-0">
           <div className="max-w-3xl space-y-3">

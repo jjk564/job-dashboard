@@ -83,7 +83,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
+    <div className="h-screen max-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden">
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -93,7 +93,7 @@ export const App: React.FC = () => {
         jobCount={jobs.length}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
             Initializing local JobPulse pipeline...
