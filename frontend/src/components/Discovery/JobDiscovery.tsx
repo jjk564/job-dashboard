@@ -949,11 +949,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredJobs.map((job, idx) => {
               const isAdded = addedUrls.has(job.url);
               const isAddingThis = addingUrl === job.url;
-
 
               return (
                 <div
@@ -963,11 +962,11 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                   <div className="space-y-2.5">
                     {/* Header */}
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300">
-                        <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="truncate max-w-[160px]">{job.company}</span>
+                      <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300 min-w-0">
+                        <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate max-w-[150px] sm:max-w-[180px]">{job.company}</span>
                       </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase ${getSourceBadge(job.source)}`}>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
                         {job.source}
                       </span>
                     </div>
@@ -980,13 +979,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                     {/* Meta info */}
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
                       <span className="inline-flex items-center space-x-1 text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded border border-slate-700/40">
-                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                         <span className="truncate max-w-[120px]">{job.location || 'Remote'}</span>
                       </span>
 
                       {job.salary_min && (
                         <span className="inline-flex items-center space-x-1 text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40 font-medium">
-                          <DollarSign className="w-3 h-3" />
+                          <DollarSign className="w-3 h-3 shrink-0" />
                           <span>${Math.round(job.salary_min / 1000)}k+</span>
                         </span>
                       )}
@@ -1008,12 +1007,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                   </div>
 
                   {/* Actions */}
-                  <div className="pt-4 mt-4 border-t border-slate-700/60 flex items-center justify-between">
+                  <div className="pt-4 mt-4 border-t border-slate-700/60 flex items-center justify-between gap-2">
                     <a
                       href={job.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition"
+                      className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition shrink-0"
                     >
                       <span>Posting</span>
                       <ExternalLink className="w-3 h-3" />
@@ -1022,7 +1021,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                     <button
                       onClick={() => handleAddJob(job)}
                       disabled={isAdded || isAddingThis}
-                      className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-xs ${
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs shrink-0 ${
                         isAdded
                           ? 'bg-slate-700 text-emerald-400 cursor-default'
                           : 'bg-emerald-600 hover:bg-emerald-500 text-white'
