@@ -21,6 +21,7 @@ export const App: React.FC = () => {
   const [isAddJobOpen, setIsAddJobOpen] = useState(false);
   const [isImportUrlOpen, setIsImportUrlOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'ai' | 'hidden'>('ai');
 
   // Load jobs on mount
   useEffect(() => {
@@ -89,7 +90,10 @@ export const App: React.FC = () => {
         setActiveTab={setActiveTab}
         onOpenAddJob={() => setIsAddJobOpen(true)}
         onOpenImportUrl={() => setIsImportUrlOpen(true)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSettings={(tab) => {
+          setSettingsTab(tab || 'ai');
+          setIsSettingsOpen(true);
+        }}
         jobCount={jobs.length}
       />
 
@@ -110,7 +114,13 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'discovery' && (
-              <JobDiscovery onJobAdded={handleJobAdded} />
+              <JobDiscovery
+                onJobAdded={handleJobAdded}
+                onOpenSettings={(tab) => {
+                  setSettingsTab(tab || 'hidden');
+                  setIsSettingsOpen(true);
+                }}
+              />
             )}
 
             {activeTab === 'profile' && (
@@ -152,6 +162,7 @@ export const App: React.FC = () => {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsTab}
       />
     </div>
   );

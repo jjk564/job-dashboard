@@ -27,6 +27,7 @@ import { api } from '../../api/client';
 
 interface JobDiscoveryProps {
   onJobAdded: (job: Job) => void;
+  onOpenSettings?: (tab?: 'ai' | 'hidden') => void;
 }
 
 export interface FilterOption {
@@ -446,7 +447,7 @@ const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[])
   return parts.join(' ').trim() || 'developer';
 };
 
-export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
+export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSettings }) => {
   const [query, setQuery] = useState('');
   const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
@@ -466,6 +467,17 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       return {};
     }
   });
+
+  // Blocked Companies & Recruiters (persisted in localStorage)
+  const [blockedCompanies, setBlockedCompanies] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('job_pulse_blocked_companies');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [showHiddenOnly, setShowHiddenOnly] = useState(false);
   const [isManageHiddenOpen, setIsManageHiddenOpen] = useState(false);
   const [toastJob, setToastJob] = useState<DiscoveredJob | null>(null);
@@ -480,10 +492,32 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
     setHiddenJobsMap(newMap);
     try {
       localStorage.setItem('job_pulse_hidden_jobs', JSON.stringify(newMap));
+      window.dispatchEvent(new Event('job_pulse_storage_updated'));
     } catch (err) {
       console.error('Failed to save hidden jobs to localStorage:', err);
     }
   };
+
+  // Sync hidden jobs and company blacklist whenever modified from Settings modal or other components
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      try {
+        const rawHidden = localStorage.getItem('job_pulse_hidden_jobs');
+        setHiddenJobsMap(rawHidden ? JSON.parse(rawHidden) : {});
+        const rawBlocked = localStorage.getItem('job_pulse_blocked_companies');
+        setBlockedCompanies(rawBlocked ? JSON.parse(rawBlocked) : []);
+      } catch (err) {
+        console.error('Failed to sync storage:', err);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageUpdate);
+    window.addEventListener('job_pulse_storage_updated', handleStorageUpdate);
+    return () => {
+      window.removeEventListener('storage', handleStorageUpdate);
+      window.removeEventListener('job_pulse_storage_updated', handleStorageUpdate);
+    };
+  }, []);
 
   const handleHideJob = (job: DiscoveredJob) => {
     const updated = {
@@ -618,6 +652,14 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       : jobs.filter((job) => !hiddenUrls.has(job.url));
 
     return pool.filter((job) => {
+      // 0. Company blacklist filter (excludes recruiter/company postings permanently when active)
+      if (!showHiddenOnly && blockedCompanies.length > 0) {
+        const comp = (job.company || '').toLowerCase();
+        if (blockedCompanies.some((b) => b && comp.includes(b.toLowerCase()))) {
+          return false;
+        }
+      }
+
       // 1. Source board filter
       if (selectedSource !== 'all' && job.source.toLowerCase() !== selectedSource.toLowerCase()) {
         return false;
@@ -650,7 +692,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
       return true;
     });
-  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies]);
 
   const handleAddJob = async (job: DiscoveredJob) => {
     setAddingUrl(job.url);
@@ -801,16 +843,14 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
               {hiddenCount}
             </span>
           </button>
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsManageHiddenOpen(true)}
-              className="px-2.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/80 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition"
-              title="Manage and restore hidden jobs"
-            >
-              Manage
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => onOpenSettings ? onOpenSettings('hidden') : setIsManageHiddenOpen(true)}
+            className="px-2.5 py-2.5 rounded-xl text-xs font-semibold border border-slate-700/80 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+            title="Manage hidden listings and company blacklist in Settings"
+          >
+            Manage
+          </button>
         </div>
 
         {/* Source Platform Section */}

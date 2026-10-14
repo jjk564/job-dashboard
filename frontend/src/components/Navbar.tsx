@@ -14,7 +14,7 @@ interface NavbarProps {
   setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
   onOpenImportUrl: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: 'ai' | 'hidden') => void;
   jobCount: number;
 }
 
@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             <button
-              onClick={onOpenSettings}
+              onClick={() => onOpenSettings()}
               className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 border border-transparent hover:border-slate-700 transition"
               title="Settings & AI Configuration"
             >
