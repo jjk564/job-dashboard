@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, 
   Sparkles, 
@@ -11,7 +11,13 @@ import {
   RefreshCw,
   Compass,
   Filter,
-  X
+  X,
+  Briefcase,
+  Code,
+  Globe,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -20,7 +26,82 @@ interface JobDiscoveryProps {
   onJobAdded: (job: Job) => void;
 }
 
-const QUICK_TAGS = ['Remote', 'Python', 'React', 'Full Stack', 'Backend', 'Frontend', 'DevOps', 'TypeScript', 'Senior'];
+export interface FilterOption {
+  id: string;
+  label: string;
+  category: 'experience' | 'language' | 'role' | 'workplace';
+}
+
+export interface FilterGroupConfig {
+  id: 'experience' | 'language' | 'role' | 'workplace';
+  title: string;
+  icon: React.ReactNode;
+  options: FilterOption[];
+}
+
+const FILTER_GROUPS: FilterGroupConfig[] = [
+  {
+    id: 'experience',
+    title: 'Experience Level',
+    icon: <Briefcase className="w-4 h-4 text-purple-400" />,
+    options: [
+      { id: 'junior', label: 'Junior / Entry', category: 'experience' },
+      { id: 'mid', label: 'Mid-Level', category: 'experience' },
+      { id: 'senior', label: 'Senior', category: 'experience' },
+      { id: 'lead', label: 'Lead / Staff', category: 'experience' },
+      { id: 'manager', label: 'Manager / Director', category: 'experience' },
+    ],
+  },
+  {
+    id: 'language',
+    title: 'Languages & Core Tech',
+    icon: <Code className="w-4 h-4 text-emerald-400" />,
+    options: [
+      { id: 'python', label: 'Python', category: 'language' },
+      { id: 'javascript', label: 'JavaScript', category: 'language' },
+      { id: 'typescript', label: 'TypeScript', category: 'language' },
+      { id: 'react', label: 'React', category: 'language' },
+      { id: 'nodejs', label: 'Node.js', category: 'language' },
+      { id: 'golang', label: 'Go / Golang', category: 'language' },
+      { id: 'java', label: 'Java', category: 'language' },
+      { id: 'csharp', label: 'C# / .NET', category: 'language' },
+      { id: 'cpp', label: 'C / C++', category: 'language' },
+      { id: 'rust', label: 'Rust', category: 'language' },
+      { id: 'sql', label: 'SQL', category: 'language' },
+      { id: 'aws', label: 'AWS / Cloud', category: 'language' },
+    ],
+  },
+  {
+    id: 'role',
+    title: 'Role & Discipline',
+    icon: <Compass className="w-4 h-4 text-cyan-400" />,
+    options: [
+      { id: 'fullstack', label: 'Full Stack', category: 'role' },
+      { id: 'frontend', label: 'Frontend', category: 'role' },
+      { id: 'backend', label: 'Backend', category: 'role' },
+      { id: 'devops', label: 'DevOps / SRE', category: 'role' },
+      { id: 'data_ai', label: 'Data / AI / ML', category: 'role' },
+      { id: 'mobile', label: 'Mobile', category: 'role' },
+      { id: 'security', label: 'Security', category: 'role' },
+      { id: 'qa', label: 'QA / Testing', category: 'role' },
+    ],
+  },
+  {
+    id: 'workplace',
+    title: 'Workplace & Type',
+    icon: <Globe className="w-4 h-4 text-amber-400" />,
+    options: [
+      { id: 'remote', label: 'Remote', category: 'workplace' },
+      { id: 'hybrid', label: 'Hybrid', category: 'workplace' },
+      { id: 'onsite', label: 'On-site', category: 'workplace' },
+      { id: 'fulltime', label: 'Full-Time', category: 'workplace' },
+      { id: 'contract', label: 'Contract', category: 'workplace' },
+      { id: 'internship', label: 'Internship', category: 'workplace' },
+    ],
+  },
+];
+
+const ALL_FILTER_OPTIONS: FilterOption[] = FILTER_GROUPS.flatMap((g) => g.options);
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
@@ -35,15 +116,277 @@ const SOURCE_FILTERS = [
   { id: 'adzuna', label: 'Adzuna API' },
 ];
 
+const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): boolean => {
+  const loc = (job.location || '').toLowerCase();
+  const title = (job.title || '').toLowerCase();
+  const workplace = (job.workplace_type || '').toLowerCase();
+
+  switch (optionId) {
+    // Experience Level
+    case 'junior':
+      return (
+        fullText.includes('junior') ||
+        fullText.includes('entry level') ||
+        fullText.includes('entry-level') ||
+        fullText.includes('associate') ||
+        fullText.includes('new grad') ||
+        fullText.includes('0-2 years') ||
+        fullText.includes('1-2 years') ||
+        /\bjr\.?\b/i.test(title)
+      );
+    case 'mid':
+      return (
+        fullText.includes('mid-level') ||
+        fullText.includes('mid level') ||
+        fullText.includes('intermediate') ||
+        fullText.includes('2-5 years') ||
+        fullText.includes('3-5 years') ||
+        /\b(ii|2)\b/i.test(title) ||
+        (!title.includes('senior') &&
+          !title.includes('lead') &&
+          !title.includes('principal') &&
+          !title.includes('director') &&
+          !title.includes('manager') &&
+          !title.includes('junior') &&
+          !title.includes('intern'))
+      );
+    case 'senior':
+      return (
+        title.includes('senior') ||
+        /\bsr\.?\b/i.test(title) ||
+        fullText.includes('senior engineer') ||
+        fullText.includes('senior developer') ||
+        fullText.includes('5+ years') ||
+        fullText.includes('6+ years') ||
+        fullText.includes('7+ years')
+      );
+    case 'lead':
+      return (
+        title.includes('lead') ||
+        title.includes('staff') ||
+        title.includes('principal') ||
+        fullText.includes('tech lead') ||
+        fullText.includes('team lead')
+      );
+    case 'manager':
+      return (
+        title.includes('manager') ||
+        title.includes('director') ||
+        title.includes('vp') ||
+        title.includes('head of') ||
+        fullText.includes('engineering manager')
+      );
+
+    // Languages & Core Tech
+    case 'python':
+      return (
+        fullText.includes('python') ||
+        fullText.includes('django') ||
+        fullText.includes('fastapi') ||
+        fullText.includes('flask') ||
+        fullText.includes('pytorch')
+      );
+    case 'javascript':
+      return fullText.includes('javascript') || /\bjs\b/i.test(fullText);
+    case 'typescript':
+      return fullText.includes('typescript') || /\bts\b/i.test(fullText);
+    case 'react':
+      return fullText.includes('react') || fullText.includes('next.js') || fullText.includes('nextjs');
+    case 'nodejs':
+      return (
+        fullText.includes('node.js') ||
+        fullText.includes('nodejs') ||
+        /\bnode\b/i.test(fullText) ||
+        fullText.includes('express')
+      );
+    case 'golang':
+      return fullText.includes('golang') || /\bgo\b/i.test(title) || /\bgolang\b/i.test(fullText);
+    case 'java':
+      return (/\bjava\b/i.test(fullText) && !fullText.includes('javascript')) || fullText.includes('spring boot');
+    case 'csharp':
+      return (
+        fullText.includes('c#') ||
+        fullText.includes('.net') ||
+        fullText.includes('dotnet') ||
+        fullText.includes('csharp')
+      );
+    case 'cpp':
+      return fullText.includes('c++') || fullText.includes('cpp') || /\bc\b/i.test(title);
+    case 'rust':
+      return /\brust\b/i.test(fullText) || fullText.includes('cargo');
+    case 'sql':
+      return (
+        fullText.includes('sql') ||
+        fullText.includes('postgres') ||
+        fullText.includes('postgresql') ||
+        fullText.includes('mysql') ||
+        fullText.includes('database')
+      );
+    case 'aws':
+      return (
+        fullText.includes('aws') ||
+        fullText.includes('cloud') ||
+        fullText.includes('azure') ||
+        fullText.includes('gcp') ||
+        fullText.includes('kubernetes') ||
+        fullText.includes('terraform')
+      );
+
+    // Role & Discipline
+    case 'fullstack':
+      return fullText.includes('fullstack') || fullText.includes('full-stack') || fullText.includes('full stack');
+    case 'frontend':
+      return (
+        fullText.includes('frontend') ||
+        fullText.includes('front-end') ||
+        fullText.includes('front end') ||
+        fullText.includes('react') ||
+        fullText.includes('vue') ||
+        fullText.includes('angular') ||
+        fullText.includes('ui')
+      );
+    case 'backend':
+      return (
+        fullText.includes('backend') ||
+        fullText.includes('back-end') ||
+        fullText.includes('back end') ||
+        fullText.includes('api') ||
+        fullText.includes('server') ||
+        fullText.includes('microservices')
+      );
+    case 'devops':
+      return (
+        fullText.includes('devops') ||
+        fullText.includes('sre') ||
+        fullText.includes('infrastructure') ||
+        fullText.includes('cloud engineer') ||
+        fullText.includes('platform engineer') ||
+        fullText.includes('ci/cd') ||
+        fullText.includes('kubernetes')
+      );
+    case 'data_ai':
+      return (
+        fullText.includes('data') ||
+        fullText.includes('machine learning') ||
+        fullText.includes('ml') ||
+        fullText.includes('ai') ||
+        fullText.includes('data engineer') ||
+        fullText.includes('data scientist') ||
+        fullText.includes('llm')
+      );
+    case 'mobile':
+      return (
+        fullText.includes('mobile') ||
+        fullText.includes('ios') ||
+        fullText.includes('android') ||
+        fullText.includes('react native') ||
+        fullText.includes('flutter') ||
+        fullText.includes('swift') ||
+        fullText.includes('kotlin')
+      );
+    case 'security':
+      return (
+        fullText.includes('security') ||
+        fullText.includes('cyber') ||
+        fullText.includes('infosec') ||
+        fullText.includes('appsec')
+      );
+    case 'qa':
+      return (
+        fullText.includes('qa') ||
+        fullText.includes('quality assurance') ||
+        fullText.includes('test automation') ||
+        fullText.includes('testing') ||
+        fullText.includes('sdet')
+      );
+
+    // Workplace & Type
+    case 'remote':
+      return (
+        workplace === 'remote' ||
+        loc.includes('remote') ||
+        title.includes('remote') ||
+        fullText.includes('work from home') ||
+        fullText.includes('anywhere')
+      );
+    case 'hybrid':
+      return (
+        workplace === 'hybrid' ||
+        loc.includes('hybrid') ||
+        title.includes('hybrid') ||
+        fullText.includes('flexible')
+      );
+    case 'onsite':
+      return (
+        workplace === 'onsite' ||
+        workplace === 'in-office' ||
+        (!loc.includes('remote') && !title.includes('remote'))
+      );
+    case 'fulltime':
+      return (
+        fullText.includes('full-time') ||
+        fullText.includes('fulltime') ||
+        fullText.includes('permanent')
+      );
+    case 'contract':
+      return (
+        fullText.includes('contract') ||
+        fullText.includes('freelance') ||
+        fullText.includes('contractor') ||
+        fullText.includes('1099') ||
+        fullText.includes('c2c')
+      );
+    case 'internship':
+      return (
+        fullText.includes('intern') ||
+        fullText.includes('internship') ||
+        fullText.includes('co-op')
+      );
+
+    default:
+      return fullText.includes(optionId.toLowerCase());
+  }
+};
+
+const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[]): string => {
+  if (customQuery.trim()) {
+    return customQuery.trim();
+  }
+  // Find active language or role options to use as search keywords
+  const activeRoles = FILTER_GROUPS.find((g) => g.id === 'role')
+    ?.options.filter((o) => activeFilterIds.includes(o.id))
+    .map((o) => o.label) || [];
+  const activeLangs = FILTER_GROUPS.find((g) => g.id === 'language')
+    ?.options.filter((o) => activeFilterIds.includes(o.id))
+    .map((o) => o.label) || [];
+
+  const keywords = [...activeRoles, ...activeLangs].slice(0, 2);
+  if (keywords.length > 0) {
+    return keywords.join(' ');
+  }
+
+  const activeExp = FILTER_GROUPS.find((g) => g.id === 'experience')
+    ?.options.filter((o) => activeFilterIds.includes(o.id))
+    .map((o) => o.label) || [];
+  if (activeExp.length > 0) {
+    return `${activeExp[0]} developer`;
+  }
+
+  return 'developer';
+};
+
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   const [query, setQuery] = useState('');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
   const [usOnly, setUsOnly] = useState(true);
+  const [isFiltersExpanded, setIsFiltersExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
+
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchJobs = async (
     searchQuery: string = '',
@@ -66,41 +409,74 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
 
   useEffect(() => {
     fetchJobs('developer', 'all', true);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
   }, []);
 
-  const handleTagToggle = (tag: string) => {
-    let nextTags: string[];
-    if (selectedTags.includes(tag)) {
-      nextTags = selectedTags.filter((t) => t !== tag);
-    } else {
-      nextTags = [...selectedTags, tag];
-    }
-    setSelectedTags(nextTags);
+  const handleFilterToggle = (filterId: string) => {
+    const nextFilters = selectedFilters.includes(filterId)
+      ? selectedFilters.filter((id) => id !== filterId)
+      : [...selectedFilters, filterId];
+    setSelectedFilters(nextFilters);
 
-    const combinedQuery = [query.trim(), ...nextTags].filter(Boolean).join(' ');
-    fetchJobs(combinedQuery || 'developer', selectedSource, usOnly);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
+      fetchJobs(effectiveQuery, selectedSource, usOnly);
+    }, 450);
+  };
+
+  const handleClearGroup = (groupId: string) => {
+    const group = FILTER_GROUPS.find((g) => g.id === groupId);
+    if (!group) return;
+    const groupOptionIds = new Set(group.options.map((o) => o.id));
+    const nextFilters = selectedFilters.filter((id) => !groupOptionIds.has(id));
+    setSelectedFilters(nextFilters);
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
+      fetchJobs(effectiveQuery, selectedSource, usOnly);
+    }, 450);
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const combinedQuery = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
-    fetchJobs(combinedQuery || 'developer', selectedSource, usOnly);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+    fetchJobs(effectiveQuery, selectedSource, usOnly);
   };
 
   const handleSourceSelect = (sourceId: string) => {
     setSelectedSource(sourceId);
-    const combinedQuery = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
-    fetchJobs(combinedQuery || 'developer', sourceId, usOnly);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+    fetchJobs(effectiveQuery, sourceId, usOnly);
   };
 
   const handleResetFilters = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     setQuery('');
-    setSelectedTags([]);
+    setSelectedFilters([]);
     setSelectedSource('all');
     fetchJobs('developer', 'all', usOnly);
   };
 
-  // Compound client-side filtering across all active filters simultaneously
+  // Compound client-side filtering:
+  // - Matches source platform
+  // - Matches every custom search query word
+  // - Category logic: AND across categories, OR within same category
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
       // 1. Source board filter
@@ -111,62 +487,33 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       const titleLower = (job.title || '').toLowerCase();
       const compLower = (job.company || '').toLowerCase();
       const locLower = (job.location || '').toLowerCase();
-      const typeLower = (job.workplace_type || '').toLowerCase();
       const descLower = (job.description || '').toLowerCase();
       const tagsStr = (job.tags || []).join(' ').toLowerCase();
       const fullText = `${titleLower} ${compLower} ${locLower} ${tagsStr} ${descLower}`;
 
-      // 2. Multi-tag filters (EVERY active tag must match)
-      for (const tag of selectedTags) {
-        const tLower = tag.toLowerCase();
-        if (tLower === 'remote') {
-          const isRemote = typeLower === 'remote' || locLower.includes('remote') || titleLower.includes('remote');
-          if (!isRemote) return false;
-        } else if (tLower === 'full stack') {
-          if (!fullText.includes('fullstack') && !fullText.includes('full-stack') && !fullText.includes('full stack')) {
-            return false;
-          }
-        } else if (tLower === 'react') {
-          if (!fullText.includes('react') && !fullText.includes('frontend') && !fullText.includes('front-end')) {
-            return false;
-          }
-        } else if (tLower === 'backend') {
-          if (!fullText.includes('backend') && !fullText.includes('back-end') && !fullText.includes('api')) {
-            return false;
-          }
-        } else if (tLower === 'frontend') {
-          if (!fullText.includes('frontend') && !fullText.includes('front-end') && !fullText.includes('ui') && !fullText.includes('react')) {
-            return false;
-          }
-        } else if (tLower === 'devops') {
-          if (!fullText.includes('devops') && !fullText.includes('sre') && !fullText.includes('cloud') && !fullText.includes('infrastructure')) {
-            return false;
-          }
-        } else if (tLower === 'typescript') {
-          if (!fullText.includes('typescript') && !fullText.includes('ts')) {
-            return false;
-          }
-        } else if (tLower === 'senior') {
-          if (!fullText.includes('senior') && !fullText.includes('sr.') && !fullText.includes('lead') && !fullText.includes('staff')) {
-            return false;
-          }
-        } else {
-          if (!fullText.includes(tLower)) {
-            return false;
-          }
-        }
-      }
-
-      // 3. Typed keyword filter (every word in custom query must match)
+      // 2. Custom typed keyword filter (all words must match)
       if (query.trim()) {
         const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
         const matchesAll = words.every((w) => fullText.includes(w));
         if (!matchesAll) return false;
       }
 
+      // 3. Category Group filtering:
+      // Across different categories: AND (job must satisfy EVERY active category)
+      // Within the same category: OR (job matches ANY selected option in that category)
+      for (const group of FILTER_GROUPS) {
+        const selectedInGroup = group.options.filter((opt) => selectedFilters.includes(opt.id));
+        if (selectedInGroup.length > 0) {
+          const matchesAnyInGroup = selectedInGroup.some((opt) => matchesOption(opt.id, fullText, job));
+          if (!matchesAnyInGroup) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [jobs, selectedSource, selectedTags, query]);
+  }, [jobs, selectedSource, selectedFilters, query]);
 
   const handleAddJob = async (job: DiscoveredJob) => {
     setAddingUrl(job.url);
@@ -313,39 +660,120 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             </div>
           </div>
 
-          {/* Quick Filter Chips */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-xs text-slate-400 mr-1 font-medium">
-              Trending Filters:
-              {selectedTags.length > 0 && (
-                <span className="text-emerald-400 font-semibold text-xs ml-1">
-                  ({selectedTags.length} active)
-                </span>
-              )}
-            </span>
-            {QUICK_TAGS.map((tag) => {
-              const isTagActive = selectedTags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => handleTagToggle(tag)}
-                  className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
-                    isTagActive
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
-                      : 'bg-slate-800/70 hover:bg-slate-700 text-slate-300 border-slate-700/60'
-                  }`}
-                  title={isTagActive ? `Click to remove "${tag}" filter` : `Click to add "${tag}" filter`}
-                >
-                  {isTagActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-                  <span>{tag}</span>
-                  {isTagActive ? (
-                    <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
-                  ) : (
-                    <Plus className="w-3 h-3 ml-0.5 opacity-40 hover:opacity-100" />
+          {/* Filter Categories Card */}
+          <div className="pt-2">
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4 shadow-inner">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-800/40 text-emerald-400">
+                    <SlidersHorizontal className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Filter by Category</span>
+                      {selectedFilters.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
+                          {selectedFilters.length} active
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Organized by Experience Level, Languages & Tech, Role, and Workplace
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  {selectedFilters.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFilters([]);
+                        fetchJobs(query.trim(), selectedSource, usOnly);
+                      }}
+                      className="text-xs text-slate-400 hover:text-emerald-400 transition underline font-medium"
+                    >
+                      Reset categories
+                    </button>
                   )}
-                </button>
-              );
-            })}
+                  <button
+                    type="button"
+                    onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1 text-xs"
+                    title={isFiltersExpanded ? 'Collapse filter categories' : 'Expand filter categories'}
+                  >
+                    <span>{isFiltersExpanded ? 'Hide' : 'Show'}</span>
+                    {isFiltersExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {isFiltersExpanded && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
+                  {FILTER_GROUPS.map((group) => {
+                    const activeInGroup = group.options.filter((opt) => selectedFilters.includes(opt.id));
+                    return (
+                      <div
+                        key={group.id}
+                        className="bg-slate-900/60 border border-slate-800/70 rounded-xl p-3.5 space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center space-x-2 text-slate-200 font-semibold">
+                            <span>{group.icon}</span>
+                            <span>{group.title}</span>
+                            {activeInGroup.length > 0 && (
+                              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                                {activeInGroup.length}
+                              </span>
+                            )}
+                          </div>
+                          {activeInGroup.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleClearGroup(group.id)}
+                              className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.options.map((option) => {
+                            const isActive = selectedFilters.includes(option.id);
+                            return (
+                              <button
+                                key={option.id}
+                                type="button"
+                                onClick={() => handleFilterToggle(option.id)}
+                                className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
+                                  isActive
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
+                                    : 'bg-slate-800/70 hover:bg-slate-700/80 text-slate-300 border-slate-700/60 hover:text-white'
+                                }`}
+                                title={
+                                  isActive
+                                    ? `Click to remove "${option.label}" filter`
+                                    : `Click to filter by "${option.label}"`
+                                }
+                              >
+                                {isActive && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                )}
+                                <span>{option.label}</span>
+                                {isActive ? (
+                                  <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
+                                ) : (
+                                  <Plus className="w-3 h-3 ml-0.5 opacity-30 hover:opacity-80" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -353,11 +781,19 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
       {/* Results Count, Active Filters Bar & Grid */}
       <div className="space-y-4">
         {/* Active Filter Indicators Bar */}
-        {(query.trim() || selectedTags.length > 0 || selectedSource !== 'all' || usOnly) && (
+        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
             <span className="text-slate-400 flex items-center gap-1.5 font-medium">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Active filters ({[query.trim(), ...selectedTags, selectedSource !== 'all' ? selectedSource : ''].filter(Boolean).length}):</span>
+              <span>
+                Active filters (
+                {[
+                  query.trim(),
+                  ...selectedFilters,
+                  selectedSource !== 'all' ? selectedSource : '',
+                ].filter(Boolean).length}
+                ):
+              </span>
             </span>
 
             {/* Custom Search Query Pill */}
@@ -368,8 +804,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
                   type="button"
                   onClick={() => {
                     setQuery('');
-                    const combined = selectedTags.join(' ');
-                    fetchJobs(combined || 'developer', selectedSource, usOnly);
+                    const effective = getEffectiveSearchQuery('', selectedFilters);
+                    fetchJobs(effective, selectedSource, usOnly);
                   }}
                   className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
                   title="Remove search query"
@@ -379,23 +815,36 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
               </span>
             )}
 
-            {/* Selected Tag Pills */}
-            {selectedTags.map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs"
-              >
-                <span>Tag: <strong>{tag}</strong></span>
-                <button
-                  type="button"
-                  onClick={() => handleTagToggle(tag)}
-                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
-                  title={`Remove ${tag} filter`}
+            {/* Selected Category Filter Pills */}
+            {selectedFilters.map((filterId) => {
+              const option = ALL_FILTER_OPTIONS.find((o) => o.id === filterId);
+              if (!option) return null;
+              const groupPrefix =
+                option.category === 'experience'
+                  ? 'Exp'
+                  : option.category === 'language'
+                  ? 'Tech'
+                  : option.category === 'role'
+                  ? 'Role'
+                  : 'Work';
+              return (
+                <span
+                  key={filterId}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs"
                 >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
+                  <span className="text-emerald-400/70 font-normal">{groupPrefix}:</span>
+                  <strong>{option.label}</strong>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterToggle(filterId)}
+                    className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
+                    title={`Remove ${option.label} filter`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
 
             {/* Source Board Pill */}
             {selectedSource !== 'all' && (
@@ -420,7 +869,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             )}
 
             {/* Clear All Filters Button */}
-            {(query.trim() || selectedTags.length > 0 || selectedSource !== 'all') && (
+            {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all') && (
               <button
                 type="button"
                 onClick={handleResetFilters}
@@ -439,9 +888,17 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
             {jobs.length !== filteredJobs.length && (
               <span className="text-slate-500"> (filtered from {jobs.length} total)</span>
             )}
-            {(selectedTags.length > 0 || query.trim()) && (
+            {(selectedFilters.length > 0 || query.trim()) && (
               <span className="ml-1 text-slate-400">
-                for <span className="text-emerald-400 font-semibold">{[query.trim() ? `"${query}"` : '', ...selectedTags].filter(Boolean).join(', ')}</span>
+                for{' '}
+                <span className="text-emerald-400 font-semibold">
+                  {[
+                    query.trim() ? `"${query}"` : '',
+                    ...selectedFilters.map((id) => ALL_FILTER_OPTIONS.find((o) => o.id === id)?.label).filter(Boolean),
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}
+                </span>
               </span>
             )}
           </span>
@@ -462,8 +919,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
               <button
                 type="button"
                 onClick={() => {
-                  const combined = [query.trim(), ...selectedTags].filter(Boolean).join(' ');
-                  fetchJobs(combined || 'developer', selectedSource, usOnly);
+                  const effective = getEffectiveSearchQuery(query, selectedFilters);
+                  fetchJobs(effective, selectedSource, usOnly);
                 }}
                 className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
               >
