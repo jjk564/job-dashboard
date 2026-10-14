@@ -213,7 +213,11 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         cleanDesc.includes('1-2 years') ||
         cleanDesc.includes('0-1 year') ||
         cleanDesc.includes('0-3 years') ||
-        cleanDesc.includes('no experience required')
+        cleanDesc.includes('no experience required') ||
+        /\b[0-2]\s*(?:to|-)\s*[1-3]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
+        /\b[0-1]\s*\+?\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
+        /\b(?:fresh|recent)\s+grad(?:uate)?\b/i.test(cleanDesc) ||
+        /\b(?:campus\s+hire|rotational\s+program)\b/i.test(cleanDesc)
       );
     }
 
