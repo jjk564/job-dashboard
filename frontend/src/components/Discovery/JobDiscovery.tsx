@@ -623,12 +623,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
   };
 
   const handleSourceSelect = (sourceId: string) => {
-    setSelectedSource(sourceId);
+    const nextSource = selectedSource === sourceId && sourceId !== 'all' ? 'all' : sourceId;
+    setSelectedSource(nextSource);
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, sourceId, usOnly);
+    fetchJobs(effectiveQuery, nextSource, usOnly);
   };
 
   const handleResetFilters = () => {
@@ -855,10 +856,15 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
 
         {/* Source Platform Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800/80">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
-            <div className="flex items-center space-x-2">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2 text-slate-200 font-semibold">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
               <span>Source Platform</span>
+              {selectedSource !== 'all' && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                  1
+                </span>
+              )}
             </div>
             {selectedSource !== 'all' && (
               <button
@@ -866,25 +872,45 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                 onClick={() => handleSourceSelect('all')}
                 className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
               >
-                All
+                Clear
               </button>
             )}
           </div>
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {SOURCE_FILTERS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => handleSourceSelect(s.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${
-                  selectedSource === s.id
-                    ? 'bg-emerald-600 border-emerald-500 text-white shadow-xs font-semibold'
-                    : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-700'
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {SOURCE_FILTERS.map((s) => {
+              const isActive = selectedSource === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => handleSourceSelect(s.id)}
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
+                    isActive
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
+                      : 'bg-slate-800/70 hover:bg-slate-700/80 text-slate-300 border-slate-700/60 hover:text-white'
+                  }`}
+                  title={
+                    isActive
+                      ? (s.id === 'all' ? 'All sources active' : `Click to remove "${s.label}" filter`)
+                      : `Click to filter by "${s.label}"`
+                  }
+                >
+                  {isActive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                  <span>{s.label}</span>
+                  {isActive ? (
+                    s.id === 'all' ? (
+                      <Check className="w-3 h-3 ml-0.5 opacity-80" />
+                    ) : (
+                      <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
+                    )
+                  ) : (
+                    <Plus className="w-3 h-3 ml-0.5 opacity-30 hover:opacity-80" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1073,12 +1099,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
 
             {/* Source Board Pill */}
             {selectedSource !== 'all' && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-200 border border-slate-700 font-medium">
-                <span>Source: <strong>{SOURCE_FILTERS.find((s) => s.id === selectedSource)?.label || selectedSource}</strong></span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs">
+                <span className="text-emerald-400/70 font-normal">Source:</span>
+                <strong>{SOURCE_FILTERS.find((s) => s.id === selectedSource)?.label || selectedSource}</strong>
                 <button
                   type="button"
                   onClick={() => handleSourceSelect('all')}
-                  className="hover:text-white transition p-0.5 rounded-full hover:bg-slate-700"
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
                   title="Reset to All Sources"
                 >
                   <X className="w-3 h-3" />
