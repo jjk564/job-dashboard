@@ -110,9 +110,7 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'discovery' && (
-              <div className="flex-1 overflow-y-auto">
-                <JobDiscovery onJobAdded={handleJobAdded} />
-              </div>
+              <JobDiscovery onJobAdded={handleJobAdded} />
             )}
 
             {activeTab === 'profile' && (

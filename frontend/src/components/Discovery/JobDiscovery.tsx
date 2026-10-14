@@ -566,238 +566,232 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/30 rounded-3xl p-6 sm:p-8">
-        <div className="max-w-3xl space-y-3">
-          <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-xs tracking-wide uppercase">
-            <Compass className="w-4 h-4" />
-            <span>Multi-Board Live Job Aggregator</span>
+    <div className="flex-1 flex flex-col lg:flex-row h-full overflow-hidden w-full bg-slate-900">
+      {/* Mobile Filter Toggle Bar (Small screens only) */}
+      <div className="w-full lg:hidden p-3 bg-slate-950 border-b border-slate-800 shrink-0">
+        <button
+          type="button"
+          onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+          className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 font-bold text-xs shadow-md"
+        >
+          <div className="flex items-center space-x-2">
+            <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+            <span>Filter Options & Sources</span>
+            {(selectedFilters.length > 0 || selectedSource !== 'all') && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
+                {[...selectedFilters, selectedSource !== 'all' ? selectedSource : ''].filter(Boolean).length} active
+              </span>
+            )}
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Discover Active Tech Opportunities
-          </h1>
-          <p className="text-slate-400 text-sm">
-            Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
-          </p>
-
-
-          {/* Search Box */}
-          <form onSubmit={handleSearchSubmit} className="flex gap-2 pt-2">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search job title, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQuery('');
-                    fetchJobs('', selectedSource);
-                  }}
-                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-100 transition"
-                  title="Clear search query"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-md transition flex items-center space-x-2 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              <span>Search</span>
-            </button>
-          </form>
-        </div>
+          <div className="flex items-center space-x-1 text-slate-400 text-xs">
+            <span>{isFiltersExpanded ? 'Hide Filters' : 'Show Filters'}</span>
+            {isFiltersExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </button>
       </div>
 
-      {/* Main Layout: Left Vertical Filters Sidebar + Right Job Feed */}
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        {/* Mobile Toggle Button for Filters (visible on small screens only) */}
-        <div className="w-full lg:hidden">
-          <button
-            type="button"
-            onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
-            className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-200 font-bold text-xs shadow-md"
-          >
-            <div className="flex items-center space-x-2">
-              <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
-              <span>Filter Options & Sources</span>
-              {(selectedFilters.length > 0 || selectedSource !== 'all') && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
-                  {[...selectedFilters, selectedSource !== 'all' ? selectedSource : ''].filter(Boolean).length} active
-                </span>
-              )}
-            </div>
-            <div className="flex items-center space-x-1 text-slate-400 text-xs">
-              <span>{isFiltersExpanded ? 'Hide' : 'Show'}</span>
-              {isFiltersExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </div>
-          </button>
-        </div>
-
-        {/* Left Sidebar: Vertically Oriented Filters */}
-        <aside
-          className={`${
-            isFiltersExpanded ? 'block' : 'hidden'
-          } lg:block w-full lg:w-72 xl:w-80 shrink-0 space-y-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto pr-1`}
-        >
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl backdrop-blur-sm">
-            {/* Sidebar Title & Reset All */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center space-x-2 text-white font-bold text-sm">
-                <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
-                <span>Filters</span>
-                {(selectedFilters.length > 0 || selectedSource !== 'all' || query.trim()) && (
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
-                    {[...selectedFilters, selectedSource !== 'all' ? selectedSource : '', query.trim()].filter(Boolean).length}
-                  </span>
-                )}
-              </div>
-              {(selectedFilters.length > 0 || selectedSource !== 'all' || query.trim()) && (
-                <button
-                  type="button"
-                  onClick={handleResetFilters}
-                  className="text-xs text-slate-400 hover:text-emerald-400 transition underline font-medium"
-                >
-                  Reset all
-                </button>
-              )}
-            </div>
-
-            {/* US Jobs Only Toggle */}
+      {/* Left Sidebar: Vertically Oriented Filters (True Independent Scroll Container) */}
+      <aside
+        className={`${
+          isFiltersExpanded ? 'flex' : 'hidden'
+        } lg:flex w-full lg:w-80 xl:w-88 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-950/60 backdrop-blur-md flex-col h-auto lg:h-full overflow-y-auto p-4 sm:p-5 space-y-4 shadow-xl z-10`}
+      >
+        {/* Sidebar Title & Reset All */}
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="flex items-center space-x-2 text-white font-bold text-sm">
+            <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+            <span>Filters</span>
+            {(selectedFilters.length > 0 || selectedSource !== 'all' || query.trim()) && (
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
+                {[...selectedFilters, selectedSource !== 'all' ? selectedSource : '', query.trim()].filter(Boolean).length}
+              </span>
+            )}
+          </div>
+          {(selectedFilters.length > 0 || selectedSource !== 'all' || query.trim()) && (
             <button
               type="button"
-              onClick={() => {
-                const newVal = !usOnly;
-                setUsOnly(newVal);
-                fetchJobs(query.trim(), selectedSource, newVal);
-              }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition ${
-                usOnly
-                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 shadow-xs'
-                  : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title="Toggle US-Only jobs filter"
+              onClick={handleResetFilters}
+              className="text-xs text-slate-400 hover:text-emerald-400 transition underline font-medium"
             >
-              <div className="flex items-center space-x-2">
-                <span className="text-sm">🇺🇸</span>
-                <span>US Jobs Only</span>
-              </div>
-              <span className={`w-2.5 h-2.5 rounded-full ${usOnly ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              Reset all
             </button>
+          )}
+        </div>
 
-            {/* Source Platform Section */}
-            <div className="space-y-2 pt-2 border-t border-slate-800/80">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                <div className="flex items-center space-x-2">
-                  <Filter className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Source Platform</span>
+        {/* US Jobs Only Toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            const newVal = !usOnly;
+            setUsOnly(newVal);
+            fetchJobs(query.trim(), selectedSource, newVal);
+          }}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition ${
+            usOnly
+              ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 shadow-xs'
+              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          title="Toggle US-Only jobs filter"
+        >
+          <div className="flex items-center space-x-2">
+            <span className="text-sm">🇺🇸</span>
+            <span>US Jobs Only</span>
+          </div>
+          <span className={`w-2.5 h-2.5 rounded-full ${usOnly ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+        </button>
+
+        {/* Source Platform Section */}
+        <div className="space-y-2 pt-2 border-t border-slate-800/80">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Source Platform</span>
+            </div>
+            {selectedSource !== 'all' && (
+              <button
+                type="button"
+                onClick={() => handleSourceSelect('all')}
+                className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
+              >
+                All
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {SOURCE_FILTERS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleSourceSelect(s.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${
+                  selectedSource === s.id
+                    ? 'bg-emerald-600 border-emerald-500 text-white shadow-xs font-semibold'
+                    : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-700'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Categorized Filter Groups (Vertical Stack) */}
+        {FILTER_GROUPS.map((group) => {
+          const activeInGroup = group.options.filter((opt) => selectedFilters.includes(opt.id));
+          return (
+            <div
+              key={group.id}
+              className="space-y-2 pt-3 border-t border-slate-800/80"
+            >
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-2 text-slate-200 font-semibold">
+                  <span>{group.icon}</span>
+                  <span>{group.title}</span>
+                  {activeInGroup.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                      {activeInGroup.length}
+                    </span>
+                  )}
                 </div>
-                {selectedSource !== 'all' && (
+                {activeInGroup.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => handleSourceSelect('all')}
+                    onClick={() => handleClearGroup(group.id)}
                     className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
                   >
-                    All
+                    Clear
                   </button>
                 )}
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {SOURCE_FILTERS.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => handleSourceSelect(s.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${
-                      selectedSource === s.id
-                        ? 'bg-emerald-600 border-emerald-500 text-white shadow-xs font-semibold'
-                        : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-700'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {group.options.map((option) => {
+                  const isActive = selectedFilters.includes(option.id);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => handleFilterToggle(option.id)}
+                      className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
+                        isActive
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
+                          : 'bg-slate-800/70 hover:bg-slate-700/80 text-slate-300 border-slate-700/60 hover:text-white'
+                      }`}
+                      title={
+                        isActive
+                          ? `Click to remove "${option.label}" filter`
+                          : `Click to filter by "${option.label}"`
+                      }
+                    >
+                      {isActive && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      )}
+                      <span>{option.label}</span>
+                      {isActive ? (
+                        <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
+                      ) : (
+                        <Plus className="w-3 h-3 ml-0.5 opacity-30 hover:opacity-80" />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
+          );
+        })}
+      </aside>
 
-            {/* Categorized Filter Groups (Vertical Stack) */}
-            {FILTER_GROUPS.map((group) => {
-              const activeInGroup = group.options.filter((opt) => selectedFilters.includes(opt.id));
-              return (
-                <div
-                  key={group.id}
-                  className="space-y-2 pt-3 border-t border-slate-800/80"
-                >
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center space-x-2 text-slate-200 font-semibold">
-                      <span>{group.icon}</span>
-                      <span>{group.title}</span>
-                      {activeInGroup.length > 0 && (
-                        <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
-                          {activeInGroup.length}
-                        </span>
-                      )}
-                    </div>
-                    {activeInGroup.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleClearGroup(group.id)}
-                        className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {group.options.map((option) => {
-                      const isActive = selectedFilters.includes(option.id);
-                      return (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => handleFilterToggle(option.id)}
-                          className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs transition border ${
-                            isActive
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold shadow-xs ring-1 ring-emerald-500/30'
-                              : 'bg-slate-800/70 hover:bg-slate-700/80 text-slate-300 border-slate-700/60 hover:text-white'
-                          }`}
-                          title={
-                            isActive
-                              ? `Click to remove "${option.label}" filter`
-                              : `Click to filter by "${option.label}"`
-                          }
-                        >
-                          {isActive && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                          )}
-                          <span>{option.label}</span>
-                          {isActive ? (
-                            <X className="w-3 h-3 ml-0.5 opacity-80 hover:opacity-100" />
-                          ) : (
-                            <Plus className="w-3 h-3 ml-0.5 opacity-30 hover:opacity-80" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+      {/* Right Main Content Area: Independent Vertical Scroll Container */}
+      <main className="flex-1 min-w-0 flex flex-col h-full overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {/* Header Banner */}
+        <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/30 rounded-3xl p-6 sm:p-8 shrink-0">
+          <div className="max-w-3xl space-y-3">
+            <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-xs tracking-wide uppercase">
+              <Compass className="w-4 h-4" />
+              <span>Multi-Board Live Job Aggregator</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              Discover Active Tech Opportunities
+            </h1>
+            <p className="text-slate-400 text-sm">
+              Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
+            </p>
+
+            {/* Search Box */}
+            <form onSubmit={handleSearchSubmit} className="flex gap-2 pt-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search job title, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      fetchJobs('', selectedSource);
+                    }}
+                    className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-100 transition"
+                    title="Clear search query"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-md transition flex items-center space-x-2 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                <span>Search</span>
+              </button>
+            </form>
           </div>
-        </aside>
-
-        {/* Right Main Content: Active Filter Bar, Count, & Job Listings */}
-        <main className="flex-1 min-w-0 space-y-4 w-full">
+        </div>
           {/* Active Filter Indicators Bar */}
         {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
@@ -1054,6 +1048,5 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded }) => {
         )}
       </main>
     </div>
-  </div>
-);
+  );
 };
