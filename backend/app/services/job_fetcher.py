@@ -142,6 +142,15 @@ def matches_query(
     tag_str = " ".join(str(t) for t in tags)
     full_text = f"{title} {company} {tag_str} {description[:1500]}".lower()
 
+    # Negative exclusion: If user query specifically targets junior/entry, reject senior/staff titles or 6+ yrs exp
+    if any(k in q for k in ("junior", "entry", "entry-level", "new grad")):
+        title_lower = title.lower()
+        if re.search(r'\b(staff|senior|sr\.?|principal|lead|tech lead|manager|director|vp|head of|architect)\b', title_lower):
+            if not any(j in title_lower for j in ("junior", "jr", "entry")):
+                return False
+        if re.search(r'\b([6-9]|\d{2})\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)\b', description.lower()):
+            return False
+
     # Direct exact substring match
     if q in full_text:
         return True

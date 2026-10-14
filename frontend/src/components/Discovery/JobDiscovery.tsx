@@ -122,6 +122,39 @@ const SOURCE_FILTERS = [
   { id: 'adzuna', label: 'Adzuna API' },
 ];
 
+// Helper to detect senior, lead, staff, principal, or executive titles
+const isSeniorOrStaffTitle = (title: string): boolean => {
+  return (
+    /\b(staff|senior|sr\.?|principal|lead|tech lead|team lead|manager|director|vp|vice president|head of|architect|distinguished|fellow|partner)\b/i.test(title) ||
+    /\b(iii|iv|v|vi|3|4|5|6)\b/i.test(title)
+  );
+};
+
+// Helper to detect high experience requirements (e.g. 6+, 7+, 8+, 10+, 12+ years)
+const requiresSeniorExperience = (desc: string): boolean => {
+  const t = desc.toLowerCase();
+  if (/\b(?:(?:minimum|at least|over)\s+)?([6-9]|\d{2})\s*\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp|hands-on)?\b/i.test(t)) {
+    if (!/\b[0-3]\s*-\s*[4-7]\s*(?:years?|yrs?)\b/i.test(t)) {
+      return true;
+    }
+  }
+  if (/\b(6-8|7-10|8-10|8-12|10-15)\s*(?:years?|yrs?)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+};
+
+// Helper to detect mid or senior experience requirements (4+, 5+ years) that disqualify entry level
+const requiresMidOrSeniorExperience = (desc: string): boolean => {
+  const t = desc.toLowerCase();
+  if (/\b(?:(?:minimum|at least|over)\s+)?([4-9]|\d{2})\s*\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp|hands-on)?\b/i.test(t)) {
+    if (!/\b[0-2]\s*-\s*[2-4]\s*(?:years?|yrs?)\b/i.test(t)) {
+      return true;
+    }
+  }
+  return requiresSeniorExperience(desc);
+};
+
 const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): boolean => {
   const loc = (job.location || '').toLowerCase();
   const title = (job.title || '').toLowerCase();
@@ -129,40 +162,95 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
 
   switch (optionId) {
     // Experience Level
-    case 'junior':
-      return (
-        fullText.includes('junior') ||
-        fullText.includes('entry level') ||
-        fullText.includes('entry-level') ||
-        fullText.includes('associate') ||
-        fullText.includes('new grad') ||
-        fullText.includes('graduate') ||
-        fullText.includes('early career') ||
-        fullText.includes('apprentice') ||
-        fullText.includes('0-2 years') ||
-        fullText.includes('1-2 years') ||
-        fullText.includes('0-1 year') ||
+    case 'junior': {
+      // 1. Strict Exclusions for Entry Level:
+      // A) Title cannot be senior, staff, lead, principal, manager, architect, Level 3+
+      if (isSeniorOrStaffTitle(title)) {
+        return false;
+      }
+      // B) Cannot require 4+, 5+, 6+, 8+, 10+ years of experience
+      if (requiresMidOrSeniorExperience(fullText)) {
+        return false;
+      }
+      // C) Base salary ceiling: entry-level roles rarely start at $150k+ base unless explicitly titled junior/entry
+      if (job.salary_min && job.salary_min >= 150000 && !/\b(junior|jr\.?|entry|new grad)\b/i.test(title)) {
+        return false;
+      }
+
+      // 2. Positive Matching:
+      // Explicit title match (e.g. Junior Developer, Software Engineer I, Associate Developer)
+      const hasJuniorTitle = (
+        title.includes('junior') ||
         /\bjr\.?\b/i.test(title) ||
+        title.includes('entry level') ||
+        title.includes('entry-level') ||
+        title.includes('associate') ||
+        title.includes('new grad') ||
+        title.includes('intern') ||
+        title.includes('apprentice') ||
         /\b(software engineer|developer|engineer|analyst|programmer)\s+(i|1)\b/i.test(title) ||
         /\b(level|tier)\s+(i|1)\b/i.test(title)
       );
-    case 'mid':
+      if (hasJuniorTitle) {
+        return true;
+      }
+
+      // Filter out mentorship phrasing false-positives (e.g., 'mentor junior developers')
+      const cleanDesc = fullText
+        .replace(/\b(?:mentor|mentoring|mentors|lead|leading|leads|coach|coaching|coaches|supervise|supervising|guide|guiding)\s+(?:to\s+)?(?:junior|entry|intern)\b/gi, '')
+        .replace(/\bgraduate degree\b/gi, ''); // "graduate degree" means MS/PhD, not entry-level
+
+      return (
+        cleanDesc.includes('junior') ||
+        cleanDesc.includes('entry level') ||
+        cleanDesc.includes('entry-level') ||
+        cleanDesc.includes('new grad') ||
+        cleanDesc.includes('new graduate') ||
+        cleanDesc.includes('recent graduate') ||
+        cleanDesc.includes('early career') ||
+        cleanDesc.includes('apprentice') ||
+        cleanDesc.includes('0-2 years') ||
+        cleanDesc.includes('1-2 years') ||
+        cleanDesc.includes('0-1 year') ||
+        cleanDesc.includes('0-3 years') ||
+        cleanDesc.includes('no experience required')
+      );
+    }
+
+    case 'mid': {
+      // 1. Strict Exclusions for Mid Level:
+      // A) Title cannot be senior, staff, lead, principal, manager, architect, Level 3+
+      if (isSeniorOrStaffTitle(title)) {
+        return false;
+      }
+      // B) Title cannot be junior, entry, intern
+      if (/\b(junior|jr\.?|entry|intern|internship|apprentice)\b/i.test(title)) {
+        return false;
+      }
+      // C) Cannot require 6+, 7+, 8+, 10+ years senior experience
+      if (requiresSeniorExperience(fullText)) {
+        return false;
+      }
+      // D) High salary ceiling for mid-level: rarely starts at $180k+ base
+      if (job.salary_min && job.salary_min >= 180000 && !/\b(mid|intermediate|ii|2)\b/i.test(title)) {
+        return false;
+      }
+
+      // 2. Positive Matching:
       return (
         fullText.includes('mid-level') ||
         fullText.includes('mid level') ||
         fullText.includes('intermediate') ||
         fullText.includes('2-5 years') ||
         fullText.includes('3-5 years') ||
+        fullText.includes('2-4 years') ||
+        fullText.includes('3-6 years') ||
         /\b(ii|2)\b/i.test(title) ||
-        (!title.includes('senior') &&
-          !title.includes('lead') &&
-          !title.includes('principal') &&
-          !title.includes('director') &&
-          !title.includes('manager') &&
-          !title.includes('junior') &&
-          !title.includes('intern'))
+        (!isSeniorOrStaffTitle(title) && !/\b(junior|jr\.?|entry|intern|apprentice)\b/i.test(title))
       );
-    case 'senior':
+    }
+
+    case 'senior': {
       return (
         title.includes('senior') ||
         /\bsr\.?\b/i.test(title) ||
@@ -170,17 +258,28 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         fullText.includes('senior developer') ||
         fullText.includes('5+ years') ||
         fullText.includes('6+ years') ||
-        fullText.includes('7+ years')
+        fullText.includes('7+ years') ||
+        fullText.includes('8+ years') ||
+        fullText.includes('10+ years') ||
+        requiresSeniorExperience(fullText)
       );
-    case 'lead':
+    }
+
+    case 'lead': {
       return (
         title.includes('lead') ||
         title.includes('staff') ||
         title.includes('principal') ||
+        title.includes('architect') ||
+        title.includes('distinguished') ||
         fullText.includes('tech lead') ||
-        fullText.includes('team lead')
+        fullText.includes('team lead') ||
+        fullText.includes('staff engineer') ||
+        fullText.includes('principal engineer')
       );
-    case 'manager':
+    }
+
+    case 'manager': {
       return (
         title.includes('manager') ||
         title.includes('director') ||
@@ -188,6 +287,7 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         title.includes('head of') ||
         fullText.includes('engineering manager')
       );
+    }
 
     // Languages & Core Tech
     case 'python':
