@@ -1238,30 +1238,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ onJobAdded, onOpenSe
                         <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="truncate max-w-[150px] sm:max-w-[180px]">{job.company}</span>
                       </div>
-                      <div className="flex items-center space-x-1.5 shrink-0">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
-                          {job.source}
-                        </span>
-                        {showHiddenOnly ? (
-                          <button
-                            type="button"
-                            onClick={() => handleUnhideJob(job.url)}
-                            className="text-amber-400 hover:text-amber-300 p-1 rounded-lg transition hover:bg-amber-950/40"
-                            title="Unhide this listing"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleHideJob(job)}
-                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition hover:bg-slate-700/60"
-                            title="Hide this listing"
-                          >
-                            <EyeOff className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-semibold uppercase shrink-0 ${getSourceBadge(job.source)}`}>
+                        {job.source}
+                      </span>
                     </div>
 
                     {/* Role Title */}
