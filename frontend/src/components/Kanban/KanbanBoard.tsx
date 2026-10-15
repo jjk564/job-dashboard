@@ -173,7 +173,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       <div className="flex-1 overflow-x-auto p-6 bg-slate-950/40">
         <div className="flex gap-4 h-full min-w-[1280px]">
           {COLUMNS.map((col) => {
-            const columnJobs = filteredJobs.filter((j) => j.status === col.id);
+            const columnJobs = filteredJobs
+              .filter((j) => j.status === col.id)
+              .sort((a, b) => {
+                const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                if (timeB !== timeA) return timeB - timeA;
+                return b.id - a.id;
+              });
 
             return (
               <div

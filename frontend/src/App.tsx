@@ -41,14 +41,18 @@ export const App: React.FC = () => {
 
   // Status Change handler
   const handleUpdateJobStatus = async (id: number, newStatus: JobStatus) => {
-    // Optimistic update
-    setJobs((prev) =>
-      prev.map((j) => (j.id === id ? { ...j, status: newStatus } : j))
-    );
+    const nowIso = new Date().toISOString();
+    // Optimistic update: advance status, update timestamp, and move to top of list
+    setJobs((prev) => {
+      const existing = prev.find((j) => j.id === id);
+      if (!existing) return prev;
+      const updatedJob = { ...existing, status: newStatus, updated_at: nowIso };
+      return [updatedJob, ...prev.filter((j) => j.id !== id)];
+    });
 
     try {
       const updated = await api.updateJob(id, { status: newStatus });
-      setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+      setJobs((prev) => [updated, ...prev.filter((j) => j.id !== id)]);
       if (selectedJob && selectedJob.id === id) {
         setSelectedJob(updated);
       }
@@ -77,7 +81,7 @@ export const App: React.FC = () => {
   };
 
   const handleJobUpdated = (updated: Job) => {
-    setJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
+    setJobs((prev) => [updated, ...prev.filter((j) => j.id !== updated.id)]);
     if (selectedJob?.id === updated.id) {
       setSelectedJob(updated);
     }
