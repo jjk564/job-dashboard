@@ -22,7 +22,8 @@ import {
   ChevronRight,
   EyeOff,
   Eye,
-  Undo2
+  Undo2,
+  Navigation
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -690,6 +691,21 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
+  // Location & Radius Filtering State (persisted in localStorage)
+  const [searchLocation, setSearchLocation] = useState<string>(() => {
+    return localStorage.getItem('job_pulse_search_location') || '';
+  });
+  const [searchRadius, setSearchRadius] = useState<number>(() => {
+    const saved = localStorage.getItem('job_pulse_search_radius');
+    return saved !== null ? Number(saved) : 25; // default 25 miles
+  });
+  const [includeRemote, setIncludeRemote] = useState<boolean>(() => {
+    const saved = localStorage.getItem('job_pulse_include_remote');
+    return saved !== null ? saved === 'true' : true; // default true
+  });
+  const [profileLocation, setProfileLocation] = useState<string>('');
+  const [detectingLocation, setDetectingLocation] = useState<boolean>(false);
+
   // Map of discovered job URL -> matching pipeline Job
   const pipelineMatchMap = useMemo(() => {
     const map = new Map<string, Job>();
@@ -810,16 +826,30 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   };
 
   const fetchJobs = async (
-    searchQuery: string = '',
+    searchQuery: string = query,
     source: string = selectedSource,
-    isUsOnly: boolean = usOnly
+    isUsOnly: boolean = usOnly,
+    loc: string = searchLocation,
+    rad: number = searchRadius,
+    incRemote: boolean = includeRemote
   ) => {
     setLoading(true);
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
       const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
       const effectiveQuery = searchQuery.trim() || 'developer';
-      const results = await api.searchDiscoveredJobs(effectiveQuery, source, adzunaId, adzunaKey, isUsOnly);
+      const effectiveRad = rad > 0 ? rad : undefined;
+      const effectiveLoc = loc.trim() ? loc.trim() : undefined;
+      const results = await api.searchDiscoveredJobs(
+        effectiveQuery,
+        source,
+        adzunaId,
+        adzunaKey,
+        isUsOnly,
+        effectiveLoc,
+        effectiveRad,
+        incRemote
+      );
       setJobs(results);
     } catch (err) {
       console.error('Failed to search jobs:', err);
@@ -829,12 +859,99 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   };
 
   useEffect(() => {
-    fetchJobs('developer', 'all', true);
+    const savedLoc = localStorage.getItem('job_pulse_search_location') || '';
+    const savedRad = localStorage.getItem('job_pulse_search_radius');
+    const radNum = savedRad !== null ? Number(savedRad) : 25;
+    const savedIncRemote = localStorage.getItem('job_pulse_include_remote');
+    const incRemoteBool = savedIncRemote !== null ? savedIncRemote === 'true' : true;
+
+    fetchJobs('developer', 'all', true, savedLoc, radNum, incRemoteBool);
+
+    // Load profile location for quick suggestion
+    api.getProfile().then((prof) => {
+      if (prof && prof.location) {
+        setProfileLocation(prof.location);
+      }
+    }).catch(() => {});
+
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, []);
+
+  const handleLocationChange = (newLoc: string) => {
+    setSearchLocation(newLoc);
+    localStorage.setItem('job_pulse_search_location', newLoc);
+  };
+
+  const handleRadiusChange = (newRad: number) => {
+    setSearchRadius(newRad);
+    localStorage.setItem('job_pulse_search_radius', String(newRad));
+    if (searchLocation.trim()) {
+      const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, newRad, includeRemote);
+    }
+  };
+
+  const handleIncludeRemoteToggle = () => {
+    const nextVal = !includeRemote;
+    setIncludeRemote(nextVal);
+    localStorage.setItem('job_pulse_include_remote', String(nextVal));
+    const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, nextVal);
+  };
+
+  const handleClearLocation = () => {
+    setSearchLocation('');
+    localStorage.removeItem('job_pulse_search_location');
+    const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+    fetchJobs(effectiveQuery, selectedSource, usOnly, '', searchRadius, includeRemote);
+  };
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`
+          );
+          let locStr = '';
+          if (res.ok) {
+            const data = await res.json();
+            const addr = data.address || {};
+            const city = addr.city || addr.town || addr.village || addr.county || '';
+            const state = addr.state || '';
+            locStr = city && state ? `${city}, ${state}` : (city || state || `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`);
+          } else {
+            locStr = `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
+          }
+          if (locStr) {
+            setSearchLocation(locStr);
+            localStorage.setItem('job_pulse_search_location', locStr);
+            const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+            fetchJobs(effectiveQuery, selectedSource, usOnly, locStr, searchRadius, includeRemote);
+          }
+        } catch (err) {
+          console.error('Failed to reverse geocode:', err);
+        } finally {
+          setDetectingLocation(false);
+        }
+      },
+      (err) => {
+        console.warn('Geolocation error:', err);
+        setDetectingLocation(false);
+        alert('Could not determine your location automatically. Please type your city or ZIP code.');
+      },
+      { timeout: 8000 }
+    );
+  };
 
   const handleFilterToggle = (filterId: string) => {
     const nextFilters = selectedFilters.includes(filterId)
@@ -847,7 +964,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     }
     debounceTimerRef.current = setTimeout(() => {
       const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly);
+      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
     }, 450);
   };
 
@@ -863,7 +980,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     }
     debounceTimerRef.current = setTimeout(() => {
       const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly);
+      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
     }, 450);
   };
 
@@ -873,7 +990,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, selectedSource, usOnly);
+    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
   };
 
   const handleSourceSelect = (sourceId: string) => {
@@ -883,7 +1000,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, nextSource, usOnly);
+    fetchJobs(effectiveQuery, nextSource, usOnly, searchLocation, searchRadius, includeRemote);
   };
 
   const handleResetFilters = () => {
@@ -893,7 +1010,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setQuery('');
     setSelectedFilters([]);
     setSelectedSource('all');
-    fetchJobs('developer', 'all', usOnly);
+    fetchJobs('developer', 'all', usOnly, searchLocation, searchRadius, includeRemote);
   };
 
   // Compound client-side filtering:
@@ -916,6 +1033,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       if (!showHiddenOnly && blockedCompanies.length > 0) {
         const comp = (job.company || '').toLowerCase();
         if (blockedCompanies.some((b) => b && comp.includes(b.toLowerCase()))) {
+          return false;
+        }
+      }
+
+      // 0c. Local Location Only filter: if user unchecked includeRemote and has a search location, hide remote listings
+      if (!showHiddenOnly && searchLocation.trim() && !includeRemote) {
+        if (job.workplace_type === 'remote' || (job.location || '').toLowerCase().includes('remote')) {
           return false;
         }
       }
@@ -952,12 +1076,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
       return true;
     });
-  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap, searchLocation, includeRemote]);
 
-  // Reset pagination to page 1 whenever search, filters, source, or view mode changes
+  // Reset pagination to page 1 whenever search, filters, source, location, or view mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs]);
+  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs, searchLocation, searchRadius, includeRemote]);
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -1174,6 +1298,105 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           </span>
         </button>
 
+        {/* Location & Radius Section */}
+        <div className="space-y-3 pt-3 border-t border-slate-800/80">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2 text-slate-200 font-semibold">
+              <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Location & Radius</span>
+            </div>
+            {searchLocation && (
+              <button
+                type="button"
+                onClick={handleClearLocation}
+                className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Quick Location Input */}
+          <div className="relative">
+            <MapPin className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="City, State or ZIP..."
+              value={searchLocation}
+              onChange={(e) => handleLocationChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+                  fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+                }
+              }}
+              className="w-full pl-8 pr-10 py-1.5 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <div className="absolute right-1.5 top-1.5 flex items-center space-x-1">
+              <button
+                type="button"
+                onClick={handleDetectLocation}
+                disabled={detectingLocation}
+                className="text-slate-400 hover:text-emerald-400 p-1 rounded hover:bg-slate-700/50 transition"
+                title="Detect current location"
+              >
+                <Navigation className={`w-3 h-3 ${detectingLocation ? 'animate-spin text-emerald-400' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Use Profile Location Shortcut */}
+          {profileLocation && profileLocation !== searchLocation && (
+            <button
+              type="button"
+              onClick={() => {
+                handleLocationChange(profileLocation);
+                const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
+                fetchJobs(effectiveQuery, selectedSource, usOnly, profileLocation, searchRadius, includeRemote);
+              }}
+              className="text-[11px] text-emerald-400 hover:text-emerald-300 transition flex items-center space-x-1"
+            >
+              <span className="text-slate-400">Profile:</span>
+              <span className="font-semibold underline truncate max-w-[180px]">{profileLocation}</span>
+            </button>
+          )}
+
+          {/* Radius Selector Chips */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Radius (miles):</span>
+              <span className="text-emerald-400 font-semibold">{searchRadius > 0 ? `${searchRadius} mi` : 'Anywhere'}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {[10, 25, 50, 100].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleRadiusChange(r)}
+                  className={`py-1 text-center rounded-lg text-xs font-medium border transition ${
+                    searchRadius === r
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold ring-1 ring-emerald-500/30'
+                      : 'bg-slate-800/70 text-slate-400 border-slate-700/60 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  {r}m
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Include Remote Toggle Checkbox */}
+          <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer pt-0.5">
+            <input
+              type="checkbox"
+              checked={includeRemote}
+              onChange={handleIncludeRemoteToggle}
+              className="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-emerald-500/40"
+            />
+            <span>Include Remote Jobs</span>
+          </label>
+        </div>
+
         {/* Source Platform Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800/80">
           <div className="flex items-center justify-between text-xs">
@@ -1316,12 +1539,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
             </p>
 
             {/* Search Box */}
-            <form onSubmit={handleSearchSubmit} className="flex gap-2 pt-2">
-              <div className="relative flex-1">
+            <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2 pt-2">
+              {/* Keyword / Role input */}
+              <div className="relative flex-[1.6]">
                 <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search job title, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
+                  placeholder="Role, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
@@ -1331,7 +1555,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                     type="button"
                     onClick={() => {
                       setQuery('');
-                      fetchJobs('', selectedSource);
+                      const effective = getEffectiveSearchQuery('', selectedFilters);
+                      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
                     }}
                     className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-100 transition"
                     title="Clear search query"
@@ -1340,10 +1565,61 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                   </button>
                 )}
               </div>
+
+              {/* Location Input with GPS detection */}
+              <div className="relative flex-1">
+                <MapPin className="w-4 h-4 absolute left-3.5 top-3 text-emerald-400" />
+                <input
+                  type="text"
+                  placeholder="City, State or ZIP..."
+                  value={searchLocation}
+                  onChange={(e) => handleLocationChange(e.target.value)}
+                  className="w-full pl-10 pr-14 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                />
+                <div className="absolute right-2 top-2 flex items-center space-x-1">
+                  {searchLocation ? (
+                    <button
+                      type="button"
+                      onClick={handleClearLocation}
+                      className="text-slate-400 hover:text-slate-100 transition p-1"
+                      title="Clear location"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleDetectLocation}
+                    disabled={detectingLocation}
+                    className="text-slate-400 hover:text-emerald-400 transition p-1 rounded-md hover:bg-slate-700/60"
+                    title="Use my current location (GPS / Geolocation)"
+                  >
+                    <Navigation className={`w-3.5 h-3.5 ${detectingLocation ? 'animate-spin text-emerald-400' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Radius Dropdown */}
+              <div className="flex items-center sm:w-36">
+                <select
+                  value={searchRadius}
+                  onChange={(e) => handleRadiusChange(Number(e.target.value))}
+                  className="w-full py-2.5 px-3 bg-slate-800/90 border border-slate-700 rounded-xl text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 cursor-pointer"
+                  title="Search radius in miles"
+                >
+                  <option value={10}>Within 10 mi</option>
+                  <option value={25}>Within 25 mi</option>
+                  <option value={50}>Within 50 mi</option>
+                  <option value={100}>Within 100 mi</option>
+                  <option value={0}>Entire US / Any</option>
+                </select>
+              </div>
+
+              {/* Search Submit Button */}
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-md transition flex items-center space-x-2 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-md transition flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                 <span>Search</span>
@@ -1352,7 +1628,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           </div>
         </div>
           {/* Active Filter Indicators Bar */}
-        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly) && (
+        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly || searchLocation.trim()) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
             <span className="text-slate-400 flex items-center gap-1.5 font-medium">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
@@ -1360,12 +1636,31 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                 Active filters (
                 {[
                   query.trim(),
+                  searchLocation.trim() ? `near:${searchLocation}` : '',
                   ...selectedFilters,
                   selectedSource !== 'all' ? selectedSource : '',
                 ].filter(Boolean).length}
                 ):
               </span>
             </span>
+
+            {/* Location Pill */}
+            {searchLocation.trim() && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs">
+                <MapPin className="w-3 h-3 text-emerald-400" />
+                <span>
+                  Near: <strong>{searchLocation}</strong> {searchRadius > 0 ? `(within ${searchRadius} mi)` : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearLocation}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
+                  title="Remove location filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
             {/* Custom Search Query Pill */}
             {query.trim() && (
@@ -1376,7 +1671,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                   onClick={() => {
                     setQuery('');
                     const effective = getEffectiveSearchQuery('', selectedFilters);
-                    fetchJobs(effective, selectedSource, usOnly);
+                    fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
                   }}
                   className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
                   title="Remove search query"

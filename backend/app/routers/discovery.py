@@ -9,18 +9,24 @@ router = APIRouter(prefix="/api/discovery", tags=["Discovery"])
 @router.get("/search")
 async def search_jobs(
     query: Optional[str] = Query(None),
+    location: Optional[str] = Query(None),
+    radius: Optional[int] = Query(None),
+    include_remote: bool = Query(True),
     source: Optional[str] = Query(None),
     adzuna_app_id: Optional[str] = Query(None),
     adzuna_app_key: Optional[str] = Query(None),
     us_only: bool = Query(True),
 ) -> List[Dict[str, Any]]:
-    """Search active listings across public job boards with optional US filtering."""
+    """Search active listings across public job boards with optional US and location/radius filtering."""
     jobs = await search_aggregated_jobs(
         query=query,
         source=source,
         adzuna_app_id=adzuna_app_id,
         adzuna_app_key=adzuna_app_key,
         us_only=us_only,
+        location=location,
+        radius=radius,
+        include_remote=include_remote,
     )
     return jobs
 

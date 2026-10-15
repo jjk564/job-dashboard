@@ -88,3 +88,16 @@ async def test_create_and_list_job():
         assert analytics_res.status_code == 200
         funnel = analytics_res.json()["funnel"]
         assert funnel["total_tracked"] >= 1
+
+@pytest.mark.asyncio
+async def test_discovery_search_with_location_and_radius():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/discovery/search", params={
+            "query": "developer",
+            "location": "Austin, TX",
+            "radius": 25,
+            "include_remote": True,
+            "source": "arbeitnow"  # Use fast mockable/public endpoint for deterministic unit test
+        })
+        assert res.status_code == 200
+        assert isinstance(res.json(), list)

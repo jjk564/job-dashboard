@@ -533,18 +533,28 @@ async def fetch_hackernews_jobs(query: Optional[str] = None, us_only: bool = Tru
     return results
 
 # 7. Indeed (Direct Scraper via JobSpy)
-def _scrape_indeed_sync(search_term: str, location: str, is_remote: bool = False, results_wanted: int = 40) -> List[Dict[str, Any]]:
-    """Synchronous worker that scrapes live Indeed postings via JobSpy."""
+def _scrape_indeed_sync(
+    search_term: str,
+    location: str,
+    is_remote: bool = False,
+    results_wanted: int = 40,
+    distance: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Synchronous worker that scrapes live Indeed postings via JobSpy with location & radius distance."""
     try:
         from jobspy import scrape_jobs
-        df = scrape_jobs(
-            site_name=["indeed"],
-            search_term=search_term,
-            location=location,
-            is_remote=is_remote,
-            results_wanted=results_wanted,
-            country_indeed="USA",
-        )
+        scrape_kwargs = {
+            "site_name": ["indeed"],
+            "search_term": search_term,
+            "location": location,
+            "is_remote": is_remote,
+            "results_wanted": results_wanted,
+            "country_indeed": "USA",
+        }
+        if distance is not None:
+            scrape_kwargs["distance"] = distance
+
+        df = scrape_jobs(**scrape_kwargs)
         if df is None or df.empty:
             return []
 
@@ -584,8 +594,13 @@ def _scrape_indeed_sync(search_term: str, location: str, is_remote: bool = False
         logger.warning(f"Error in Indeed JobSpy scraper: {e}")
         return []
 
-async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
-    """Fetch live US listings directly from Indeed with entry-level synonym expansion."""
+async def fetch_indeed_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch live US listings directly from Indeed with entry-level synonym expansion and location/radius filtering."""
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
     is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern"))
@@ -596,20 +611,30 @@ async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -
     clean_term = " ".join(clean_term.split())
     search_term = clean_term if clean_term else "Software Developer"
 
-    location = "Remote" if is_remote_query else ("United States" if us_only else "Remote")
+    # User-specified target location
+    target_loc = location.strip() if location and location.strip() else None
+    if is_remote_query:
+        loc_str = "Remote"
+    elif target_loc:
+        loc_str = target_loc
+    else:
+        loc_str = "United States" if us_only else "Remote"
+
+    distance_val = radius if (target_loc and radius) else (50 if target_loc else None)
+
     try:
         if is_junior_query:
             # Query both specific search_term and "entry level software engineer" concurrently
             alt_term = "entry level software engineer" if "junior" in search_term else "junior software developer"
-            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, location, is_remote_query, 35)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, alt_term, location, is_remote_query, 35)
+            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 35, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, alt_term, loc_str, is_remote_query, 35, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
             raw_jobs = []
             for r in res:
                 if isinstance(r, list):
                     raw_jobs.extend(r)
         else:
-            raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, location, is_remote_query, 40)
+            raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 40, distance_val)
 
         filtered = []
         seen = set()
@@ -629,8 +654,15 @@ async def fetch_indeed_jobs(query: Optional[str] = None, us_only: bool = True) -
         return []
 
 # 8. ZipRecruiter (Direct Live Scraper via curl_cffi)
-def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote: bool = False, max_pages: int = 2) -> List[Dict[str, Any]]:
-    """Synchronous worker that scrapes live ZipRecruiter postings across multiple pages via curl_cffi with browser impersonation."""
+def _scrape_ziprecruiter_sync(
+    search_term: str,
+    us_only: bool = True,
+    is_remote: bool = False,
+    max_pages: int = 2,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Synchronous worker that scrapes live ZipRecruiter postings across multiple pages via curl_cffi with location & radius filtering."""
     try:
         from curl_cffi import requests as cffi_requests
         s = cffi_requests.Session(impersonate="safari")
@@ -644,13 +676,21 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
             clean_q = "software developer"
 
         encoded_q = "+".join(clean_q.split())
-        loc_param = "Remote" if is_remote else ("United+States" if us_only else "Remote")
+        target_loc = location.strip() if location and location.strip() else None
+        if is_remote:
+            loc_param = "Remote"
+        elif target_loc:
+            loc_param = "+".join(target_loc.split())
+        else:
+            loc_param = "United+States" if us_only else "Remote"
+
+        radius_query = f"&radius={radius}" if (target_loc and radius) else ""
 
         jobs_list = []
         seen_keys = set()
 
         for page in range(1, max_pages + 1):
-            url = f"https://www.ziprecruiter.com/jobs-search?search={encoded_q}&location={loc_param}&page={page}"
+            url = f"https://www.ziprecruiter.com/jobs-search?search={encoded_q}&location={loc_param}{radius_query}&page={page}"
             r = s.get(url, timeout=12)
             if r.status_code != 200:
                 break
@@ -701,9 +741,9 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
                 company = co_link.text.strip() if co_link else "ZipRecruiter Employer"
 
                 loc_link = art.find("a", href=re.compile(r"location=")) or art.find("a", {"data-testid": "job-card-location"})
-                location = loc_link.text.strip() if loc_link else ("Remote" if is_remote else "USA")
+                job_loc = loc_link.text.strip() if loc_link else ("Remote" if is_remote else (target_loc or "USA"))
 
-                card_is_remote = is_remote or "remote" in location.lower() or "remote" in title.lower()
+                card_is_remote = is_remote or "remote" in job_loc.lower() or "remote" in title.lower()
                 salary_min = None
                 salary_max = None
                 tags = ["ziprecruiter", "direct-hire"]
@@ -725,7 +765,7 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
                     if t in ["Full-time", "Part-time", "Contract"]:
                         tags.append(t.lower())
 
-                desc_loc = "Remote" if card_is_remote else location
+                desc_loc = "Remote" if card_is_remote else job_loc
                 key = f"{title.lower()}|{company.lower()}"
                 if key in seen_keys:
                     continue
@@ -755,8 +795,13 @@ def _scrape_ziprecruiter_sync(search_term: str, us_only: bool = True, is_remote:
         logger.warning(f"Error scraping ZipRecruiter: {e}")
         return []
 
-async def fetch_ziprecruiter_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
-    """Fetch live US listings directly from ZipRecruiter with multi-page expansion."""
+async def fetch_ziprecruiter_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch live US listings directly from ZipRecruiter with multi-page expansion and location/radius filtering."""
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
     is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern"))
@@ -771,7 +816,7 @@ async def fetch_ziprecruiter_jobs(query: Optional[str] = None, us_only: bool = T
         search_term = clean_term if clean_term else "Software Developer"
 
     try:
-        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 2)
+        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 2, location, radius)
         filtered = []
         seen = set()
         for j in raw_jobs:
@@ -794,9 +839,11 @@ async def fetch_adzuna_jobs(
     query: Optional[str] = None,
     app_id: Optional[str] = None,
     app_key: Optional[str] = None,
-    us_only: bool = True
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Fetch live US jobs across Indeed, ZipRecruiter & major boards via Adzuna API."""
+    """Fetch live US jobs across Indeed, ZipRecruiter & major boards via Adzuna API with location & radius distance."""
     app_id = app_id or os.getenv("ADZUNA_APP_ID")
     app_key = app_key or os.getenv("ADZUNA_APP_KEY")
 
@@ -813,6 +860,11 @@ async def fetch_adzuna_jobs(
         "what": search_query,
         "content-type": "application/json",
     }
+    if location and location.strip():
+        params["where"] = location.strip()
+        if radius:
+            params["distance"] = radius
+
     results = []
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -854,37 +906,45 @@ async def fetch_adzuna_jobs(
         logger.warning(f"Error fetching Adzuna jobs: {e}")
     return results
 
-# Aggregated Search with Source Filtering & US-Only Enforcement
+# Aggregated Search with Source Filtering, US-Only, and Location Radius Support
 async def search_aggregated_jobs(
     query: Optional[str] = None,
     source: Optional[str] = None,
     adzuna_app_id: Optional[str] = None,
     adzuna_app_key: Optional[str] = None,
-    us_only: bool = True
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None,
+    include_remote: bool = True
 ) -> List[Dict[str, Any]]:
-    """Aggregates listings concurrently across all supported boards with US filtering."""
+    """Aggregates listings concurrently across all supported boards with US & location/radius filtering."""
 
     tasks = []
     source_lower = (source or "all").lower()
 
     if source_lower in ("all", "indeed"):
-        tasks.append(fetch_indeed_jobs(query, us_only=us_only))
+        tasks.append(fetch_indeed_jobs(query, us_only=us_only, location=location, radius=radius))
     if source_lower in ("all", "ziprecruiter"):
-        tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only))
-    if source_lower in ("all", "arbeitnow"):
-        tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
-    if source_lower in ("all", "jobicy"):
-        tasks.append(fetch_jobicy_jobs(query, us_only=us_only))
-    if source_lower in ("all", "weworkremotely"):
-        tasks.append(fetch_weworkremotely_jobs(query, us_only=us_only))
-    if source_lower in ("all", "himalayas"):
-        tasks.append(fetch_himalayas_jobs(query, us_only=us_only))
-    if source_lower in ("all", "hackernews"):
-        tasks.append(fetch_hackernews_jobs(query, us_only=us_only))
-    if source_lower in ("all", "remoteok"):
-        tasks.append(fetch_remoteok_jobs(query, us_only=us_only))
+        tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only, location=location, radius=radius))
     if source_lower in ("all", "adzuna"):
-        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only))
+        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only, location=location, radius=radius))
+
+    # Remote / global boards: only include if include_remote is True, or if user hasn't specified a strict local location
+    should_fetch_remote_boards = include_remote or not location
+
+    if should_fetch_remote_boards:
+        if source_lower in ("all", "arbeitnow"):
+            tasks.append(fetch_arbeitnow_jobs(query, us_only=us_only))
+        if source_lower in ("all", "jobicy"):
+            tasks.append(fetch_jobicy_jobs(query, us_only=us_only))
+        if source_lower in ("all", "weworkremotely"):
+            tasks.append(fetch_weworkremotely_jobs(query, us_only=us_only))
+        if source_lower in ("all", "himalayas"):
+            tasks.append(fetch_himalayas_jobs(query, us_only=us_only))
+        if source_lower in ("all", "hackernews"):
+            tasks.append(fetch_hackernews_jobs(query, us_only=us_only))
+        if source_lower in ("all", "remoteok"):
+            tasks.append(fetch_remoteok_jobs(query, us_only=us_only))
 
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -894,6 +954,13 @@ async def search_aggregated_jobs(
             combined.extend(r)
         elif isinstance(r, Exception):
             logger.warning(f"Error during parallel job fetch: {r}")
+
+    # If location is provided and user unchecked include_remote, filter out purely remote positions
+    if location and not include_remote:
+        combined = [
+            j for j in combined
+            if j.get("workplace_type") != "remote" and "remote" not in (j.get("location") or "").lower()
+        ]
 
     # Deduplicate by title + company
     seen = set()
