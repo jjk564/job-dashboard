@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { KanbanBoard } from './components/Kanban/KanbanBoard';
 import { JobDiscovery } from './components/Discovery/JobDiscovery';
@@ -15,6 +15,8 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'pipeline' | 'discovery' | 'profile' | 'analytics'>('pipeline');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updatingJobIds, setUpdatingJobIds] = useState<Set<number>>(new Set());
+  const updateSeqRef = useRef<Map<number, number>>(new Map());
 
   // Modals & Drawers
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -39,9 +41,15 @@ export const App: React.FC = () => {
     }
   };
 
-  // Status Change handler
+  // Status Change handler with race-condition and stale-response protection
   const handleUpdateJobStatus = async (id: number, newStatus: JobStatus) => {
     const nowIso = new Date().toISOString();
+    const seq = (updateSeqRef.current.get(id) || 0) + 1;
+    updateSeqRef.current.set(id, seq);
+
+    // Track active updating state
+    setUpdatingJobIds((prev) => new Set(prev).add(id));
+
     // Optimistic update: advance status, update timestamp, and move to top of list
     setJobs((prev) => {
       const existing = prev.find((j) => j.id === id);
@@ -52,13 +60,26 @@ export const App: React.FC = () => {
 
     try {
       const updated = await api.updateJob(id, { status: newStatus });
-      setJobs((prev) => [updated, ...prev.filter((j) => j.id !== id)]);
-      if (selectedJob && selectedJob.id === id) {
-        setSelectedJob(updated);
+      // Only apply server response if this is still the newest request for this job
+      if (updateSeqRef.current.get(id) === seq) {
+        setJobs((prev) => [updated, ...prev.filter((j) => j.id !== id)]);
+        if (selectedJob && selectedJob.id === id) {
+          setSelectedJob(updated);
+        }
       }
     } catch (err) {
       console.error('Status update failed, reloading:', err);
-      loadJobs();
+      if (updateSeqRef.current.get(id) === seq) {
+        loadJobs();
+      }
+    } finally {
+      if (updateSeqRef.current.get(id) === seq) {
+        setUpdatingJobIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
     }
   };
 
@@ -114,6 +135,7 @@ export const App: React.FC = () => {
                 onSelectJob={(job) => setSelectedJob(job)}
                 onUpdateJobStatus={handleUpdateJobStatus}
                 onDeleteJob={handleDeleteJob}
+                updatingJobIds={updatingJobIds}
               />
             )}
 

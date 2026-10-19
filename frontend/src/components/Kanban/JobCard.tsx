@@ -17,6 +17,7 @@ interface JobCardProps {
   onSelect: (job: Job) => void;
   onMoveStatus: (job: Job, direction: 'prev' | 'next') => void;
   onDelete: (id: number) => void;
+  isUpdating?: boolean;
 }
 
 const STATUS_ORDER: JobStatus[] = ['WISHLIST', 'TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
@@ -26,6 +27,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   onSelect,
   onMoveStatus,
   onDelete,
+  isUpdating = false,
 }) => {
   const currentIndex = STATUS_ORDER.indexOf(job.status);
   const canMovePrev = currentIndex > 0;
@@ -113,7 +115,8 @@ export const JobCard: React.FC<JobCardProps> = ({
           {canMovePrev && (
             <button
               onClick={() => onMoveStatus(job, 'prev')}
-              className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition"
+              disabled={isUpdating}
+              className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition disabled:opacity-40"
               title="Move to previous stage"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -123,11 +126,18 @@ export const JobCard: React.FC<JobCardProps> = ({
           {canMoveNext && (
             <button
               onClick={() => onMoveStatus(job, 'next')}
-              className="p-1 hover:bg-slate-700 rounded text-emerald-400 hover:text-emerald-300 font-medium flex items-center space-x-0.5 transition"
+              disabled={isUpdating}
+              className="p-1 hover:bg-slate-700 rounded text-emerald-400 hover:text-emerald-300 font-medium flex items-center space-x-0.5 transition disabled:opacity-50"
               title="Advance to next stage"
             >
-              <span className="text-[11px]">Advance</span>
-              <ChevronRight className="w-4 h-4" />
+              {isUpdating ? (
+                <span className="text-[11px] text-emerald-400/90 animate-pulse font-normal">Updating...</span>
+              ) : (
+                <>
+                  <span className="text-[11px]">Advance</span>
+                  <ChevronRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           )}
         </div>

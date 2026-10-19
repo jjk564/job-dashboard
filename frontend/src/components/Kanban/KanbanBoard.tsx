@@ -18,6 +18,7 @@ interface KanbanBoardProps {
   onSelectJob: (job: Job) => void;
   onUpdateJobStatus: (id: number, newStatus: JobStatus) => void;
   onDeleteJob: (id: number) => void;
+  updatingJobIds?: Set<number>;
 }
 
 interface ColumnConfig {
@@ -80,6 +81,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onSelectJob,
   onUpdateJobStatus,
   onDeleteJob,
+  updatingJobIds,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [workplaceFilter, setWorkplaceFilter] = useState<string>('all');
@@ -212,6 +214,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         onSelect={onSelectJob}
                         onMoveStatus={handleMoveStatus}
                         onDelete={onDeleteJob}
+                        isUpdating={updatingJobIds?.has(job.id)}
                       />
                     ))
                   )}
