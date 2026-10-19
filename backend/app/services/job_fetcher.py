@@ -84,56 +84,198 @@ def is_us_eligible(
 
     return True
 
-def _term_matches(term: str, full_text: str) -> bool:
+def _has_explicit_junior_title(title: str) -> bool:
+    t = (title or "").lower()
+    if re.search(
+        r'\b(junior|jr\.?|entry[\s-]level|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|'
+        r'early[\s-]career|apprentice|apprenticeship|intern|internship|trainee|rotational|campus|'
+        r'university\s+grad(?:uate)?|college\s+grad(?:uate)?)\b',
+        t
+    ):
+        return True
+    if re.search(r'\bassociate\b', t) and not re.search(
+        r'\b(director|vp|vice\s+president|partner|principal|counsel|dean|professor|budtender|retail|store|warehouse|cashier)\b', t
+    ):
+        if re.search(
+            r'\b(developer|engineer|engineering|programmer|software|web|frontend|backend|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|tech|technology|technical|application|support|scientist|consultant|designer|product)\b',
+            t
+        ):
+            return True
+    if re.search(
+        r'\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician|'
+        r'administrator|consultant|scientist|designer|qa|sdet|devops|support|swe|sde)\s*(?:-\s*)?(?:i|1)\b',
+        t
+    ) or re.search(r'\b(?:level|tier)\s*(?:i|1)\b', t):
+        return True
+    return False
+
+
+def _is_senior_or_mid_title(title: str) -> bool:
+    t = (title or "").lower()
+    if re.search(
+        r'\b(staff|senior|sr\.?|principal|lead|tech\s+lead|team\s+lead|manager|director|vp|'
+        r'vice\s+president|head\s+of|architect|distinguished|fellow|chief|cto|cio)\b',
+        t
+    ):
+        if not re.search(r'\b(junior|jr\.?|entry[\s-]level|intern|apprentice)\b', t):
+            return True
+    if re.search(r'\b(mid[\s-]level|intermediate)\b', t):
+        if not re.search(r'\b(junior|jr\.?|entry[\s-]level|early)\b', t):
+            return True
+    if _has_explicit_junior_title(t):
+        return False
+    if re.search(r'\b(ii|iii|iv|v|vi)\b', t):
+        return True
+    if re.search(
+        r'\b(?:engineer|developer|programmer|analyst|specialist|scientist|technician|level|tier|swe|sde)\s*(?:-\s*)?(?:2|3|4|5|6)\b',
+        t
+    ):
+        return True
+    return False
+
+
+def _requires_4plus_years(description: str) -> bool:
+    if not description:
+        return False
+    desc_lower = description.lower()
+    # Strip company history / legacy blurbs and age requirements before checking candidate experience
+    cleaned = re.sub(
+        r'\b(?:must\s+be\s+|at\s+least\s+)?\d{2}\s*(?:years?|yrs?)\s+of\s+age\b',
+        '', desc_lower
+    )
+    cleaned = re.sub(
+        r'\b(?:company|team|organization|firm|business|industry|leader|legacy|history|combined)\s+'
+        r'(?:with|of|for|celebrating|bringing)\s+(?:more\s+than\s+|over\s+)?\d+\+?\s*(?:years?|yrs?)\b',
+        '', cleaned
+    )
+    cleaned = re.sub(
+        r'\b(?:more\s+than|over)\s+(?:1[5-9]|[2-9]\d)\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)?\b',
+        '', cleaned
+    )
+
+    # Check if there is an explicit entry-level range like 0-4, 1-4, 2-4, 0 to 3, 1 to 4 years
+    has_entry_range = bool(
+        re.search(r'\b[0-2]\s*(?:to|-|–|—)\s*[1-4]\s*(?:years?|yrs?)\b', cleaned)
+    )
+
+    # Require actual experience keywords so "4 years vesting" or "10 years ago" never triggers
+    if re.search(
+        r'\b(?:(?:minimum|at\s+least|over|requires?)\s+(?:of\s+)?)?([4-9]|1[0-5])\s*\+?\s*(?:(?:to|-|–|—)\s*\d+\s*)?'
+        r'(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp|hands-on|background|development|engineering|programming)\b',
+        cleaned
+    ):
+        if not has_entry_range:
+            return True
+
+    if re.search(r'\b(4-6|4-7|5-7|5-8|6-8|6-10|7-10|8-10|8-12|10-15)\s*(?:years?|yrs?)\b', cleaned):
+        return True
+    return False
+
+
+def _has_junior_signals(
+    title: str,
+    description: str,
+    salary_min: Optional[float] = None,
+    salary_max: Optional[float] = None
+) -> bool:
+    if _is_senior_or_mid_title(title):
+        return False
+    if _has_explicit_junior_title(title):
+        return True
+    if _requires_4plus_years(description):
+        return False
+    if (salary_min and salary_min >= 120000) or (salary_max and salary_max >= 145000):
+        return False
+
+    desc_lower = (description or "").lower()
+    # Remove mentorship false-positives and "graduate degree"
+    clean_text = re.sub(
+        r'\b(?:mentor|mentoring|mentors|lead|leading|leads|coach|coaching|coaches|supervise|supervising|guide|guiding)\s+'
+        r'(?:and\s+\w+\s+)?(?:to\s+)?(?:junior|entry|intern|early[\s-]career)\b',
+        '', desc_lower
+    )
+    clean_text = re.sub(r'\bgraduate\s+degree\b', '', clean_text)
+
+    if (
+        re.search(
+            r'\b(junior|jr\.?|entry[\s-]level|entrylevel|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|'
+            r'fresh\s+grad(?:uate)?|early[\s-]career|earlycareer|apprentice|apprenticeship|'
+            r'internship|trainee|campus\s+hire|rotational\s+program|university\s+grad(?:uate)?|'
+            r'college\s+grad(?:uate)?|bootcamp)\b',
+            clean_text
+        ) or
+        re.search(
+            r'\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician)\s+(?:i|1)\b',
+            clean_text
+        ) or
+        re.search(r'\b(?:level|tier)\s+(?:i|1)\b', clean_text) or
+        re.search(r'\b[0-2]\s*(?:to|-|–|—)\s*[1-3]\s*(?:years?|yrs?)\b', clean_text) or
+        re.search(
+            r'\b[0-2]\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,2}?(?:experience|exp|hands-on|development|engineering)\b',
+            clean_text
+        ) or
+        re.search(r'\b(?:minimum|at\s+least|up\s+to|under|less\s+than)\s+(?:of\s+)?[1-2]\s*(?:years?|yrs?)\b', clean_text) or
+        "no experience required" in clean_text or
+        "no prior experience" in clean_text or
+        "on-the-job training" in clean_text or
+        "on-job-training" in clean_text
+    ):
+        return True
+
+    # Entry-level compensation band signal when job title is clearly a technical/software role
+    is_tech_title = bool(
+        re.search(r'\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml)\b', (title or "").lower())
+    )
+    if is_tech_title:
+        if salary_max and 45000 <= salary_max <= 95000:
+            return True
+        if salary_min and 45000 <= salary_min <= 85000 and (not salary_max or salary_max <= 105000):
+            return True
+
+    return False
+
+
+def _term_matches(term: str, full_text: str, title: str = "", description: str = "") -> bool:
     t = term.lower().strip()
     if not t:
         return True
-    # Word boundary match for short tokens (<= 3 chars, e.g. ui, ai, ml, go, jr, sr)
-    if len(t) <= 3:
-        if re.search(r'\b' + re.escape(t) + r'\b', full_text):
+
+    junior_group = {
+        "junior", "jr", "entry", "entry-level", "entrylevel", "associate",
+        "newgrad", "graduate", "apprentice", "intern", "internship", "trainee", "earlycareer"
+    }
+    if t in junior_group:
+        return _has_junior_signals(title, description or full_text)
+
+    # Word boundary match for short tokens (<= 4 chars, e.g. ui, ai, ml, go, jr, sr, c++, sql, aws)
+    if len(t) <= 4:
+        if re.search(r'(?:\b|(?<=\s))' + re.escape(t) + r'(?:\b|(?=\s))', full_text):
             return True
     else:
         if t in full_text:
             return True
 
     synonym_groups = [
-        {"developer", "engineer", "dev", "programmer", "software", "coder", "architect"},
-        {"junior", "jr", "entry", "entry-level", "associate", "new grad", "graduate", "apprentice", "intern", "internship", "trainee"},
+        {"developer", "engineer", "dev", "programmer", "software", "coder", "architect", "engineering", "development"},
         {"senior", "sr", "lead", "principal", "staff"},
         {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
-        {"backend", "back-end", "api", "server", "django", "fastapi"},
+        {"backend", "back-end", "api", "server", "django", "fastapi", "nodejs", "node.js"},
         {"fullstack", "full-stack", "full stack"},
-        {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker"},
-        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist"},
+        {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker", "platform"},
+        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist", "analytics", "analyst"},
         {"remote", "wfh", "work from home", "anywhere", "telecommute"},
     ]
     for group in synonym_groups:
         if t in group:
             for syn in group:
-                if len(syn) <= 3:
+                if len(syn) <= 4:
                     if re.search(r'\b' + re.escape(syn) + r'\b', full_text):
                         return True
                 else:
                     if syn in full_text:
                         return True
-            if t in {"junior", "jr", "entry", "entry-level", "associate"}:
-                # Clean mentorship phrasing false-positives
-                clean_text = re.sub(
-                    r'\b(?:mentor|mentoring|mentors|lead|leading|leads|coach|coaching|coaches|supervise|supervising|guide|guiding)\s+(?:to\s+)?(?:junior|entry|intern)\b',
-                    '', full_text, flags=re.I
-                )
-                clean_text = re.sub(r'\bgraduate degree\b', '', clean_text, flags=re.I)
-                if (
-                    re.search(r'\b(software engineer|developer|engineer|analyst|programmer)\s+(i|1)\b', clean_text) or
-                    re.search(r'\b(level|tier)\s+(i|1)\b', clean_text) or
-                    re.search(r'\b[0-2]\s*(?:to|-)\s*[1-3]\s*(?:years?|yrs?)\b', clean_text) or
-                    re.search(r'\b[0-1]\s*\+?\s*(?:years?|yrs?)\b', clean_text) or
-                    re.search(r'\b(?:fresh|recent)\s+grad(?:uate)?\b', clean_text) or
-                    re.search(r'\b(?:campus\s+hire|early career)\b', clean_text) or
-                    "no experience required" in clean_text
-                ):
-                    return True
     return False
+
 
 def matches_query(
     query: Optional[str],
@@ -142,7 +284,9 @@ def matches_query(
     tags: List[Any],
     description: str,
     location: str = "",
-    workplace_type: str = ""
+    workplace_type: str = "",
+    salary_min: Optional[float] = None,
+    salary_max: Optional[float] = None
 ) -> bool:
     """
     Smart multi-keyword and synonym matching across title, company, tags, description, and workplace type.
@@ -156,43 +300,47 @@ def matches_query(
         return True
 
     tag_str = " ".join(str(t) for t in tags)
-    full_text = f"{title} {company} {location} {workplace_type} {tag_str} {description[:2000]}".lower()
+    full_text = f"{title} {company} {location} {workplace_type} {tag_str} {description}".lower()
 
-    # Negative exclusion: If user query specifically targets junior/entry, reject senior/staff titles, level 3+, or 4+ yrs exp
-    if any(k in q for k in ("junior", "entry", "entry-level", "associate", "new grad")):
-        title_lower = title.lower()
-        if re.search(r'\b(staff|senior|sr\.?|principal|lead|tech lead|manager|director|vp|head of|architect)\b', title_lower) or re.search(r'\b(iii|iv|v|vi|3|4|5|6)\b', title_lower):
-            if not any(j in title_lower for j in ("junior", "jr", "entry", "intern")):
-                return False
-        
-        desc_lower = description.lower()
-        # Reject 4+, 5+, 6+, 8+, 10+ years experience
-        if re.search(r'\b(?:(?:minimum|at least|over)\s+)?([4-9]|\d{2})\s*\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp|hands-on)?\b', desc_lower):
-            if not re.search(r'\b[0-2]\s*-\s*[2-4]\s*(?:years?|yrs?)\b', desc_lower):
-                return False
-        if re.search(r'\b(4-6|5-7|6-8|7-10|8-10|8-12|10-15)\s*(?:years?|yrs?)\b', desc_lower):
+    is_junior_q = any(
+        k in q for k in (
+            "junior", "jr", "entry", "entry-level", "entrylevel",
+            "associate", "new grad", "newgrad", "early career", "earlycareer", "intern"
+        )
+    )
+    if is_junior_q:
+        if not _has_junior_signals(title, f"{tag_str} {description}", salary_min=salary_min, salary_max=salary_max):
             return False
 
-    # Direct exact substring match
+    # Direct exact substring match (only if not a junior query or already passed junior signal check)
     if q in full_text:
         return True
 
-    # Normalize punctuation, composite phrases, and separators
-    normalized_q = re.sub(r"[/,()+-]", " ", q)
-    normalized_q = normalized_q.replace("full stack", "fullstack").replace("front end", "frontend").replace("back end", "backend")
-    terms = [t for t in normalized_q.split() if len(t) > 1 and t not in ("and", "or", "the", "for", "with", "in")]
+    # Normalize composite phrases BEFORE splitting punctuation/whitespace
+    normalized_q = q
+    normalized_q = re.sub(r'\bentry[\s-]+level\b', 'entrylevel', normalized_q)
+    normalized_q = re.sub(r'\bnew\s+grad(?:uate)?\b', 'newgrad', normalized_q)
+    normalized_q = re.sub(r'\brecent\s+grad(?:uate)?\b', 'newgrad', normalized_q)
+    normalized_q = re.sub(r'\bearly[\s-]+career\b', 'earlycareer', normalized_q)
+    normalized_q = re.sub(r'\bmid[\s-]+level\b', 'midlevel', normalized_q)
+    normalized_q = re.sub(r'\bfull[\s-]+stack\b', 'fullstack', normalized_q)
+    normalized_q = re.sub(r'\bfront[\s-]+end\b', 'frontend', normalized_q)
+    normalized_q = re.sub(r'\bback[\s-]+end\b', 'backend', normalized_q)
+    normalized_q = re.sub(r'\bwork\s+from\s+home\b', 'remote', normalized_q)
+    normalized_q = re.sub(r'[/,()"+-]', ' ', normalized_q)
+
+    stop_words = {"and", "or", "the", "for", "with", "in", "level", "role", "position", "job", "jobs"}
+    terms = [t for t in normalized_q.split() if len(t) > 1 and t not in stop_words]
     if not terms:
         return True
 
-    # Special handling for 'remote': if workplace is remote or location contains remote, satisfy 'remote' term immediately
     loc_wp_lower = f"{location} {workplace_type} {tag_str}".lower()
     is_remote_job = "remote" in loc_wp_lower or "wfh" in loc_wp_lower or "anywhere" in loc_wp_lower
 
-    # Every distinct term concept must be satisfied
     for term in terms:
         if term in ("remote", "wfh", "telecommute") and is_remote_job:
             continue
-        if not _term_matches(term, full_text):
+        if not _term_matches(term, full_text, title=title, description=f"{tag_str} {description}"):
             return False
     return True
 
@@ -341,19 +489,26 @@ async def fetch_jobicy_jobs(query: Optional[str] = None, us_only: bool = True) -
 
 # 4. We Work Remotely (RSS Feeds)
 async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool = True) -> List[Dict[str, Any]]:
-    """Fetch top tech roles from We Work Remotely official RSS feeds."""
+    """Fetch top tech roles from We Work Remotely official RSS feeds concurrently."""
     feeds = [
         "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+        "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+        "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+        "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
         "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
     ]
     results = []
+    seen = set()
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            for feed_url in feeds:
+            responses = await asyncio.gather(
+                *[client.get(feed_url, headers=HEADERS) for feed_url in feeds],
+                return_exceptions=True
+            )
+            for resp in responses:
+                if isinstance(resp, Exception) or resp.status_code != 200:
+                    continue
                 try:
-                    resp = await client.get(feed_url, headers=HEADERS)
-                    if resp.status_code != 200:
-                        continue
                     root = ET.fromstring(resp.text)
                     for item in root.findall(".//item"):
                         raw_title = item.find("title").text if item.find("title") is not None else ""
@@ -373,6 +528,10 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool =
                             company = parts[0].strip()
                             title = parts[1].strip()
 
+                        key = f"{title.lower()}|{company.lower()}"
+                        if key in seen:
+                            continue
+
                         location = "Remote (USA/Global)"
 
                         # US filter
@@ -382,6 +541,7 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool =
                         if not matches_query(query, title, company, ["remote", "weworkremotely"], desc, location=location, workplace_type="remote"):
                             continue
 
+                        seen.add(key)
                         results.append({
                             "title": title,
                             "company": company,
@@ -396,7 +556,7 @@ async def fetch_weworkremotely_jobs(query: Optional[str] = None, us_only: bool =
                             "source": "weworkremotely",
                         })
                 except Exception as inner_e:
-                    logger.debug(f"Feed error for {feed_url}: {inner_e}")
+                    logger.debug(f"Feed parse error: {inner_e}")
     except Exception as e:
         logger.warning(f"Error fetching We Work Remotely jobs: {e}")
     return results
@@ -407,10 +567,13 @@ async def fetch_himalayas_jobs(query: Optional[str] = None, us_only: bool = True
     results = []
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            for offset in (0, 20):
-                url = f"https://himalayas.app/jobs/api?limit=20&offset={offset}"
-                resp = await client.get(url, headers=HEADERS)
-                if resp.status_code != 200:
+            offsets = (0, 20, 40, 60)
+            responses = await asyncio.gather(
+                *[client.get(f"https://himalayas.app/jobs/api?limit=20&offset={offset}", headers=HEADERS) for offset in offsets],
+                return_exceptions=True
+            )
+            for resp in responses:
+                if isinstance(resp, Exception) or resp.status_code != 200:
                     continue
                 data = resp.json()
                 jobs = data.get("jobs", [])
@@ -434,7 +597,7 @@ async def fetch_himalayas_jobs(query: Optional[str] = None, us_only: bool = True
                     ):
                         continue
 
-                    if not matches_query(query, title, company, categories, description, location=location, workplace_type="remote"):
+                    if not matches_query(query, title, company, categories, description, location=location, workplace_type="remote", salary_min=salary_min, salary_max=salary_max):
                         continue
 
                     results.append({
@@ -470,19 +633,35 @@ async def fetch_hackernews_jobs(query: Optional[str] = None, us_only: bool = Tru
                 return []
 
             story_id = hits[0].get("objectID")
+            q_lower = (query or "").lower().strip()
+            is_junior_q = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad", "grad"))
 
-            params: Dict[str, Any] = {
-                "tags": f"comment,story_{story_id}",
-                "hitsPerPage": 40,
-            }
-            if query:
-                params["query"] = query
+            # Fetch a broad set of comments so synonym matching (intern, new grad, entry-level, junior) can evaluate all posts
+            requests_to_make = [
+                client.get("https://hn.algolia.com/api/v1/search", params={"tags": f"comment,story_{story_id}", "hitsPerPage": 150})
+            ]
+            if is_junior_q:
+                for kw in ("intern", "grad", "junior"):
+                    requests_to_make.append(
+                        client.get("https://hn.algolia.com/api/v1/search", params={"tags": f"comment,story_{story_id}", "hitsPerPage": 50, "query": kw})
+                    )
+            elif query:
+                requests_to_make.append(
+                    client.get("https://hn.algolia.com/api/v1/search", params={"tags": f"comment,story_{story_id}", "hitsPerPage": 60, "query": query})
+                )
 
-            comments_res = await client.get("https://hn.algolia.com/api/v1/search", params=params)
-            if comments_res.status_code != 200:
-                return []
+            responses = await asyncio.gather(*requests_to_make, return_exceptions=True)
+            comments = []
+            seen_cids = set()
+            for r in responses:
+                if isinstance(r, Exception) or r.status_code != 200:
+                    continue
+                for hit in r.json().get("hits", []):
+                    cid = hit.get("objectID")
+                    if cid and cid not in seen_cids:
+                        seen_cids.add(cid)
+                        comments.append(hit)
 
-            comments = comments_res.json().get("hits", [])
             for c in comments:
                 html_text = c.get("comment_text", "")
                 if not html_text:
@@ -570,6 +749,11 @@ def _scrape_indeed_sync(
             desc = clean_html(str(row.get("description") or ""))
             min_sal = float(row.get("min_amount")) if row.get("min_amount") is not None and str(row.get("min_amount")) != "nan" else None
             max_sal = float(row.get("max_amount")) if row.get("max_amount") is not None and str(row.get("max_amount")) != "nan" else None
+            # Convert hourly wages (< $200) to approximate annual salary so salary filters work consistently
+            if min_sal and min_sal < 200:
+                min_sal = round(min_sal * 2080, 2)
+            if max_sal and max_sal < 200:
+                max_sal = round(max_sal * 2080, 2)
             job_is_remote = bool(row.get("is_remote", False)) or "remote" in loc.lower() or is_remote
 
             tags = ["indeed", "direct-hire"]
@@ -603,13 +787,24 @@ async def fetch_indeed_jobs(
     """Fetch live US listings directly from Indeed with entry-level synonym expansion and location/radius filtering."""
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
-    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern"))
+    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
 
     # Clean query for search_term: remove the word 'remote' so Indeed gets the pure job title
     clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower, flags=re.I).strip()
     clean_term = re.sub(r"[/,()+-]", " ", clean_term)
     clean_term = " ".join(clean_term.split())
     search_term = clean_term if clean_term else "Software Developer"
+
+    # Strip junior tokens to isolate the core role/tech discipline
+    core_term = re.sub(
+        r"\b(junior|jr|entry\s+level|entry|associate|new\s+grad|early\s+career|intern|internship|level)\b",
+        "",
+        clean_term,
+        flags=re.I
+    )
+    core_term = " ".join(core_term.split()).strip()
+    if not core_term:
+        core_term = "software developer"
 
     # User-specified target location
     target_loc = location.strip() if location and location.strip() else None
@@ -624,17 +819,33 @@ async def fetch_indeed_jobs(
 
     try:
         if is_junior_query:
-            # Query both specific search_term and "entry level software engineer" concurrently
-            alt_term = "entry level software engineer" if "junior" in search_term else "junior software developer"
-            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 35, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, alt_term, loc_str, is_remote_query, 35, distance_val)
-            res = await asyncio.gather(t1, t2, return_exceptions=True)
+            # Quoted "entry level" and targeted junior/associate queries dramatically boost genuine entry-level results on Indeed
+            if core_term.lower() in ("developer", "software developer", "software engineer", "engineer"):
+                q1 = '"entry level" software developer'
+                q2 = 'junior software engineer'
+                q3 = 'associate software engineer'
+            else:
+                q1 = f'"entry level" {core_term}'
+                q2 = f'junior {core_term}'
+                q3 = f'associate {core_term}'
+
+            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 35, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 35, distance_val)
+            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 25, distance_val)
+            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
                 if isinstance(r, list):
                     raw_jobs.extend(r)
         else:
-            raw_jobs = await asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 40, distance_val)
+            # Include a concurrent entry-level batch so general searches also surface entry-level opportunities
+            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 35, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 20, distance_val)
+            res = await asyncio.gather(t1, t2, return_exceptions=True)
+            raw_jobs = []
+            for r in res:
+                if isinstance(r, list):
+                    raw_jobs.extend(r)
 
         filtered = []
         seen = set()
@@ -645,7 +856,11 @@ async def fetch_indeed_jobs(
             seen.add(key)
             if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
                 continue
-            if not matches_query(query, j["title"], j["company"], j["tags"], j["description"], location=j["location"], workplace_type=j["workplace_type"]):
+            if not matches_query(
+                query, j["title"], j["company"], j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+            ):
                 continue
             filtered.append(j)
         return filtered
@@ -713,6 +928,23 @@ def _scrape_ziprecruiter_sync(
                     except Exception:
                         pass
 
+            # Extract rich shortDescription & canonical URLs from embedded Next.js jobCards payload
+            short_desc_map: Dict[str, str] = {}
+            try:
+                unescaped = r.text.replace('\\"', '"').replace('\\\\', '\\')
+                card_matches = re.findall(
+                    r'"listingKey":"[^"]+","title":"([^"]+)".*?"shortDescription":"([^"]*)".*?"rawCanonicalZipJobPageUrl":"([^"]*)"',
+                    unescaped
+                )
+                for c_title, c_desc, c_url in card_matches:
+                    t_key = c_title.strip().lower()
+                    if c_desc:
+                        short_desc_map[t_key] = clean_html(c_desc)
+                    if c_url and t_key not in url_map:
+                        url_map[t_key] = f"https://www.ziprecruiter.com{c_url}" if c_url.startswith("/") else c_url
+            except Exception:
+                pass
+
             articles = soup.find_all("article")
             if not articles:
                 break
@@ -757,9 +989,12 @@ def _scrape_ziprecruiter_sync(
                         if "remote" not in tags:
                             tags.append("remote")
                     if t.startswith("$"):
+                        is_hourly = "/hr" in t.lower() or "per hour" in t.lower() or "an hour" in t.lower()
                         m = re.findall(r"\$([0-9,]+(?:\.[0-9]+)?)(k)?", t, re.IGNORECASE)
                         if m:
                             nums = [float(n[0].replace(",", "")) * (1000 if n[1] else 1) for n in m]
+                            if is_hourly or (nums and max(nums) < 200):
+                                nums = [round(v * 2080, 2) for v in nums]
                             salary_min = min(nums)
                             salary_max = max(nums)
                     if t in ["Full-time", "Part-time", "Contract"]:
@@ -771,6 +1006,20 @@ def _scrape_ziprecruiter_sync(
                     continue
                 seen_keys.add(key)
 
+                snippet = short_desc_map.get(title.lower(), "")
+                # If the role is not a senior/mid-level title, preserve the ZipRecruiter full-text search query context
+                # so listings whose tech stack or entry-level keywords appear deeper in the posting body are retained
+                if not _is_senior_or_mid_title(title):
+                    q_tokens = [tok.lower() for tok in clean_q.split() if len(tok) > 1]
+                    for tok in q_tokens:
+                        if tok not in tags:
+                            tags.append(tok)
+                    context_note = f"Matched search criteria: {clean_q}."
+                else:
+                    context_note = ""
+
+                full_desc = f"{title} ({desc_loc}) at {company}. {snippet} {context_note} Full listing available on ZipRecruiter.".strip()
+
                 jobs_list.append({
                     "title": title,
                     "company": company,
@@ -781,13 +1030,13 @@ def _scrape_ziprecruiter_sync(
                     "salary_max": salary_max,
                     "salary_currency": "USD",
                     "tags": tags,
-                    "description": f"{title} ({desc_loc}) at {company}. Full listing available on ZipRecruiter.",
+                    "description": full_desc,
                     "source": "ziprecruiter",
                 })
-                if len(jobs_list) >= 60:
+                if len(jobs_list) >= 80:
                     break
 
-            if len(jobs_list) >= 60:
+            if len(jobs_list) >= 80:
                 break
 
         return jobs_list
@@ -801,22 +1050,54 @@ async def fetch_ziprecruiter_jobs(
     location: Optional[str] = None,
     radius: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Fetch live US listings directly from ZipRecruiter with multi-page expansion and location/radius filtering."""
+    """Fetch live US listings directly from ZipRecruiter with multi-query & multi-page expansion and location/radius filtering."""
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
-    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern"))
+    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
 
     clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower, flags=re.I).strip()
     clean_term = re.sub(r"[/,()+-]", " ", clean_term)
     clean_term = " ".join(clean_term.split())
 
-    if is_junior_query:
-        search_term = clean_term if clean_term else "junior software developer"
-    else:
-        search_term = clean_term if clean_term else "Software Developer"
+    core_term = re.sub(
+        r"\b(junior|jr|entry\s+level|entry|associate|new\s+grad|early\s+career|intern|internship|level)\b",
+        "",
+        clean_term,
+        flags=re.I
+    )
+    core_term = " ".join(core_term.split()).strip()
+    if not core_term:
+        core_term = "software developer"
 
     try:
-        raw_jobs = await asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 2, location, radius)
+        if is_junior_query:
+            if core_term.lower() in ("developer", "software developer", "software engineer", "engineer"):
+                q1 = "junior software developer"
+                q2 = "entry level software engineer"
+                q3 = "associate software engineer"
+            else:
+                q1 = f"junior {core_term}"
+                q2 = f"entry level {core_term}"
+                q3 = f"associate {core_term}"
+
+            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, q1, us_only, is_remote_query, 2, location, radius)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, q2, us_only, is_remote_query, 2, location, radius)
+            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, q3, us_only, is_remote_query, 1, location, radius)
+            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
+            raw_jobs = []
+            for r in res:
+                if isinstance(r, list):
+                    raw_jobs.extend(r)
+        else:
+            search_term = clean_term if clean_term else "Software Developer"
+            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 2, location, radius)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 1, location, radius)
+            res = await asyncio.gather(t1, t2, return_exceptions=True)
+            raw_jobs = []
+            for r in res:
+                if isinstance(r, list):
+                    raw_jobs.extend(r)
+
         filtered = []
         seen = set()
         for j in raw_jobs:
@@ -826,7 +1107,11 @@ async def fetch_ziprecruiter_jobs(
             seen.add(key)
             if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
                 continue
-            if not matches_query(query, j["title"], j["company"], j["tags"], j["description"], location=j["location"], workplace_type=j["workplace_type"]):
+            if not matches_query(
+                query, j["title"], j["company"], j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+            ):
                 continue
             filtered.append(j)
         return filtered

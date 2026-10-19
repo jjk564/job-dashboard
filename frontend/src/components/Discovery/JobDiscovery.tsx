@@ -206,23 +206,72 @@ const SOURCE_FILTERS = [
   { id: 'adzuna', label: 'Adzuna API' },
 ];
 
+// Helper to detect explicit entry-level / junior job titles
+const hasExplicitJuniorTitle = (title: string): boolean => {
+  const t = (title || '').toLowerCase();
+  if (
+    /\b(junior|jr\.?|entry[\s-]level|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|apprentice|apprenticeship|intern|internship|trainee|rotational|campus|university\s+grad(?:uate)?|college\s+grad(?:uate)?)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\bassociate\b/i.test(t) &&
+    !/\b(director|vp|vice\s+president|partner|principal|counsel|dean|professor|budtender|retail|store|warehouse|cashier)\b/i.test(t) &&
+    /\b(developer|engineer|engineering|programmer|software|web|frontend|backend|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|tech|technology|technical|application|support|scientist|consultant|designer|product)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician|administrator|consultant|scientist|designer|qa|sdet|devops|support|swe|sde)\s*(?:-\s*)?(?:i|1)\b/i.test(t) ||
+    /\b(?:level|tier)\s*(?:i|1)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
+};
+
 // Helper to detect senior, lead, staff, principal, or executive titles
 const isSeniorOrStaffTitle = (title: string): boolean => {
+  const t = (title || '').toLowerCase();
+  if (
+    /\b(staff|senior|sr\.?|principal|lead|tech\s+lead|team\s+lead|manager|director|vp|vice\s+president|head\s+of|architect|distinguished|fellow|partner|chief|cto|cio)\b/i.test(t)
+  ) {
+    if (!/\b(junior|jr\.?|entry[\s-]level|intern|apprentice)\b/i.test(t)) {
+      return true;
+    }
+  }
+  if (hasExplicitJuniorTitle(t)) {
+    return false;
+  }
   return (
-    /\b(staff|senior|sr\.?|principal|lead|tech lead|team lead|manager|director|vp|vice president|head of|architect|distinguished|fellow|partner)\b/i.test(title) ||
-    /\b(iii|iv|v|vi|3|4|5|6)\b/i.test(title)
+    /\b(iii|iv|v|vi)\b/i.test(t) ||
+    /\b(?:engineer|developer|programmer|analyst|specialist|scientist|technician|level|tier|swe|sde)\s*(?:-\s*)?(?:3|4|5|6)\b/i.test(t)
   );
+};
+
+// Strip company history blurbs and age requirements before checking candidate experience
+const cleanExperienceText = (desc: string): string => {
+  return (desc || '')
+    .toLowerCase()
+    .replace(/\b(?:must\s+be\s+|at\s+least\s+)?\d{2}\s*(?:years?|yrs?)\s+of\s+age\b/gi, '')
+    .replace(
+      /\b(?:company|team|organization|firm|business|industry|leader|legacy|history|combined)\s+(?:with|of|for|celebrating|bringing)\s+(?:more\s+than\s+|over\s+)?\d+\+?\s*(?:years?|yrs?)\b/gi,
+      ''
+    )
+    .replace(/\b(?:more\s+than|over)\s+(?:1[5-9]|[2-9]\d)\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)?\b/gi, '');
 };
 
 // Helper to detect high experience requirements (e.g. 6+, 7+, 8+, 10+, 12+ years)
 const requiresSeniorExperience = (desc: string): boolean => {
-  const t = desc.toLowerCase();
-  if (/\b(?:(?:minimum|at least|over)\s+)?([6-9]|\d{2})\s*\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp|hands-on)?\b/i.test(t)) {
-    if (!/\b[0-3]\s*-\s*[4-7]\s*(?:years?|yrs?)\b/i.test(t)) {
+  const t = cleanExperienceText(desc);
+  if (
+    /\b(?:(?:minimum|at\s+least|over|requires?)\s+(?:of\s+)?)?([6-9]|1[0-5])\s*\+?\s*(?:(?:to|-|–|—)\s*\d+\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp|hands-on|background|development|engineering|programming)\b/i.test(t)
+  ) {
+    if (!/\b[0-3]\s*(?:to|-|–|—)\s*[4-7]\s*(?:years?|yrs?)\b/i.test(t)) {
       return true;
     }
   }
-  if (/\b(6-8|7-10|8-10|8-12|10-15)\s*(?:years?|yrs?)\b/i.test(t)) {
+  if (/\b(6-8|6-10|7-10|8-10|8-12|10-15)\s*(?:years?|yrs?)\b/i.test(t)) {
     return true;
   }
   return false;
@@ -230,11 +279,16 @@ const requiresSeniorExperience = (desc: string): boolean => {
 
 // Helper to detect mid or senior experience requirements (4+, 5+ years) that disqualify entry level
 const requiresMidOrSeniorExperience = (desc: string): boolean => {
-  const t = desc.toLowerCase();
-  if (/\b(?:(?:minimum|at least|over)\s+)?([4-9]|\d{2})\s*\+?\s*(?:-\s*\d+\s*)?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp|hands-on)?\b/i.test(t)) {
-    if (!/\b[0-2]\s*-\s*[2-4]\s*(?:years?|yrs?)\b/i.test(t)) {
+  const t = cleanExperienceText(desc);
+  if (
+    /\b(?:(?:minimum|at\s+least|over|requires?)\s+(?:of\s+)?)?([4-9]|1[0-5])\s*\+?\s*(?:(?:to|-|–|—)\s*\d+\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp|hands-on|background|development|engineering|programming)\b/i.test(t)
+  ) {
+    if (!/\b[0-2]\s*(?:to|-|–|—)\s*[1-4]\s*(?:years?|yrs?)\b/i.test(t)) {
       return true;
     }
+  }
+  if (/\b(4-6|4-7|5-7|5-8)\s*(?:years?|yrs?)\b/i.test(t)) {
+    return true;
   }
   return requiresSeniorExperience(desc);
 };
@@ -252,57 +306,75 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
       if (isSeniorOrStaffTitle(title)) {
         return false;
       }
-      // B) Cannot require 4+, 5+, 6+, 8+, 10+ years of experience
-      if (requiresMidOrSeniorExperience(fullText)) {
-        return false;
-      }
-      // C) Base salary ceiling: entry-level roles rarely start at $150k+ base unless explicitly titled junior/entry
-      if (job.salary_min && job.salary_min >= 150000 && !/\b(junior|jr\.?|entry|new grad)\b/i.test(title)) {
+      // B) Explicit Mid-Level / Level II / 2 in title is mid-level, not junior
+      if (
+        !hasExplicitJuniorTitle(title) &&
+        (/\b(mid[\s-]level|intermediate|ii)\b/i.test(title) ||
+          /\b(?:engineer|developer|programmer|analyst|specialist|scientist|technician|level|tier|swe|sde)\s*(?:-\s*)?2\b/i.test(title))
+      ) {
         return false;
       }
 
-      // 2. Positive Matching:
-      // Explicit title match (e.g. Junior Developer, Software Engineer I, Associate Developer)
-      const hasJuniorTitle = (
-        title.includes('junior') ||
-        /\bjr\.?\b/i.test(title) ||
-        title.includes('entry level') ||
-        title.includes('entry-level') ||
-        title.includes('associate') ||
-        title.includes('new grad') ||
-        title.includes('intern') ||
-        title.includes('apprentice') ||
-        /\b(software engineer|developer|engineer|analyst|programmer)\s+(i|1)\b/i.test(title) ||
-        /\b(level|tier)\s+(i|1)\b/i.test(title)
-      );
-      if (hasJuniorTitle) {
+      // 2. Explicit Junior Title Match (trusted immediately unless senior title)
+      if (hasExplicitJuniorTitle(title)) {
         return true;
+      }
+
+      // 3. Description & Salary Exclusions for untitled roles:
+      if (requiresMidOrSeniorExperience(fullText)) {
+        return false;
+      }
+      if ((job.salary_min && job.salary_min >= 120000) || (job.salary_max && job.salary_max >= 145000)) {
+        return false;
       }
 
       // Filter out mentorship phrasing false-positives (e.g., 'mentor junior developers')
       const cleanDesc = fullText
-        .replace(/\b(?:mentor|mentoring|mentors|lead|leading|leads|coach|coaching|coaches|supervise|supervising|guide|guiding)\s+(?:to\s+)?(?:junior|entry|intern)\b/gi, '')
-        .replace(/\bgraduate degree\b/gi, ''); // "graduate degree" means MS/PhD, not entry-level
+        .replace(
+          /\b(?:mentor|mentoring|mentors|lead|leading|leads|coach|coaching|coaches|supervise|supervising|guide|guiding)\s+(?:and\s+\w+\s+)?(?:to\s+)?(?:junior|entry|intern|early[\s-]career)\b/gi,
+          ''
+        )
+        .replace(/\bgraduate\s+degree\b/gi, ''); // "graduate degree" means MS/PhD, not entry-level
 
-      return (
-        cleanDesc.includes('junior') ||
-        cleanDesc.includes('entry level') ||
-        cleanDesc.includes('entry-level') ||
-        cleanDesc.includes('new grad') ||
-        cleanDesc.includes('new graduate') ||
-        cleanDesc.includes('recent graduate') ||
-        cleanDesc.includes('early career') ||
-        cleanDesc.includes('apprentice') ||
-        cleanDesc.includes('0-2 years') ||
-        cleanDesc.includes('1-2 years') ||
-        cleanDesc.includes('0-1 year') ||
-        cleanDesc.includes('0-3 years') ||
+      if (
+        /\b(junior|jr\.?|entry[\s-]level|entrylevel|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|earlycareer|apprentice|apprenticeship|internship|trainee|campus\s+hire|rotational\s+program|university\s+grad(?:uate)?|college\s+grad(?:uate)?|bootcamp)\b/i.test(
+          cleanDesc
+        ) ||
+        /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician)\s+(?:i|1)\b/i.test(cleanDesc) ||
+        /\b(?:level|tier)\s+(?:i|1)\b/i.test(cleanDesc) ||
+        /\b[0-2]\s*(?:to|-|–|—)\s*[1-3]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
+        /\b[0-2]\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,2}?(?:experience|exp|hands-on|development|engineering)\b/i.test(
+          cleanDesc
+        ) ||
+        /\b(?:minimum|at\s+least|up\s+to|under|less\s+than)\s+(?:of\s+)?[1-2]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
         cleanDesc.includes('no experience required') ||
-        /\b[0-2]\s*(?:to|-)\s*[1-3]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
-        /\b[0-1]\s*\+?\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
-        /\b(?:fresh|recent)\s+grad(?:uate)?\b/i.test(cleanDesc) ||
-        /\b(?:campus\s+hire|rotational\s+program)\b/i.test(cleanDesc)
-      );
+        cleanDesc.includes('no prior experience') ||
+        cleanDesc.includes('on-the-job training') ||
+        cleanDesc.includes('on-job-training')
+      ) {
+        return true;
+      }
+
+      // Entry-level compensation band signal when job title is clearly a technical/software role
+      const isTechTitle =
+        /\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml)\b/i.test(
+          title
+        );
+      if (isTechTitle) {
+        if (job.salary_max && job.salary_max >= 45000 && job.salary_max <= 95000) {
+          return true;
+        }
+        if (
+          job.salary_min &&
+          job.salary_min >= 45000 &&
+          job.salary_min <= 85000 &&
+          (!job.salary_max || job.salary_max <= 105000)
+        ) {
+          return true;
+        }
+      }
+
+      return false;
     }
 
     case 'mid': {
@@ -1056,10 +1128,41 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       const tagsStr = (job.tags || []).join(' ').toLowerCase();
       const fullText = `${titleLower} ${compLower} ${locLower} ${tagsStr} ${descLower}`;
 
-      // 2. Custom typed keyword filter (all words must match)
+      // 2. Custom typed keyword filter (supports composite phrases and synonyms)
       if (query.trim()) {
-        const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-        const matchesAll = words.every((w) => fullText.includes(w));
+        const normalizedQ = query
+          .toLowerCase()
+          .trim()
+          .replace(/\bentry[\s-]+level\b/g, 'junior')
+          .replace(/\bnew\s+grad(?:uate)?\b/g, 'junior')
+          .replace(/\brecent\s+grad(?:uate)?\b/g, 'junior')
+          .replace(/\bearly[\s-]+career\b/g, 'junior')
+          .replace(/\bfull[\s-]+stack\b/g, 'fullstack')
+          .replace(/\bfront[\s-]+end\b/g, 'frontend')
+          .replace(/\bback[\s-]+end\b/g, 'backend')
+          .replace(/\bwork\s+from\s+home\b/g, 'remote')
+          .replace(/[/,()"+-]/g, ' ');
+
+        const stopWords = new Set(['and', 'or', 'the', 'for', 'with', 'in', 'level', 'role', 'position', 'job', 'jobs']);
+        const words = normalizedQ
+          .split(/\s+/)
+          .filter((w) => w.length > 1 && !stopWords.has(w));
+
+        const matchesAll = words.every((w) => {
+          if (['junior', 'jr', 'entry', 'associate', 'intern', 'internship', 'apprentice'].includes(w)) {
+            return matchesOption('junior', fullText, job);
+          }
+          if (['developer', 'engineer', 'dev', 'programmer', 'software', 'coder', 'engineering', 'development'].includes(w)) {
+            return /\b(developer|engineer|dev|programmer|software|coder|engineering|development|swe|sde)\b/i.test(fullText);
+          }
+          if (['remote', 'wfh', 'telecommute'].includes(w)) {
+            return matchesOption('remote', fullText, job);
+          }
+          if (['fullstack', 'frontend', 'backend', 'devops', 'python', 'javascript', 'typescript', 'react', 'nodejs', 'golang', 'java', 'csharp', 'cpp', 'rust', 'sql', 'aws'].includes(w)) {
+            return matchesOption(w, fullText, job);
+          }
+          return fullText.includes(w);
+        });
         if (!matchesAll) return false;
       }
 

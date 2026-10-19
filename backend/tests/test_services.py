@@ -90,3 +90,53 @@ async def test_search_aggregated_jobs_sources():
     if jobs_wwr:
         assert jobs_wwr[0]["source"] == "weworkremotely"
 
+
+def test_entry_level_matching():
+    from app.services.job_fetcher import matches_query
+
+    # 1. 'entry level software engineer' should match Junior/Associate/Level-1 roles even without literal word 'level'
+    assert matches_query(
+        "entry level software engineer",
+        "Associate, Software Engineering",
+        "L3Harris",
+        [],
+        "Great role for recent college graduates in Python and C++."
+    )
+    assert matches_query(
+        "entry level software engineer",
+        "Software Engineer I",
+        "Acme Corp",
+        [],
+        "0-2 years of experience building backend services."
+    )
+    assert matches_query(
+        "junior developer",
+        "Entry Level Application Developer",
+        "XpressDocs",
+        [],
+        "We are a technology company with more than 20 years of experience helping clients. Must be 21 years of age."
+    )
+
+    # 2. Reject Senior / Mid-Level / 5+ years experience when querying junior/entry-level
+    assert not matches_query(
+        "junior developer",
+        "Senior Software Engineer",
+        "Acme",
+        [],
+        "We use internal tools and internet services."
+    )
+    assert not matches_query(
+        "junior developer",
+        "Mid-Level Automation Developer",
+        "Acme",
+        [],
+        "Building automation scripts."
+    )
+    assert not matches_query(
+        "junior developer",
+        "Software Engineer",
+        "Acme",
+        [],
+        "Requires 5+ years of software development experience."
+    )
+
