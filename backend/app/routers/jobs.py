@@ -114,11 +114,19 @@ async def check_all_jobs_status(db: AsyncSession = Depends(get_db)):
     for j in jobs:
         await db.refresh(j)
 
+    # Return full pipeline jobs list so all columns (Archive, Interviewing, Offer) remain populated
+    all_res = await db.execute(
+        select(Job)
+        .options(selectinload(Job.activities), selectinload(Job.tailored_documents))
+        .order_by(Job.updated_at.desc())
+    )
+    all_jobs = all_res.scalars().all()
+
     expired_count = sum(1 for r in results if r is True)
     return {
         "checked": len(jobs),
         "expired_found": expired_count,
-        "jobs": [j.to_dict() for j in jobs],
+        "jobs": [j.to_dict() for j in all_jobs],
     }
 
 @router.post("/{job_id}/check-status", response_model=JobResponse)

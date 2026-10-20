@@ -108,6 +108,22 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleJobsRefreshed = (refreshed: Job[]) => {
+    setJobs((prev) => {
+      const refreshedMap = new Map(refreshed.map((j) => [j.id, j]));
+      // Update existing jobs with refreshed data, preserving any jobs not in refreshed
+      const merged = prev.map((j) => refreshedMap.get(j.id) || j);
+      // Append any new jobs from refreshed that weren't in prev
+      const existingIds = new Set(prev.map((j) => j.id));
+      for (const j of refreshed) {
+        if (!existingIds.has(j.id)) {
+          merged.push(j);
+        }
+      }
+      return merged;
+    });
+  };
+
   return (
     <div className="h-screen max-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden">
       <Navbar
@@ -135,7 +151,7 @@ export const App: React.FC = () => {
                 onSelectJob={(job) => setSelectedJob(job)}
                 onUpdateJobStatus={handleUpdateJobStatus}
                 onDeleteJob={handleDeleteJob}
-                onJobsRefreshed={(refreshed) => setJobs(refreshed)}
+                onJobsRefreshed={handleJobsRefreshed}
                 updatingJobIds={updatingJobIds}
               />
             )}
