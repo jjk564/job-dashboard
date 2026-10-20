@@ -23,6 +23,54 @@ def clean_html(raw_html: str) -> str:
     text = soup.get_text(separator=" ")
     return " ".join(text.split())
 
+_US_STATE_CODES = {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga",
+    "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+    "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj",
+    "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+    "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy", "dc"
+}
+
+def _has_us_indicator(loc_str: str) -> bool:
+    """Checks if a location string explicitly indicates a US state, country, or global-remote open to US."""
+    loc_lower = (loc_str or "").lower()
+    if any(u in loc_lower for u in [
+        "united states", "usa", "u.s.", "us remote", "remote in usa", "remote - us",
+        "remote (us", "north america", "worldwide", "global", "americas", "anywhere"
+    ]):
+        return True
+    # Check for ", XX" two-letter US state code (e.g. "San Francisco, CA" or "Austin, TX")
+    for m in re.finditer(r',\s*([a-z]{2})\b', loc_lower):
+        if m.group(1) in _US_STATE_CODES:
+            return True
+    return False
+
+def _matches_target_location(
+    job_location: str,
+    target_location: Optional[str],
+    is_remote: bool,
+    include_remote: bool = True
+) -> bool:
+    """Filters boards that lack native radius search when the user enters a specific city/state."""
+    if not target_location or not target_location.strip():
+        return True
+    if is_remote or "remote" in (job_location or "").lower():
+        return bool(include_remote)
+    loc_lower = (job_location or "").lower()
+    target_parts = [p.strip().lower() for p in re.split(r'[,/]+', target_location) if p.strip()]
+    if not target_parts:
+        return True
+    city_part = target_parts[0]
+    if len(city_part) > 2 and city_part in loc_lower:
+        return True
+    if len(target_parts) > 1:
+        state_part = target_parts[1].split()[0] if target_parts[1].split() else ""
+        if len(state_part) == 2 and re.search(r'\b' + re.escape(state_part) + r'\b', loc_lower):
+            return True
+        if len(state_part) > 2 and state_part in loc_lower:
+            return True
+    return False
+
 def is_us_eligible(
     location: str,
     title: str = "",
@@ -44,43 +92,44 @@ def is_us_eligible(
         "zur verstärkung", "sobre a vaga", "vaga afirmativa",
     ]
     for marker in foreign_markers:
-        if marker in full_header or marker in text[:400].lower():
+        if marker in full_header or marker in (text or "")[:400].lower():
             return False
 
-    # 2. Check structured location restrictions (e.g. Himalayas, Jobicy)
+    # 2. Check structured location restrictions (e.g. Himalayas, SimplifyJobs)
     if location_list is not None and len(location_list) > 0:
         locs_lower = [str(l).lower() for l in location_list]
-        has_us = any(
-            any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas", "anywhere"])
-            for l in locs_lower
-        )
+        has_us = any(_has_us_indicator(l) for l in locs_lower)
         if not has_us:
-            return False
-
-        # If it specifically lists foreign country without US, reject
-        has_foreign_only = any(
-            any(f in l for f in [
-                "germany", "deutschland", "brazil", "brasil", "portugal", "singapore",
-                "india", "united kingdom", "uk", "france", "spain", "poland", "netherlands",
-                "australia", "japan", "italy", "switzerland", "sweden", "austria", "belgium"
-            ]) for l in locs_lower
-        ) and not any(u in l for u in ["united states", "usa", "u.s.", "north america", "worldwide", "global", "americas", "anywhere"] for l in locs_lower)
-        if has_foreign_only:
             return False
 
     # 3. Check location string for explicit foreign exclusivity
     explicit_foreign_regions = [
         "europe only", "eu only", "uk only", "emea only", "apac only", "latam only",
-        "germany", "deutschland", "berlin", "munich", "frankfurt", "london", "paris",
-        "tokyo", "japan", "singapore", "brazil", "são paulo", "portugal", "lisbon",
-        "india", "bangalore", "mumbai", "sydney", "melbourne", "australia",
-        "netherlands", "amsterdam", "poland", "warsaw", "madrid", "spain",
+        "remote in uk", "remote - uk", "united kingdom", ", uk", "(uk)",
+        "canada", "toronto", "vancouver", "montreal", "waterloo", "ottawa", "calgary",
+        "germany", "deutschland", "berlin", "munich", "frankfurt", "london", "bristol",
+        "slough", "cambridge, uk", "manchester, uk", "edinburgh", "belfast",
+        "ireland", "dublin", "paris", "france", "madrid", "barcelona", "spain",
+        "tokyo", "japan", "singapore", "brazil", "brasil", "são paulo", "portugal", "lisbon",
+        "india", "bangalore", "bengaluru", "mumbai", "hyderabad", "pune", "chennai", "gurugram", "noida",
+        "sydney", "melbourne", "australia", "new south wales", ", aus",
+        "netherlands", "amsterdam", "poland", "warsaw", "krakow", "wroclaw",
+        "israel", "tel aviv", "yokneam", "haifa", "romania", "bucharest",
+        "mexico", "mexico city", "guadalajara", "monterrey", "argentina", "buenos aires",
+        "colombia", "bogota", "chile", "santiago", "korea", "seoul", "taiwan", "taipei",
+        "china", "beijing", "shanghai", "shenzhen", "hong kong", "switzerland", "zurich",
+        "sweden", "stockholm", "austria", "vienna", "belgium", "brussels", "italy", "milan",
+        "czech", "prague", "hungary", "budapest", "uae", "dubai", "philippines", "manila",
     ]
     for region in explicit_foreign_regions:
         if region in loc_lower:
-            # If it doesn't also explicitly state US / Worldwide / Americas / Anywhere, reject
-            if not any(u in loc_lower for u in ["united states", "usa", "u.s.", "us remote", "worldwide", "global", "americas", "anywhere"]):
+            # If it doesn't also explicitly state a US state or US / Worldwide / Americas / Anywhere, reject
+            if not _has_us_indicator(loc_lower):
                 return False
+
+    # Check word-boundary 'uk' so 'Luke' or 'Duke' is not rejected, but 'London, UK' or 'UK Remote' is
+    if re.search(r'\buk\b', loc_lower) and not _has_us_indicator(loc_lower):
+        return False
 
     return True
 
@@ -1191,6 +1240,964 @@ async def fetch_adzuna_jobs(
         logger.warning(f"Error fetching Adzuna jobs: {e}")
     return results
 
+# 10. LinkedIn & Glassdoor (Direct Scrapers via JobSpy)
+def _scrape_jobspy_board_sync(
+    site_name: str,
+    search_term: str,
+    location: str,
+    is_remote: bool = False,
+    results_wanted: int = 30,
+    distance: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Synchronous worker that scrapes LinkedIn or Glassdoor via JobSpy with location & radius distance."""
+    try:
+        from jobspy import scrape_jobs
+        scrape_kwargs: Dict[str, Any] = {
+            "site_name": [site_name],
+            "search_term": search_term,
+            "location": location,
+            "is_remote": is_remote,
+            "results_wanted": results_wanted,
+            "country_indeed": "USA",
+        }
+        if distance is not None:
+            scrape_kwargs["distance"] = distance
+
+        df = scrape_jobs(**scrape_kwargs)
+        if df is None or df.empty:
+            return []
+
+        clean_q = re.sub(r"\b(remote|wfh|work from home)\b", "", search_term, flags=re.I).strip()
+        q_tokens = [tok.lower() for tok in re.split(r'\W+', clean_q) if len(tok) > 1]
+
+        jobs_list = []
+        for _, row in df.iterrows():
+            title = str(row.get("title") or "").strip()
+            company = str(row.get("company") or "").strip()
+            loc = str(row.get("location") or "USA").strip()
+            url = str(row.get("job_url") or "").strip()
+            if not title or not url or title.lower() == "nan" or url.lower() == "nan":
+                continue
+            if company.lower() == "nan" or not company:
+                company = f"{site_name.capitalize()} Employer"
+            if loc.lower() == "nan" or not loc:
+                loc = "Remote" if is_remote else "USA"
+
+            raw_desc = str(row.get("description") or "").strip()
+            desc = clean_html(raw_desc) if raw_desc and raw_desc.lower() != "nan" else ""
+
+            min_sal = float(row.get("min_amount")) if row.get("min_amount") is not None and str(row.get("min_amount")) != "nan" else None
+            max_sal = float(row.get("max_amount")) if row.get("max_amount") is not None and str(row.get("max_amount")) != "nan" else None
+            if min_sal and min_sal < 200:
+                min_sal = round(min_sal * 2080, 2)
+            if max_sal and max_sal < 200:
+                max_sal = round(max_sal * 2080, 2)
+
+            job_is_remote = bool(row.get("is_remote", False)) or "remote" in loc.lower() or is_remote
+            tags = [site_name, "direct-hire"]
+            if job_is_remote:
+                tags.append("remote")
+
+            if not _is_senior_or_mid_title(title):
+                for tok in q_tokens:
+                    if tok not in tags:
+                        tags.append(tok)
+                if not desc:
+                    desc = f"{title} ({loc}) at {company}. Matched search criteria: {clean_q}. Full listing available on {site_name.capitalize()}."
+            elif not desc:
+                desc = f"{title} ({loc}) at {company}. Full listing available on {site_name.capitalize()}."
+
+            jobs_list.append({
+                "title": title,
+                "company": company,
+                "location": "Remote" if job_is_remote and loc in ("", "USA") else loc,
+                "workplace_type": "remote" if job_is_remote else "hybrid",
+                "url": url,
+                "salary_min": min_sal,
+                "salary_max": max_sal,
+                "salary_currency": str(row.get("currency") or "USD") if str(row.get("currency")) != "nan" else "USD",
+                "tags": tags,
+                "description": desc,
+                "source": site_name,
+            })
+        return jobs_list
+    except Exception as e:
+        logger.warning(f"Error in {site_name} JobSpy scraper: {e}")
+        return []
+
+async def _fetch_jobspy_board_jobs(
+    site_name: str,
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Generic async wrapper for LinkedIn and Glassdoor JobSpy scrapers with entry-level query expansion."""
+    q_lower = (query or "").lower().strip()
+    is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
+    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
+
+    clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower, flags=re.I).strip()
+    clean_term = re.sub(r"[/,()+-]", " ", clean_term)
+    clean_term = " ".join(clean_term.split())
+    search_term = clean_term if clean_term else "Software Engineer"
+
+    core_term = re.sub(
+        r"\b(junior|jr|entry\s+level|entry|associate|new\s+grad|early\s+career|intern|internship|level)\b",
+        "",
+        clean_term,
+        flags=re.I
+    )
+    core_term = " ".join(core_term.split()).strip() or "software engineer"
+
+    target_loc = location.strip() if location and location.strip() else None
+    if is_remote_query:
+        loc_str = "United States"
+    elif target_loc:
+        loc_str = target_loc
+    else:
+        loc_str = "United States" if us_only else "Remote"
+
+    distance_val = radius if (target_loc and radius) else (50 if target_loc else None)
+
+    try:
+        if is_junior_query:
+            q1 = f"entry level {core_term}"
+            q2 = f"junior {core_term}"
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 25, distance_val)
+            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 25, distance_val)
+            res = await asyncio.gather(t1, t2, return_exceptions=True)
+        else:
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 30, distance_val)
+            res = await asyncio.gather(t1, return_exceptions=True)
+
+        raw_jobs = []
+        for r in res:
+            if isinstance(r, list):
+                raw_jobs.extend(r)
+
+        filtered = []
+        seen = set()
+        for j in raw_jobs:
+            key = f"{j['title'].lower().strip()}|{j['company'].lower().strip()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            if not matches_query(
+                query, j["title"], j["company"], j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+            ):
+                continue
+            filtered.append(j)
+        return filtered
+    except Exception as e:
+        logger.warning(f"Error fetching {site_name} jobs: {e}")
+        return []
+
+async def fetch_linkedin_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch live US listings from LinkedIn via JobSpy."""
+    return await _fetch_jobspy_board_jobs("linkedin", query=query, us_only=us_only, location=location, radius=radius)
+
+async def fetch_glassdoor_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch live US listings with salary data from Glassdoor via JobSpy."""
+    return await _fetch_jobspy_board_jobs("glassdoor", query=query, us_only=us_only, location=location, radius=radius)
+
+
+# 11. The Muse Public API (Zero-Auth JSON API with Native Experience Level & Tech Categories)
+async def fetch_themuse_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    include_remote: bool = True
+) -> List[Dict[str, Any]]:
+    """Fetch curated tech & engineering listings from The Muse public API."""
+    q_lower = (query or "").lower().strip()
+    is_junior_q = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad", "early career"))
+    is_senior_q = any(w in q_lower for w in ("senior", "sr", "staff", "principal", "lead"))
+
+    base_url = "https://www.themuse.com/api/public/jobs"
+    categories = ["Software Engineering", "Data and Analytics", "IT", "Computer and IT"]
+
+    params_list = []
+    if is_junior_q:
+        for lvl in ("Entry Level", "Internship"):
+            params_list.append([("category", c) for c in categories] + [("level", lvl), ("page", "1")])
+    elif is_senior_q:
+        params_list.append([("category", c) for c in categories] + [("level", "Senior Level"), ("page", "1")])
+    else:
+        params_list.append([("category", c) for c in categories] + [("page", "1")])
+        params_list.append([("category", c) for c in categories] + [("level", "Entry Level"), ("page", "1")])
+
+    results = []
+    seen = set()
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            responses = await asyncio.gather(
+                *[client.get(base_url, params=p, headers=HEADERS) for p in params_list],
+                return_exceptions=True
+            )
+            for resp in responses:
+                if isinstance(resp, Exception) or resp.status_code != 200:
+                    continue
+                items = resp.json().get("results", [])
+                for item in items:
+                    title = (item.get("name") or "").strip()
+                    company = (item.get("company", {}) or {}).get("name", "The Muse Employer").strip()
+                    if not title:
+                        continue
+                    key = f"{title.lower()}|{company.lower()}"
+                    if key in seen:
+                        continue
+
+                    locs = [l.get("name", "") for l in (item.get("locations") or []) if l.get("name")]
+                    loc_str = ", ".join(locs) if locs else "United States"
+                    is_remote = any("remote" in l.lower() or "flexible" in l.lower() for l in locs) or "remote" in title.lower()
+
+                    levels = [lv.get("name", "") for lv in (item.get("levels") or []) if lv.get("name")]
+                    cats = [ct.get("name", "") for ct in (item.get("categories") or []) if ct.get("name")]
+                    tags = ["themuse"] + [lv.lower() for lv in levels] + [ct.lower() for ct in cats[:2]]
+                    if is_remote:
+                        tags.append("remote")
+
+                    desc = clean_html(item.get("contents", ""))
+                    if levels:
+                        desc = f"Experience Level: {', '.join(levels)}. {desc}"
+
+                    apply_url = (item.get("refs", {}) or {}).get("landing_page", "")
+                    if not apply_url:
+                        continue
+
+                    if us_only and not is_us_eligible(location=loc_str, title=title, text=desc, location_list=locs if locs else None):
+                        continue
+                    if not _matches_target_location(loc_str, location, is_remote, include_remote):
+                        continue
+                    if not matches_query(query, title, company, tags, desc, location=loc_str, workplace_type="remote" if is_remote else "hybrid"):
+                        continue
+
+                    seen.add(key)
+                    results.append({
+                        "title": title,
+                        "company": company,
+                        "location": "Remote (USA)" if is_remote and "flexible" in loc_str.lower() else loc_str,
+                        "workplace_type": "remote" if is_remote else "hybrid",
+                        "url": apply_url,
+                        "salary_min": None,
+                        "salary_max": None,
+                        "salary_currency": "USD",
+                        "tags": tags[:6],
+                        "description": desc[:6000],
+                        "source": "themuse",
+                    })
+                    if len(results) >= 60:
+                        break
+    except Exception as e:
+        logger.warning(f"Error fetching The Muse jobs: {e}")
+    return results
+
+
+# 12. SimplifyJobs Curated Entry-Level / New-Grad & Internship GitHub Feeds
+_SIMPLIFY_CACHE: Dict[str, Any] = {"timestamp": 0.0, "newgrad": [], "internship": []}
+
+async def fetch_simplify_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    include_remote: bool = True
+) -> List[Dict[str, Any]]:
+    """Fetch curated active US Entry-Level, New-Grad & Internship tech roles from SimplifyJobs GitHub JSON feeds."""
+    import time
+    now = time.time()
+    newgrad_url = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json"
+    intern_url = "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/.github/scripts/listings.json"
+
+    q_lower = (query or "").lower().strip()
+    want_internships = any(w in q_lower for w in ("intern", "internship", "co-op"))
+
+    try:
+        if now - _SIMPLIFY_CACHE["timestamp"] > 300 or not _SIMPLIFY_CACHE["newgrad"]:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+                r_ng, r_in = await asyncio.gather(
+                    client.get(newgrad_url, headers=HEADERS),
+                    client.get(intern_url, headers=HEADERS),
+                    return_exceptions=True
+                )
+                if not isinstance(r_ng, Exception) and r_ng.status_code == 200:
+                    ng_data = [x for x in r_ng.json() if isinstance(x, dict) and x.get("active") and x.get("is_visible", True)]
+                    ng_data.sort(key=lambda x: x.get("date_posted", 0), reverse=True)
+                    _SIMPLIFY_CACHE["newgrad"] = ng_data
+                if not isinstance(r_in, Exception) and r_in.status_code == 200:
+                    in_data = [x for x in r_in.json() if isinstance(x, dict) and x.get("active") and x.get("is_visible", True)]
+                    in_data.sort(key=lambda x: x.get("date_posted", 0), reverse=True)
+                    _SIMPLIFY_CACHE["internship"] = in_data
+                if _SIMPLIFY_CACHE["newgrad"] or _SIMPLIFY_CACHE["internship"]:
+                    _SIMPLIFY_CACHE["timestamp"] = now
+
+        pool = list(_SIMPLIFY_CACHE["newgrad"])
+        if want_internships:
+            pool = list(_SIMPLIFY_CACHE["internship"]) + pool
+        else:
+            pool = pool + list(_SIMPLIFY_CACHE["internship"][:150])
+
+        results = []
+        seen = set()
+        for item in pool:
+            title = (item.get("title") or "").strip()
+            company = (item.get("company_name") or "").strip()
+            apply_url = (item.get("url") or "").strip()
+            if not title or not company or not apply_url:
+                continue
+
+            key = f"{title.lower()}|{company.lower()}"
+            if key in seen:
+                continue
+
+            locs = [str(l).strip() for l in (item.get("locations") or []) if l]
+            loc_str = ", ".join(locs) if locs else "United States"
+            is_remote = any("remote" in l.lower() for l in locs) or "remote" in title.lower()
+
+            category = (item.get("category") or "Software").strip()
+            sponsorship = (item.get("sponsorship") or "").strip()
+            degrees = [str(d) for d in (item.get("degrees") or []) if d]
+
+            tags = ["simplify", "new-grad", "entry-level", category.lower()]
+            if is_remote:
+                tags.append("remote")
+
+            desc = (
+                f"Entry-Level / New Grad {title} ({category} Engineering / Tech) at {company} in {loc_str}. "
+                f"Target degrees: {', '.join(degrees) if degrees else 'BS/MS'}. "
+                f"{f'Sponsorship: {sponsorship}. ' if sponsorship else ''}"
+                f"Curated active early-career software & tech opening via SimplifyJobs."
+            )
+
+            if us_only and not is_us_eligible(location=loc_str, title=title, text=desc, location_list=locs if locs else None):
+                continue
+            if not _matches_target_location(loc_str, location, is_remote, include_remote):
+                continue
+            if not matches_query(query, title, company, tags, desc, location=loc_str, workplace_type="remote" if is_remote else "hybrid"):
+                continue
+
+            seen.add(key)
+            results.append({
+                "title": title,
+                "company": company,
+                "location": loc_str,
+                "workplace_type": "remote" if is_remote else "hybrid",
+                "url": apply_url,
+                "salary_min": None,
+                "salary_max": None,
+                "salary_currency": "USD",
+                "tags": tags,
+                "description": desc,
+                "source": "simplify",
+            })
+            if len(results) >= 80:
+                break
+        return results
+    except Exception as e:
+        logger.warning(f"Error fetching SimplifyJobs feed: {e}")
+        return []
+
+
+# 13. Direct Multi-Company ATS Boards (Greenhouse, Ashby, Lever for 25+ Top Tech Companies)
+GREENHOUSE_COMPANIES = [
+    ("anthropic", "Anthropic"),
+    ("stripe", "Stripe"),
+    ("cloudflare", "Cloudflare"),
+    ("databricks", "Databricks"),
+    ("vercel", "Vercel"),
+    ("coinbase", "Coinbase"),
+    ("discord", "Discord"),
+    ("reddit", "Reddit"),
+    ("robinhood", "Robinhood"),
+    ("pinterest", "Pinterest"),
+    ("figma", "Figma"),
+    ("airbnb", "Airbnb"),
+    ("gitlab", "GitLab"),
+    ("duolingo", "Duolingo"),
+    ("twilio", "Twilio"),
+    ("scaleai", "Scale AI"),
+]
+
+ASHBY_COMPANIES = [
+    ("openai", "OpenAI"),
+    ("ramp", "Ramp"),
+    ("linear", "Linear"),
+    ("notion", "Notion"),
+    ("plaid", "Plaid"),
+    ("supabase", "Supabase"),
+    ("posthog", "PostHog"),
+]
+
+LEVER_COMPANIES = [
+    ("palantir", "Palantir"),
+    ("zoox", "Zoox"),
+]
+
+_COMPANY_BOARDS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "jobs": []}
+
+async def _fetch_single_greenhouse_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+    url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+    out = []
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            for j in resp.json().get("jobs", []):
+                title = (j.get("title") or "").strip()
+                loc = (j.get("location", {}) or {}).get("name", "United States") or "United States"
+                apply_url = (j.get("absolute_url") or "").strip()
+                if not title or not apply_url:
+                    continue
+                depts = [d.get("name", "") for d in (j.get("departments") or []) if isinstance(d, dict) and d.get("name")]
+                is_remote = "remote" in loc.lower() or "remote" in title.lower() or "anywhere" in loc.lower()
+                tags = ["company_boards", "greenhouse", slug] + [d.lower() for d in depts[:2]]
+                if is_remote:
+                    tags.append("remote")
+                desc = f"{title} at {company_name} ({loc}). Department: {', '.join(depts) if depts else 'Engineering & Tech'}."
+                out.append({
+                    "title": title,
+                    "company": company_name,
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags[:6],
+                    "description": desc,
+                    "source": "company_boards",
+                })
+    except Exception as e:
+        logger.debug(f"Greenhouse board {slug} error: {e}")
+    return out
+
+async def _fetch_single_ashby_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
+    out = []
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            for j in resp.json().get("jobs", []):
+                if not j.get("isListed", True):
+                    continue
+                title = (j.get("title") or "").strip()
+                loc = (j.get("location") or "United States").strip()
+                apply_url = (j.get("jobUrl") or j.get("applyUrl") or "").strip()
+                if not title or not apply_url:
+                    continue
+                dept = (j.get("department") or "").strip()
+                team = (j.get("team") or "").strip()
+                is_remote = bool(j.get("isRemote")) or str(j.get("workplaceType") or "").lower() == "remote" or "remote" in loc.lower()
+
+                sal_min = None
+                sal_max = None
+                comp = j.get("compensation") or {}
+                for sc in (comp.get("summaryComponents") or []):
+                    if sc.get("compensationType") == "Salary":
+                        if sc.get("minValue"):
+                            sal_min = float(sc["minValue"])
+                        if sc.get("maxValue"):
+                            sal_max = float(sc["maxValue"])
+                        break
+
+                tags = ["company_boards", "ashby", slug]
+                if dept:
+                    tags.append(dept.lower())
+                if is_remote:
+                    tags.append("remote")
+
+                plain = (j.get("descriptionPlain") or "").strip()
+                desc = plain[:4000] if plain else f"{title} at {company_name} ({loc}). {dept} {team}."
+
+                out.append({
+                    "title": title,
+                    "company": company_name,
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": sal_min,
+                    "salary_max": sal_max,
+                    "salary_currency": "USD",
+                    "tags": tags[:6],
+                    "description": desc,
+                    "source": "company_boards",
+                })
+    except Exception as e:
+        logger.debug(f"Ashby board {slug} error: {e}")
+    return out
+
+async def _fetch_single_lever_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+    url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    out = []
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, list):
+                for j in data:
+                    title = (j.get("text") or "").strip()
+                    cats = j.get("categories") or {}
+                    loc = (cats.get("location") or "United States").strip()
+                    team = (cats.get("team") or "").strip()
+                    apply_url = (j.get("hostedUrl") or j.get("applyUrl") or "").strip()
+                    if not title or not apply_url:
+                        continue
+                    is_remote = str(j.get("workplaceType") or "").lower() == "remote" or "remote" in loc.lower()
+                    tags = ["company_boards", "lever", slug]
+                    if team:
+                        tags.append(team.lower())
+                    if is_remote:
+                        tags.append("remote")
+                    plain = (j.get("descriptionPlain") or "").strip()
+                    desc = plain[:4000] if plain else f"{title} at {company_name} ({loc}). {team}."
+                    out.append({
+                        "title": title,
+                        "company": company_name,
+                        "location": loc,
+                        "workplace_type": "remote" if is_remote else "hybrid",
+                        "url": apply_url,
+                        "salary_min": None,
+                        "salary_max": None,
+                        "salary_currency": "USD",
+                        "tags": tags[:6],
+                        "description": desc,
+                        "source": "company_boards",
+                    })
+    except Exception as e:
+        logger.debug(f"Lever board {slug} error: {e}")
+    return out
+
+async def fetch_company_boards_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    include_remote: bool = True
+) -> List[Dict[str, Any]]:
+    """Fetch jobs directly from 25+ top tech companies' Greenhouse, Ashby, and Lever ATS boards."""
+    import time
+    now = time.time()
+    headers = {"Accept-Encoding": "gzip, deflate", "User-Agent": HEADERS["User-Agent"]}
+
+    try:
+        if now - _COMPANY_BOARDS_CACHE["timestamp"] > 300 or not _COMPANY_BOARDS_CACHE["jobs"]:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
+                board_tasks = (
+                    [_fetch_single_greenhouse_board(client, s, n) for s, n in GREENHOUSE_COMPANIES]
+                    + [_fetch_single_ashby_board(client, s, n) for s, n in ASHBY_COMPANIES]
+                    + [_fetch_single_lever_board(client, s, n) for s, n in LEVER_COMPANIES]
+                )
+                board_results = await asyncio.gather(*board_tasks, return_exceptions=True)
+                all_board_jobs = []
+                for br in board_results:
+                    if isinstance(br, list):
+                        all_board_jobs.extend(br)
+                if all_board_jobs:
+                    _COMPANY_BOARDS_CACHE["jobs"] = all_board_jobs
+                    _COMPANY_BOARDS_CACHE["timestamp"] = now
+
+        q_lower = (query or "").lower().strip()
+        all_company_names = [n.lower() for _, n in GREENHOUSE_COMPANIES + ASHBY_COMPANIES + LEVER_COMPANIES]
+        is_specific_company_q = any(c in q_lower for c in all_company_names)
+        max_per_company = 60 if is_specific_company_q else 8
+
+        company_counts: Dict[str, int] = {}
+        results = []
+
+        for j in _COMPANY_BOARDS_CACHE["jobs"]:
+            comp = j["company"]
+            if company_counts.get(comp, 0) >= max_per_company:
+                continue
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            is_rem = j["workplace_type"] == "remote" or "remote" in j["location"].lower()
+            if not _matches_target_location(j["location"], location, is_rem, include_remote):
+                continue
+            if not matches_query(
+                query, j["title"], comp, j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+            ):
+                continue
+
+            company_counts[comp] = company_counts.get(comp, 0) + 1
+            results.append(j)
+            if len(results) >= 120:
+                break
+
+        return results
+    except Exception as e:
+        logger.warning(f"Error fetching company boards jobs: {e}")
+        return []
+
+
+# 14. Direct Big Tech Career Portals (Google, Microsoft, Amazon, Apple, Netflix, NVIDIA, Salesforce)
+def _clean_bigtech_query(query: Optional[str], company_name: str) -> str:
+    """Strips the company's own name and 'remote' from the search term sent to a single-company portal."""
+    q = (query or "").lower().strip()
+    q = re.sub(r"\b" + re.escape(company_name.lower()) + r"\b", "", q, flags=re.I)
+    q = re.sub(r"\b(remote|wfh|work from home)\b", "", q, flags=re.I)
+    q = re.sub(r"[/,()+-]", " ", q)
+    q = " ".join(q.split()).strip()
+    return q if q else "software engineer"
+
+async def _fetch_amazon_careers(client: httpx.AsyncClient, query: Optional[str], us_only: bool, location: Optional[str]) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, "amazon")
+    loc_q = location.strip() if location and location.strip() else "United States"
+    url = "https://www.amazon.jobs/en/search.json"
+    params = {"base_query": search_q, "loc_query": loc_q, "result_limit": 25}
+    out = []
+    try:
+        resp = await client.get(url, params=params)
+        if resp.status_code == 200:
+            for j in resp.json().get("jobs", []):
+                if us_only and j.get("country_code") not in ("USA", "US", None):
+                    continue
+                title = (j.get("title") or "").strip()
+                loc = (j.get("normalized_location") or j.get("location") or "United States").strip()
+                path = (j.get("job_path") or "").strip()
+                if not title or not path:
+                    continue
+                apply_url = f"https://www.amazon.jobs{path}" if path.startswith("/") else path
+                desc_parts = [
+                    clean_html(j.get("description_short") or ""),
+                    clean_html(j.get("basic_qualifications") or ""),
+                    clean_html(j.get("preferred_qualifications") or ""),
+                ]
+                desc = " ".join(p for p in desc_parts if p).strip()
+                is_remote = "remote" in loc.lower() or "virtual" in loc.lower() or "remote" in title.lower()
+                tags = ["bigtech", "amazon", "direct-hire"]
+                if j.get("university_job") or j.get("is_intern"):
+                    tags.append("entry-level")
+                if is_remote:
+                    tags.append("remote")
+                out.append({
+                    "title": title,
+                    "company": "Amazon",
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags,
+                    "description": desc or f"{title} at Amazon ({loc}).",
+                    "source": "bigtech",
+                })
+    except Exception as e:
+        logger.debug(f"Amazon careers error: {e}")
+    return out
+
+async def _fetch_microsoft_careers(query: Optional[str], us_only: bool, location: Optional[str]) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, "microsoft")
+    loc_q = location.strip() if location and location.strip() else ("United States" if us_only else "")
+    out = []
+    try:
+        ms_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://apply.careers.microsoft.com/careers",
+            "Accept-Encoding": "gzip, deflate",
+        }
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=ms_headers) as client:
+            await client.get("https://apply.careers.microsoft.com/careers")
+            resp = await client.get(
+                "https://apply.careers.microsoft.com/api/pcsx/search",
+                params={"domain": "microsoft.com", "query": search_q, "location": loc_q, "start": 0}
+            )
+            if resp.status_code == 200:
+                positions = (resp.json().get("data") or {}).get("positions") or []
+                for p in positions:
+                    title = (p.get("name") or "").strip()
+                    locs = p.get("standardizedLocations") or p.get("locations") or ["Redmond, WA, US"]
+                    loc = ", ".join(str(l) for l in locs[:2] if l)
+                    pos_url = (p.get("positionUrl") or "").strip()
+                    if not title or not pos_url:
+                        continue
+                    apply_url = f"https://apply.careers.microsoft.com{pos_url}" if pos_url.startswith("/") else pos_url
+                    work_opt = str(p.get("workLocationOption") or "").lower()
+                    is_remote = work_opt == "remote" or "remote" in loc.lower() or "remote" in title.lower()
+                    dept = (p.get("department") or "Software Engineering").strip()
+                    tags = ["bigtech", "microsoft", dept.lower()]
+                    if is_remote:
+                        tags.append("remote")
+                    out.append({
+                        "title": title,
+                        "company": "Microsoft",
+                        "location": loc,
+                        "workplace_type": "remote" if is_remote else ("onsite" if work_opt == "onsite" else "hybrid"),
+                        "url": apply_url,
+                        "salary_min": None,
+                        "salary_max": None,
+                        "salary_currency": "USD",
+                        "tags": tags,
+                        "description": f"{title} ({dept}) at Microsoft in {loc}. Matched search: {search_q}.",
+                        "source": "bigtech",
+                    })
+    except Exception as e:
+        logger.debug(f"Microsoft careers error: {e}")
+    return out
+
+async def _fetch_google_careers(client: httpx.AsyncClient, query: Optional[str], us_only: bool, location: Optional[str]) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, "google")
+    loc_q = location.strip() if location and location.strip() else ("United States" if us_only else "")
+    params: List[ Any ] = [("q", search_q)]
+    if loc_q:
+        params.append(("location", loc_q))
+    q_lower = (query or "").lower()
+    if any(w in q_lower for w in ("junior", "jr", "entry", "new grad", "associate", "early")):
+        params.append(("target_level", "EARLY"))
+        params.append(("target_level", "INTERN_AND_APPRENTICE"))
+
+    out = []
+    try:
+        resp = await client.get("https://www.google.com/about/careers/applications/jobs/results/", params=params)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for li in soup.find_all("li"):
+                a = li.find("a", href=re.compile(r"^jobs/results/\d+"))
+                if not a:
+                    continue
+                h3 = li.find("h3")
+                title = h3.get_text(strip=True) if h3 else ""
+                if not title:
+                    continue
+                href = a["href"]
+                apply_url = f"https://www.google.com/about/careers/applications/{href}"
+                card_text = li.get_text(" | ", strip=True)
+                loc_match = re.search(r"place\s*\|\s*([^|]+)", card_text)
+                loc = loc_match.group(1).strip() if loc_match else (loc_q or "United States")
+                lvl_match = re.search(r"bar_chart\s*\|\s*([^|]+)", card_text)
+                lvl = lvl_match.group(1).strip() if lvl_match else ""
+                is_remote = "remote" in loc.lower() or "remote" in title.lower()
+                tags = ["bigtech", "google", "direct-hire"]
+                if lvl:
+                    tags.append(lvl.lower())
+                if is_remote:
+                    tags.append("remote")
+                out.append({
+                    "title": title,
+                    "company": "Google",
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags,
+                    "description": f"{title} at Google ({loc}). Level: {lvl or 'Engineering'}. {card_text[:600]}",
+                    "source": "bigtech",
+                })
+    except Exception as e:
+        logger.debug(f"Google careers error: {e}")
+    return out
+
+async def _fetch_apple_careers(client: httpx.AsyncClient, query: Optional[str], us_only: bool) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, "apple")
+    url = "https://jobs.apple.com/en-us/search"
+    params = {"search": search_q, "sort": "relevance", "location": "united-states-USA"}
+    out = []
+    seen_urls = set()
+    try:
+        resp = await client.get(url, params=params)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for a in soup.find_all("a", href=re.compile(r"^/en-us/details/\d+")):
+                title = a.get_text(strip=True)
+                if not title or title.lower() == "see full role description":
+                    continue
+                href = a["href"]
+                apply_url = f"https://jobs.apple.com{href}"
+                if apply_url in seen_urls:
+                    continue
+                seen_urls.add(apply_url)
+                parent = a.find_parent("li") or a.find_parent("div") or a.find_parent("tr")
+                card_text = parent.get_text(" | ", strip=True) if parent else ""
+                loc_match = re.search(r"Location\s*\|\s*([^|]+)", card_text)
+                loc = f"{loc_match.group(1).strip()}, USA" if loc_match else "Cupertino, CA, USA"
+                is_remote = "remote" in loc.lower() or "home office" in loc.lower() or "remote" in title.lower()
+                tags = ["bigtech", "apple", "direct-hire"]
+                if is_remote:
+                    tags.append("remote")
+                out.append({
+                    "title": title,
+                    "company": "Apple",
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags,
+                    "description": f"{title} at Apple ({loc}). Matched search: {search_q}. {card_text[:400]}",
+                    "source": "bigtech",
+                })
+                if len(out) >= 20:
+                    break
+    except Exception as e:
+        logger.debug(f"Apple careers error: {e}")
+    return out
+
+async def _fetch_netflix_careers(client: httpx.AsyncClient, query: Optional[str], us_only: bool, location: Optional[str]) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, "netflix")
+    url = "https://explore.jobs.netflix.net/api/apply/v2/jobs"
+    params = {"domain": "netflix.com", "start": 0, "num": 20, "query": search_q}
+    if location and location.strip():
+        params["location"] = location.strip()
+    out = []
+    try:
+        resp = await client.get(url, params=params)
+        if resp.status_code == 200:
+            for p in resp.json().get("positions", []):
+                title = (p.get("name") or "").strip()
+                loc = (p.get("location") or "Los Gatos, CA, USA").strip()
+                apply_url = (p.get("canonicalPositionUrl") or "").strip()
+                if not title or not apply_url:
+                    continue
+                desc = clean_html(p.get("job_description") or "")
+                work_opt = str(p.get("work_location_option") or "").lower()
+                is_remote = work_opt == "remote" or "remote" in loc.lower() or "remote" in title.lower()
+                dept = (p.get("department") or "Engineering").strip()
+                tags = ["bigtech", "netflix", dept.lower()]
+                if is_remote:
+                    tags.append("remote")
+                out.append({
+                    "title": title,
+                    "company": "Netflix",
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags,
+                    "description": desc[:4000] if desc else f"{title} at Netflix ({loc}).",
+                    "source": "bigtech",
+                })
+    except Exception as e:
+        logger.debug(f"Netflix careers error: {e}")
+    return out
+
+async def _fetch_workday_careers(
+    client: httpx.AsyncClient,
+    company_name: str,
+    api_url: str,
+    public_base_url: str,
+    query: Optional[str]
+) -> List[Dict[str, Any]]:
+    search_q = _clean_bigtech_query(query, company_name)
+    out = []
+    try:
+        resp = await client.post(
+            api_url,
+            json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": search_q}
+        )
+        if resp.status_code == 200:
+            for p in resp.json().get("jobPostings", []):
+                title = (p.get("title") or "").strip()
+                loc = (p.get("locationsText") or "United States").strip()
+                ext_path = (p.get("externalPath") or "").strip()
+                if not title or not ext_path:
+                    continue
+                apply_url = f"{public_base_url}{ext_path}"
+                is_remote = "remote" in loc.lower() or "remote" in title.lower()
+                tags = ["bigtech", company_name.lower(), "workday"]
+                if is_remote:
+                    tags.append("remote")
+                out.append({
+                    "title": title,
+                    "company": company_name,
+                    "location": loc,
+                    "workplace_type": "remote" if is_remote else "hybrid",
+                    "url": apply_url,
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "tags": tags,
+                    "description": f"{title} at {company_name} ({loc}). Matched search: {search_q}.",
+                    "source": "bigtech",
+                })
+    except Exception as e:
+        logger.debug(f"Workday {company_name} error: {e}")
+    return out
+
+async def fetch_bigtech_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    include_remote: bool = True
+) -> List[Dict[str, Any]]:
+    """Fetch live roles directly from Google, Microsoft, Amazon, Apple, Netflix, NVIDIA, and Salesforce career portals."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Encoding": "gzip, deflate",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=11.0, follow_redirects=True, headers=headers) as client:
+            tasks = [
+                _fetch_amazon_careers(client, query, us_only, location),
+                _fetch_microsoft_careers(query, us_only, location),
+                _fetch_google_careers(client, query, us_only, location),
+                _fetch_apple_careers(client, query, us_only),
+                _fetch_netflix_careers(client, query, us_only, location),
+                _fetch_workday_careers(
+                    client,
+                    "NVIDIA",
+                    "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs",
+                    "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite",
+                    query
+                ),
+                _fetch_workday_careers(
+                    client,
+                    "Salesforce",
+                    "https://salesforce.wd12.myworkdayjobs.com/wday/cxs/salesforce/External_Career_Site/jobs",
+                    "https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site",
+                    query
+                ),
+            ]
+            res_lists = await asyncio.gather(*tasks, return_exceptions=True)
+
+        raw_jobs = []
+        for r in res_lists:
+            if isinstance(r, list):
+                raw_jobs.extend(r)
+
+        filtered = []
+        seen = set()
+        for j in raw_jobs:
+            key = f"{j['title'].lower().strip()}|{j['company'].lower().strip()}"
+            if key in seen:
+                continue
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            is_rem = j["workplace_type"] == "remote" or "remote" in j["location"].lower()
+            if not _matches_target_location(j["location"], location, is_rem, include_remote):
+                continue
+            if not matches_query(
+                query, j["title"], j["company"], j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+            ):
+                continue
+            seen.add(key)
+            filtered.append(j)
+        return filtered
+    except Exception as e:
+        logger.warning(f"Error fetching Big Tech jobs: {e}")
+        return []
+
+
 # Aggregated Search with Source Filtering, US-Only, and Location Radius Support
 async def search_aggregated_jobs(
     query: Optional[str] = None,
@@ -1207,15 +2214,27 @@ async def search_aggregated_jobs(
     tasks = []
     source_lower = (source or "all").lower()
 
+    if source_lower in ("all", "bigtech"):
+        tasks.append(fetch_bigtech_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
+    if source_lower in ("all", "company_boards"):
+        tasks.append(fetch_company_boards_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
+    if source_lower in ("all", "simplify"):
+        tasks.append(fetch_simplify_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "indeed"):
         tasks.append(fetch_indeed_jobs(query, us_only=us_only, location=location, radius=radius))
+    if source_lower in ("all", "linkedin"):
+        tasks.append(fetch_linkedin_jobs(query, us_only=us_only, location=location, radius=radius))
+    if source_lower in ("all", "glassdoor"):
+        tasks.append(fetch_glassdoor_jobs(query, us_only=us_only, location=location, radius=radius))
     if source_lower in ("all", "ziprecruiter"):
         tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only, location=location, radius=radius))
+    if source_lower in ("all", "themuse"):
+        tasks.append(fetch_themuse_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "adzuna"):
         tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only, location=location, radius=radius))
 
-    # Remote / global boards: only include if include_remote is True, or if user hasn't specified a strict local location
-    should_fetch_remote_boards = include_remote or not location
+    # Remote / global boards: include if include_remote is True, or if user hasn't specified a strict local location, or if explicitly selected
+    should_fetch_remote_boards = include_remote or not location or source_lower != "all"
 
     if should_fetch_remote_boards:
         if source_lower in ("all", "arbeitnow"):
@@ -1257,4 +2276,5 @@ async def search_aggregated_jobs(
             unique_jobs.append(j)
 
     return unique_jobs
+
 

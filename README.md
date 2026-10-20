@@ -13,8 +13,12 @@ JobPulse is an autonomous, local-first dashboard designed to accelerate and auto
    - Quick stage advancement buttons and deep inspection drawers.
 
 2. **Live Multi-Board Job Aggregator & Explorer**
-   - Searches across top developer & tech sources: **We Work Remotely**, **Himalayas**, **Hacker News "Who is Hiring?"**, **Adzuna (Indeed & ZipRecruiter aggregator)**, **RemoteOK**, **Arbeitnow**, and **Jobicy**.
-   - Filter by specific platform or search across all boards simultaneously.
+   - Searches across 15+ top developer, Big Tech, and startup sources:
+     - **Big Tech Direct Career Portals**: **Google**, **Microsoft**, **Amazon**, **Apple**, **NVIDIA**, **Netflix**, and **Salesforce**.
+     - **25+ Top Tech Company ATS Boards (Greenhouse, Ashby & Lever)**: **OpenAI**, **Anthropic**, **Stripe**, **Cloudflare**, **Databricks**, **Vercel**, **Coinbase**, **Discord**, **Reddit**, **Robinhood**, **Airbnb**, **Figma**, **GitLab**, **Ramp**, **Linear**, **Notion**, **Plaid**, **Supabase**, **Palantir**, **Scale AI**, **Duolingo**, **Twilio**, and more.
+     - **SimplifyJobs Curated Feeds**: Daily updated **Entry-Level / New Grad Tech** and **Software Engineering Internship** feeds.
+     - **Major Job Boards & Tech Aggregators**: **LinkedIn**, **Glassdoor**, **Indeed**, **ZipRecruiter**, **The Muse**, **We Work Remotely**, **Himalayas**, **Hacker News "Who is Hiring?"**, **Adzuna**, **RemoteOK**, **Arbeitnow**, and **Jobicy**.
+   - Filter by specific platform or search across all boards simultaneously with location & mile-radius filtering.
    - One-click import directly into your Kanban pipeline with automated ATS match scoring.
 
 3. **Smart Job URL Scraper**

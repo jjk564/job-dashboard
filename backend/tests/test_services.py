@@ -140,3 +140,35 @@ def test_entry_level_matching():
         "Requires 5+ years of software development experience."
     )
 
+
+def test_new_board_helpers_and_us_location_filtering():
+    from app.services.job_fetcher import (
+        is_us_eligible,
+        _has_us_indicator,
+        _matches_target_location,
+        _clean_bigtech_query,
+    )
+
+    # US state code and indicator checks
+    assert _has_us_indicator("San Francisco, CA")
+    assert _has_us_indicator("Austin, TX")
+    assert _has_us_indicator("Remote in USA")
+    assert not _has_us_indicator("Bristol, UK")
+    assert not _has_us_indicator("Toronto, ON, Canada")
+
+    # SimplifyJobs / multi-location list US filtering
+    assert is_us_eligible("Jupiter, FL", "Software Engineer", "", location_list=["Jupiter, FL"])
+    assert not is_us_eligible("Bristol, UK", "Graduate Software Engineer", "", location_list=["Bristol, UK"])
+    assert not is_us_eligible("Israel, Yokneam", "Software Engineer", "")
+
+    # Target location filtering for boards without native radius
+    assert _matches_target_location("Austin, TX", "Austin, TX", is_remote=False, include_remote=True)
+    assert _matches_target_location("Remote, USA", "Austin, TX", is_remote=True, include_remote=True)
+    assert not _matches_target_location("Remote, USA", "Austin, TX", is_remote=True, include_remote=False)
+    assert not _matches_target_location("Boston, MA", "Austin, TX", is_remote=False, include_remote=True)
+
+    # Single-company portal query cleaning
+    assert _clean_bigtech_query("Google", "Google") == "software engineer"
+    assert _clean_bigtech_query("Microsoft backend python", "Microsoft") == "backend python"
+
+

@@ -195,8 +195,14 @@ const ALL_FILTER_OPTIONS: FilterOption[] = FILTER_GROUPS.flatMap((g) => g.option
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
+  { id: 'bigtech', label: 'Big Tech (Google, MSFT, AMZN...)' },
+  { id: 'company_boards', label: 'Top Tech ATS (OpenAI, Stripe...)' },
+  { id: 'simplify', label: 'SimplifyJobs (Entry-Level)' },
+  { id: 'linkedin', label: 'LinkedIn' },
+  { id: 'glassdoor', label: 'Glassdoor' },
   { id: 'indeed', label: 'Indeed' },
   { id: 'ziprecruiter', label: 'ZipRecruiter' },
+  { id: 'themuse', label: 'The Muse' },
   { id: 'arbeitnow', label: 'Arbeitnow' },
   { id: 'jobicy', label: 'Jobicy' },
   { id: 'weworkremotely', label: 'We Work Remotely' },
@@ -1245,6 +1251,18 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
   const getSourceBadge = (source: string) => {
     switch (source.toLowerCase()) {
+      case 'bigtech':
+        return 'bg-amber-950/70 text-amber-300 border-amber-700/60';
+      case 'company_boards':
+        return 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-700/60';
+      case 'simplify':
+        return 'bg-cyan-950/70 text-cyan-300 border-cyan-700/60';
+      case 'linkedin':
+        return 'bg-sky-950/70 text-sky-300 border-sky-700/60';
+      case 'glassdoor':
+        return 'bg-lime-950/70 text-lime-300 border-lime-700/60';
+      case 'themuse':
+        return 'bg-violet-950/70 text-violet-300 border-violet-700/60';
       case 'indeed':
         return 'bg-blue-950/60 text-blue-300 border-blue-800/50';
       case 'ziprecruiter':
@@ -1638,7 +1656,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
               Discover Active Tech Opportunities
             </h1>
             <p className="text-slate-400 text-sm">
-              Searches directly across <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">Arbeitnow</span>, <span className="text-slate-200 font-medium">Jobicy</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
+              Searches directly across <span className="text-slate-200 font-medium">Big Tech Careers (Google, Microsoft, Amazon, Apple, NVIDIA, Netflix, Salesforce)</span>, <span className="text-slate-200 font-medium">25+ Top Tech ATS Boards (OpenAI, Anthropic, Stripe, Cloudflare, Databricks...)</span>, <span className="text-slate-200 font-medium">SimplifyJobs (Entry-Level &amp; New Grad)</span>, <span className="text-slate-200 font-medium">LinkedIn</span>, <span className="text-slate-200 font-medium">Glassdoor</span>, <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">The Muse</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
             </p>
 
             {/* Search Box */}
