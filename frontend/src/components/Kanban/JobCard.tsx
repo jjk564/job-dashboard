@@ -23,7 +23,7 @@ interface JobCardProps {
   isUpdating?: boolean;
 }
 
-const STATUS_ORDER: JobStatus[] = ['WISHLIST', 'TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
+const STATUS_ORDER: JobStatus[] = ['TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
 
 export const JobCard: React.FC<JobCardProps> = ({
   job,
@@ -33,9 +33,9 @@ export const JobCard: React.FC<JobCardProps> = ({
   onArchive,
   isUpdating = false,
 }) => {
-  const currentIndex = STATUS_ORDER.indexOf(job.status);
+  const currentIndex = job.status === 'WISHLIST' ? 0 : STATUS_ORDER.indexOf(job.status);
   const canMovePrev = currentIndex > 0;
-  const canMoveNext = currentIndex < STATUS_ORDER.length - 1;
+  const canMoveNext = currentIndex >= 0 && currentIndex < STATUS_ORDER.length - 1;
 
   // Format salary
   const formatSalary = () => {

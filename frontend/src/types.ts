@@ -1,11 +1,11 @@
 export type JobStatus = 
-  | 'WISHLIST' 
   | 'TO_APPLY' 
   | 'APPLIED' 
   | 'INTERVIEWING' 
   | 'OFFER' 
   | 'REJECTED' 
-  | 'ARCHIVED';
+  | 'ARCHIVED'
+  | 'WISHLIST';
 
 export type Priority = 'low' | 'medium' | 'high';
 

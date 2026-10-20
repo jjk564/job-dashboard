@@ -35,13 +35,6 @@ interface ColumnConfig {
 
 const COLUMNS: ColumnConfig[] = [
   {
-    id: 'WISHLIST',
-    title: 'Wishlist',
-    icon: <Bookmark className="w-4 h-4 text-purple-400" />,
-    colorClass: 'border-purple-500/30 text-purple-300',
-    headerBg: 'bg-purple-950/20',
-  },
-  {
     id: 'TO_APPLY',
     title: 'To Apply',
     icon: <Clock className="w-4 h-4 text-blue-400" />,
@@ -78,7 +71,7 @@ const COLUMNS: ColumnConfig[] = [
   },
 ];
 
-const STATUS_ORDER: JobStatus[] = ['WISHLIST', 'TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
+const STATUS_ORDER: JobStatus[] = ['TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   jobs,
@@ -136,8 +129,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   }, [jobs, searchTerm, workplaceFilter, minFitScore, hideExpired]);
 
   const handleMoveStatus = (job: Job, direction: 'prev' | 'next') => {
-    const idx = STATUS_ORDER.indexOf(job.status);
-    if (idx === -1) return;
+    let idx = STATUS_ORDER.indexOf(job.status);
+    if (idx === -1) {
+      if (job.status === 'WISHLIST') idx = 0;
+      else return;
+    }
 
     if (direction === 'prev' && idx > 0) {
       onUpdateJobStatus(job.id, STATUS_ORDER[idx - 1]);
@@ -233,7 +229,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         <div className="flex gap-4 h-full min-w-[1280px]">
           {COLUMNS.map((col) => {
             const columnJobs = filteredJobs
-              .filter((j) => j.status === col.id)
+              .filter((j) => (col.id === 'TO_APPLY' ? (j.status === 'TO_APPLY' || j.status === 'WISHLIST') : j.status === col.id))
               .sort((a, b) => {
                 const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
                 const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;

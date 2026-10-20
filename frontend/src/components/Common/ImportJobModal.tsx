@@ -54,7 +54,7 @@ export const ImportJobModal: React.FC<ImportJobModalProps> = ({
     try {
       const created = await api.createJob({
         ...extractedData,
-        status: 'WISHLIST',
+        status: 'TO_APPLY',
       });
       onJobAdded(created);
       onClose();
@@ -158,7 +158,7 @@ export const ImportJobModal: React.FC<ImportJobModalProps> = ({
               disabled={saving}
               className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition flex items-center justify-center space-x-2 disabled:opacity-50"
             >
-              <span>{saving ? 'Adding to Pipeline...' : 'Add to Pipeline (Wishlist)'}</span>
+              <span>{saving ? 'Adding to Pipeline...' : 'Add to Pipeline (To Apply)'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>

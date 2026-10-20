@@ -8,7 +8,7 @@ JobPulse is an autonomous, local-first dashboard designed to accelerate and auto
 ## 🌟 Core Features
 
 1. **Kanban Application Pipeline**
-   - Track listings visually across stages: `Wishlist`, `To Apply`, `Applied`, `Interviewing`, `Offers`, and `Archive`.
+   - Track listings visually across stages: `To Apply`, `Applied`, `Interviewing`, `Offers`, and `Archive`.
    - Filter by workplace type (Remote, Hybrid, Onsite), priority, and calculated ATS fit score.
    - Quick stage advancement buttons and deep inspection drawers.
 

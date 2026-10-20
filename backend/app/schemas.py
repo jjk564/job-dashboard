@@ -62,7 +62,7 @@ class JobBase(BaseModel):
     description: Optional[str] = None
     requirements: Optional[str] = None
     source: Optional[str] = "manual"
-    status: Optional[str] = "WISHLIST"
+    status: Optional[str] = "TO_APPLY"
     priority: Optional[str] = "medium"
     notes: Optional[str] = None
     deadline: Optional[datetime] = None

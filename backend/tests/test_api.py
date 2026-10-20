@@ -63,7 +63,7 @@ async def test_create_and_list_job():
             "salary_max": 150000,
             "description": "Looking for Python, React, and PostgreSQL expertise.",
             "source": "manual",
-            "status": "WISHLIST"
+            "status": "TO_APPLY"
         }
         res = await ac.post("/api/jobs", json=job_data)
         assert res.status_code == 200
@@ -110,7 +110,7 @@ async def test_job_expiration_check_endpoints():
             "title": "Old Opening",
             "company": "Expired Corp",
             "deadline": "2020-01-01T00:00:00",
-            "status": "WISHLIST"
+            "status": "TO_APPLY"
         })
         assert res.status_code == 200
         job_id = res.json()["id"]

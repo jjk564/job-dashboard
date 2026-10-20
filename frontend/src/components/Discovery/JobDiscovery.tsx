@@ -107,13 +107,13 @@ export const findMatchingPipelineJob = (
 };
 
 export const PIPELINE_STATUS_LABELS: Record<string, string> = {
-  WISHLIST: 'Saved',
-  TO_APPLY: 'Ready to Apply',
+  TO_APPLY: 'To Apply',
   APPLIED: 'Applied',
   INTERVIEWING: 'Interviewing',
   OFFER: 'Offer',
   REJECTED: 'Rejected',
   ARCHIVED: 'Archived',
+  WISHLIST: 'To Apply',
 };
 
 export interface FilterOption {
@@ -1237,7 +1237,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
         salary_currency: job.salary_currency || 'USD',
         description: job.description,
         source: job.source,
-        status: 'WISHLIST',
+        status: 'TO_APPLY',
       });
       setAddedUrls((prev) => new Set(prev).add(job.url));
       setInternalPipelineJobs((prev) => [created, ...prev]);
@@ -2032,7 +2032,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {paginatedJobs.map((job, idx) => {
-              const matchingPipelineJob = pipelineMatchMap.get(job.url) || (addedUrls.has(job.url) ? { status: 'WISHLIST' } as Job : undefined);
+              const matchingPipelineJob = pipelineMatchMap.get(job.url) || (addedUrls.has(job.url) ? { status: 'TO_APPLY' } as Job : undefined);
               const isAdded = Boolean(matchingPipelineJob || addedUrls.has(job.url));
               const isAddingThis = addingUrl === job.url;
 

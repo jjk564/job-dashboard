@@ -19,7 +19,7 @@ class Job(Base):
     description = Column(Text, nullable=True)
     requirements = Column(Text, nullable=True)
     source = Column(String(100), default="manual")
-    status = Column(String(50), default="WISHLIST")  # WISHLIST, TO_APPLY, APPLIED, INTERVIEWING, OFFER, REJECTED, ARCHIVED
+    status = Column(String(50), default="TO_APPLY")  # TO_APPLY, APPLIED, INTERVIEWING, OFFER, REJECTED, ARCHIVED
     priority = Column(String(20), default="medium")  # low, medium, high
     fit_score = Column(Integer, nullable=True)
     fit_breakdown = Column(Text, nullable=True)  # JSON {matched: [], missing: [], score: int}

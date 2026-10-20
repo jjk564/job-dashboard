@@ -26,7 +26,6 @@ interface JobDetailDrawerProps {
 }
 
 const STATUS_OPTIONS: { id: JobStatus; label: string }[] = [
-  { id: 'WISHLIST', label: 'Wishlist' },
   { id: 'TO_APPLY', label: 'To Apply' },
   { id: 'APPLIED', label: 'Applied' },
   { id: 'INTERVIEWING', label: 'Interviewing' },

@@ -24,7 +24,7 @@ export const AddJobModal: React.FC<AddJobModalProps> = ({
   const [salaryMin, setSalaryMin] = useState<string>('');
   const [salaryMax, setSalaryMax] = useState<string>('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<JobStatus>('WISHLIST');
+  const [status, setStatus] = useState<JobStatus>('TO_APPLY');
   const [priority, setPriority] = useState<Priority>('medium');
   const [saving, setSaving] = useState(false);
 
@@ -136,7 +136,6 @@ export const AddJobModal: React.FC<AddJobModalProps> = ({
                 onChange={(e) => setStatus(e.target.value as JobStatus)}
                 className="w-full px-2.5 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none"
               >
-                <option value="WISHLIST">Wishlist</option>
                 <option value="TO_APPLY">To Apply</option>
                 <option value="APPLIED">Applied</option>
               </select>

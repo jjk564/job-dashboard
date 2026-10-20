@@ -62,7 +62,7 @@ export const AnalyticsDashboard: React.FC = () => {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {[
           { label: 'Total Tracked', val: funnel.total_tracked, color: 'text-white', icon: Layers },
-          { label: 'Wishlist / To Apply', val: funnel.wishlist + funnel.to_apply, color: 'text-purple-400', icon: Layers },
+          { label: 'To Apply', val: (funnel.to_apply || 0) + (funnel.wishlist || 0), color: 'text-blue-400', icon: Layers },
           { label: 'Applications Sent', val: funnel.applied, color: 'text-amber-400', icon: Send },
           { label: 'Interview Rounds', val: funnel.interviewing, color: 'text-cyan-400', icon: MessageSquare },
           { label: 'Offers Received', val: funnel.offer, color: 'text-emerald-400', icon: Award },

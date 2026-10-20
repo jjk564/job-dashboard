@@ -17,7 +17,7 @@ async def get_metrics(db: AsyncSession = Depends(get_db)):
 
     total = len(jobs)
     wishlist = sum(1 for j in jobs if j.status == "WISHLIST")
-    to_apply = sum(1 for j in jobs if j.status == "TO_APPLY")
+    to_apply = sum(1 for j in jobs if j.status in ("TO_APPLY", "WISHLIST"))
     applied = sum(1 for j in jobs if j.status in ("APPLIED", "INTERVIEWING", "OFFER", "REJECTED"))
     interviewing = sum(1 for j in jobs if j.status == "INTERVIEWING")
     offer = sum(1 for j in jobs if j.status == "OFFER")

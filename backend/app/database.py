@@ -50,3 +50,5 @@ async def init_db():
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_at DATETIME"))
         if "expired_reason" not in existing_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_reason VARCHAR(255)"))
+        # Migrate any legacy 'WISHLIST' status jobs to 'TO_APPLY'
+        await conn.execute(text("UPDATE jobs SET status = 'TO_APPLY' WHERE status = 'WISHLIST'"))
