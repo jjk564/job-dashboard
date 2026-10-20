@@ -101,3 +101,30 @@ async def test_discovery_search_with_location_and_radius():
         })
         assert res.status_code == 200
         assert isinstance(res.json(), list)
+
+@pytest.mark.asyncio
+async def test_job_expiration_check_endpoints():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Create a job with an expired deadline
+        res = await ac.post("/api/jobs", json={
+            "title": "Old Opening",
+            "company": "Expired Corp",
+            "deadline": "2020-01-01T00:00:00",
+            "status": "WISHLIST"
+        })
+        assert res.status_code == 200
+        job_id = res.json()["id"]
+
+        # Check single job status
+        chk_res = await ac.post(f"/api/jobs/{job_id}/check-status")
+        assert chk_res.status_code == 200
+        data = chk_res.json()
+        assert data["is_expired"] is True
+        assert "deadline passed" in (data["expired_reason"] or "").lower()
+
+        # Check check-all-status
+        all_res = await ac.post("/api/jobs/check-all-status")
+        assert all_res.status_code == 200
+        assert all_res.json()["checked"] >= 1
+        assert all_res.json()["expired_found"] >= 1
+

@@ -135,6 +135,7 @@ export const App: React.FC = () => {
                 onSelectJob={(job) => setSelectedJob(job)}
                 onUpdateJobStatus={handleUpdateJobStatus}
                 onDeleteJob={handleDeleteJob}
+                onJobsRefreshed={(refreshed) => setJobs(refreshed)}
                 updatingJobIds={updatingJobIds}
               />
             )}

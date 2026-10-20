@@ -9,7 +9,10 @@ import {
   MessageSquare, 
   Plus, 
   Trash2,
-  Briefcase
+  Briefcase,
+  AlertTriangle,
+  RefreshCw,
+  Archive
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { AICopilot } from './AICopilot';
@@ -44,6 +47,34 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
   const [newActivityTitle, setNewActivityTitle] = useState('');
   const [newActivityDetails, setNewActivityDetails] = useState('');
   const [addingActivity, setAddingActivity] = useState(false);
+  const [checkingExpiration, setCheckingExpiration] = useState(false);
+
+  // Check Expiration
+  const handleCheckExpiration = async () => {
+    setCheckingExpiration(true);
+    try {
+      const updated = await api.checkJobStatus(job.id);
+      onJobUpdated(updated);
+    } catch (err) {
+      console.error('Failed to verify expiration:', err);
+    } finally {
+      setCheckingExpiration(false);
+    }
+  };
+
+  // Toggle Manual Expiration
+  const handleToggleManualExpired = async () => {
+    try {
+      const nextVal = !job.is_expired;
+      const updated = await api.updateJob(job.id, {
+        is_expired: nextVal,
+        expired_reason: nextVal ? 'Manually marked as expired' : null,
+      });
+      onJobUpdated(updated);
+    } catch (err) {
+      console.error('Failed to update expired status:', err);
+    }
+  };
 
   // Status Change
   const handleStatusChange = async (newStatus: JobStatus) => {
@@ -166,6 +197,73 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
         <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
           {/* Left Column: Job Details & Description */}
           <div className="md:col-span-7 overflow-y-auto p-6 space-y-6 border-r border-slate-800">
+            {/* Expiration Banner if Expired */}
+            {job.is_expired ? (
+              <div className="bg-rose-950/40 border border-rose-800/60 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-fadeIn">
+                <div className="flex items-start space-x-2.5">
+                  <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-rose-300 text-sm">Posting Detected as Expired</div>
+                    <p className="text-rose-200/80 mt-0.5">
+                      {job.expired_reason || 'This job is no longer active or accepting applications.'}
+                    </p>
+                    {job.expired_at && (
+                      <span className="text-[10px] text-rose-300/60 block mt-1">
+                        Flagged on {new Date(job.expired_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    onClick={handleCheckExpiration}
+                    disabled={checkingExpiration}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium transition disabled:opacity-50 flex items-center space-x-1"
+                    title="Re-check this link"
+                  >
+                    <RefreshCw className={`w-3 h-3 text-slate-400 ${checkingExpiration ? 'animate-spin' : ''}`} />
+                    <span>{checkingExpiration ? 'Checking...' : 'Re-verify'}</span>
+                  </button>
+                  <button
+                    onClick={handleToggleManualExpired}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition"
+                    title="Clear expired flag"
+                  >
+                    Mark Active
+                  </button>
+                  {job.status !== 'REJECTED' && (
+                    <button
+                      onClick={() => handleStatusChange('REJECTED')}
+                      className="px-2.5 py-1 rounded-lg bg-rose-900/80 hover:bg-rose-800 text-white font-medium transition shadow-xs flex items-center space-x-1"
+                    >
+                      <Archive className="w-3 h-3" />
+                      <span>Archive</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : job.url ? (
+              <div className="flex items-center justify-between bg-slate-800/40 border border-slate-800 rounded-xl px-3 py-2 text-xs">
+                <span className="text-slate-400">Job Posting Status: <span className="text-emerald-400 font-medium">Active</span></span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleCheckExpiration}
+                    disabled={checkingExpiration}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition flex items-center space-x-1 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 text-emerald-400 ${checkingExpiration ? 'animate-spin' : ''}`} />
+                    <span>{checkingExpiration ? 'Checking...' : 'Verify Link'}</span>
+                  </button>
+                  <button
+                    onClick={handleToggleManualExpired}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-300 border border-slate-700 font-medium transition"
+                  >
+                    Mark Expired
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {/* Meta badges */}
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="inline-flex items-center space-x-1 text-slate-300 bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">

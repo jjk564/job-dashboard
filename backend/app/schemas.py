@@ -66,6 +66,9 @@ class JobBase(BaseModel):
     priority: Optional[str] = "medium"
     notes: Optional[str] = None
     deadline: Optional[datetime] = None
+    is_expired: Optional[bool] = False
+    expired_at: Optional[datetime] = None
+    expired_reason: Optional[str] = None
     contact_person: Optional[str] = None
     contact_email: Optional[str] = None
 
@@ -91,6 +94,9 @@ class JobUpdate(BaseModel):
     notes: Optional[str] = None
     applied_at: Optional[datetime] = None
     deadline: Optional[datetime] = None
+    is_expired: Optional[bool] = None
+    expired_at: Optional[datetime] = None
+    expired_reason: Optional[str] = None
     contact_person: Optional[str] = None
     contact_email: Optional[str] = None
 
@@ -114,6 +120,9 @@ class JobResponse(BaseModel):
     notes: Optional[str] = None
     applied_at: Optional[str] = None
     deadline: Optional[str] = None
+    is_expired: Optional[bool] = False
+    expired_at: Optional[str] = None
+    expired_reason: Optional[str] = None
     contact_person: Optional[str] = None
     contact_email: Optional[str] = None
     created_at: Optional[str] = None

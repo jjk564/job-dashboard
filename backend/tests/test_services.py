@@ -171,4 +171,29 @@ def test_new_board_helpers_and_us_location_filtering():
     assert _clean_bigtech_query("Google", "Google") == "software engineer"
     assert _clean_bigtech_query("Microsoft backend python", "Microsoft") == "backend python"
 
+@pytest.mark.asyncio
+async def test_check_job_expiration_deadline():
+    from datetime import datetime, timedelta
+    from app.services.expiration_checker import check_job_expiration
+
+    # Past deadline
+    past = datetime.utcnow() - timedelta(days=2)
+    is_exp, reason = await check_job_expiration(None, deadline=past)
+    assert is_exp is True
+    assert "deadline passed" in reason.lower()
+
+    # Future deadline with no URL
+    future = datetime.utcnow() + timedelta(days=10)
+    is_exp2, reason2 = await check_job_expiration(None, deadline=future)
+    assert is_exp2 is False
+    assert reason2 is None
+
+@pytest.mark.asyncio
+async def test_check_job_expiration_invalid_url():
+    from app.services.expiration_checker import check_job_expiration
+    is_exp, reason = await check_job_expiration("not-a-valid-url")
+    assert is_exp is False
+    assert reason is None
+
+
 

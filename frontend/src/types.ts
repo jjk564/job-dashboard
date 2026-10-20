@@ -53,7 +53,10 @@ export interface Job {
   fit_breakdown?: FitBreakdown;
   notes?: string;
   applied_at?: string;
-  deadline?: string;
+  deadline?: string | null;
+  is_expired?: boolean;
+  expired_at?: string | null;
+  expired_reason?: string | null;
   contact_person?: string;
   contact_email?: string;
   created_at?: string;

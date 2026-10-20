@@ -1,4 +1,5 @@
 import json
+import asyncio
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +11,7 @@ from ..database import get_db
 from ..models import Job, ApplicationActivity, TailoredDocument, Profile, Skill
 from ..schemas import JobCreate, JobUpdate, JobResponse, ActivityCreate, ActivityResponse
 from ..services.matcher import analyze_job_fit
+from ..services.expiration_checker import check_job_expiration
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 
@@ -72,6 +74,86 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(job)
 
+    return job.to_dict()
+
+@router.post("/check-all-status")
+async def check_all_jobs_status(db: AsyncSession = Depends(get_db)):
+    """Verifies all active pipeline jobs (WISHLIST, TO_APPLY, APPLIED) for expiration."""
+    res = await db.execute(
+        select(Job)
+        .options(selectinload(Job.activities), selectinload(Job.tailored_documents))
+        .where(Job.status.in_(["WISHLIST", "TO_APPLY", "APPLIED"]))
+    )
+    jobs = res.scalars().all()
+    sem = asyncio.Semaphore(5)
+
+    async def verify_single(job: Job):
+        async with sem:
+            is_expired, reason = await check_job_expiration(job.url, job.deadline)
+            was_expired = job.is_expired
+            job.is_expired = is_expired
+            if is_expired:
+                job.expired_at = datetime.utcnow()
+                job.expired_reason = reason
+                if not was_expired:
+                    act = ApplicationActivity(
+                        job_id=job.id,
+                        activity_type="status_change",
+                        title="Job posting detected as expired",
+                        details=reason or "Posting link closed or deadline passed",
+                    )
+                    db.add(act)
+            else:
+                job.expired_reason = None
+                job.expired_at = None
+            job.updated_at = datetime.utcnow()
+            return is_expired
+
+    results = await asyncio.gather(*(verify_single(j) for j in jobs), return_exceptions=True)
+    await db.commit()
+    for j in jobs:
+        await db.refresh(j)
+
+    expired_count = sum(1 for r in results if r is True)
+    return {
+        "checked": len(jobs),
+        "expired_found": expired_count,
+        "jobs": [j.to_dict() for j in jobs],
+    }
+
+@router.post("/{job_id}/check-status", response_model=JobResponse)
+async def check_single_job_status(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Checks whether a specific job posting has expired or closed."""
+    res = await db.execute(
+        select(Job)
+        .options(selectinload(Job.activities), selectinload(Job.tailored_documents))
+        .where(Job.id == job_id)
+    )
+    job = res.scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    is_expired, reason = await check_job_expiration(job.url, job.deadline)
+    was_expired = job.is_expired
+    job.is_expired = is_expired
+    if is_expired:
+        job.expired_at = datetime.utcnow()
+        job.expired_reason = reason
+        if not was_expired:
+            act = ApplicationActivity(
+                job_id=job.id,
+                activity_type="status_change",
+                title="Job posting detected as expired",
+                details=reason or "Posting link closed or deadline passed",
+            )
+            db.add(act)
+    else:
+        job.expired_reason = None
+        job.expired_at = None
+
+    job.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(job)
     return job.to_dict()
 
 @router.get("/{job_id}", response_model=JobResponse)

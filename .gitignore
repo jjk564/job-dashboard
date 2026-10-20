@@ -45,6 +45,9 @@ frontend/build/
 *.sqlite
 *.sqlite3
 backend/*.db
+*.db-wal
+*.db-shm
+*.db-*
 
 # IDE & OS
 .vscode/

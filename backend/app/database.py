@@ -40,3 +40,13 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migrate columns for jobs table if not present
+        from sqlalchemy import text
+        res = await conn.execute(text("PRAGMA table_info(jobs)"))
+        existing_cols = {row[1] for row in res.fetchall()}
+        if "is_expired" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN is_expired BOOLEAN DEFAULT 0"))
+        if "expired_at" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_at DATETIME"))
+        if "expired_reason" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_reason VARCHAR(255)"))

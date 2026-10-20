@@ -8,16 +8,20 @@ import {
   XCircle, 
   Search, 
   Filter, 
-  SlidersHorizontal 
+  SlidersHorizontal,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { JobCard } from './JobCard';
+import { api } from '../../api/client';
 
 interface KanbanBoardProps {
   jobs: Job[];
   onSelectJob: (job: Job) => void;
   onUpdateJobStatus: (id: number, newStatus: JobStatus) => void;
   onDeleteJob: (id: number) => void;
+  onJobsRefreshed?: (jobs: Job[]) => void;
   updatingJobIds?: Set<number>;
 }
 
@@ -81,13 +85,36 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onSelectJob,
   onUpdateJobStatus,
   onDeleteJob,
+  onJobsRefreshed,
   updatingJobIds,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [workplaceFilter, setWorkplaceFilter] = useState<string>('all');
   const [minFitScore, setMinFitScore] = useState<number>(0);
+  const [hideExpired, setHideExpired] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
 
-  // Filter jobs based on search term, workplace, and fit score
+  const handleVerifyPostings = async () => {
+    setIsVerifying(true);
+    setVerifyMessage(null);
+    try {
+      const res = await api.checkAllJobStatuses();
+      if (onJobsRefreshed && res.jobs) {
+        onJobsRefreshed(res.jobs);
+      }
+      setVerifyMessage(`Scanned ${res.checked} listings: ${res.expired_found} expired.`);
+      setTimeout(() => setVerifyMessage(null), 5000);
+    } catch (err) {
+      console.error('Failed to verify postings:', err);
+      setVerifyMessage('Failed to check postings.');
+      setTimeout(() => setVerifyMessage(null), 4000);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Filter jobs based on search term, workplace, fit score, and expired status
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
       const matchesSearch =
@@ -102,9 +129,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       const matchesScore =
         minFitScore === 0 || (job.fit_score && job.fit_score >= minFitScore);
 
-      return matchesSearch && matchesWorkplace && matchesScore;
+      const matchesExpired = !hideExpired || !job.is_expired;
+
+      return matchesSearch && matchesWorkplace && matchesScore && matchesExpired;
     });
-  }, [jobs, searchTerm, workplaceFilter, minFitScore]);
+  }, [jobs, searchTerm, workplaceFilter, minFitScore, hideExpired]);
 
   const handleMoveStatus = (job: Job, direction: 'prev' | 'next') => {
     const idx = STATUS_ORDER.indexOf(job.status);
@@ -134,7 +163,35 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-3 text-xs">
+        <div className="flex items-center space-x-3 text-xs flex-wrap gap-y-2">
+          {/* Verify Postings Button */}
+          <button
+            onClick={handleVerifyPostings}
+            disabled={isVerifying}
+            className="flex items-center space-x-1.5 bg-slate-800/80 hover:bg-slate-700/80 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white font-medium transition text-xs shadow-xs disabled:opacity-50"
+            title="Scan active pipeline postings to detect expired or closed roles"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isVerifying ? 'animate-spin' : ''}`} />
+            <span>{isVerifying ? 'Verifying...' : 'Verify Postings'}</span>
+          </button>
+
+          {/* Hide Expired Toggle */}
+          <label className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-slate-200 cursor-pointer select-none bg-slate-800/80 px-2.5 py-1.5 rounded-lg border border-slate-700">
+            <input
+              type="checkbox"
+              checked={hideExpired}
+              onChange={(e) => setHideExpired(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer"
+            />
+            <span>Hide Expired</span>
+          </label>
+
+          {verifyMessage && (
+            <span className="text-xs text-emerald-400 font-medium animate-fadeIn">
+              {verifyMessage}
+            </span>
+          )}
+
           {/* Workplace Filter */}
           <div className="flex items-center space-x-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700">
             <Filter className="w-3.5 h-3.5 text-slate-400 ml-1" />
@@ -184,6 +241,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 return b.id - a.id;
               });
 
+            const columnExpiredCount = columnJobs.filter((j) => j.is_expired).length;
+
             return (
               <div
                 key={col.id}
@@ -195,9 +254,16 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     {col.icon}
                     <span className="text-slate-200">{col.title}</span>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${col.colorClass}`}>
-                    {columnJobs.length}
-                  </span>
+                  <div className="flex items-center space-x-1.5">
+                    {columnExpiredCount > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40" title={`${columnExpiredCount} expired postings in this column`}>
+                        {columnExpiredCount} Expired
+                      </span>
+                    )}
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${col.colorClass}`}>
+                      {columnJobs.length}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Cards Container */}
@@ -214,6 +280,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         onSelect={onSelectJob}
                         onMoveStatus={handleMoveStatus}
                         onDelete={onDeleteJob}
+                        onArchive={(j) => onUpdateJobStatus(j.id, 'REJECTED')}
                         isUpdating={updatingJobIds?.has(job.id)}
                       />
                     ))

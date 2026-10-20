@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -26,6 +26,9 @@ class Job(Base):
     notes = Column(Text, nullable=True)
     applied_at = Column(DateTime, nullable=True)
     deadline = Column(DateTime, nullable=True)
+    is_expired = Column(Boolean, default=False)
+    expired_at = Column(DateTime, nullable=True)
+    expired_reason = Column(String(255), nullable=True)
     contact_person = Column(String(255), nullable=True)
     contact_email = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,6 +65,9 @@ class Job(Base):
             "notes": self.notes,
             "applied_at": self.applied_at.isoformat() if self.applied_at else None,
             "deadline": self.deadline.isoformat() if self.deadline else None,
+            "is_expired": bool(self.is_expired) if self.is_expired is not None else False,
+            "expired_at": self.expired_at.isoformat() if self.expired_at else None,
+            "expired_reason": self.expired_reason,
             "contact_person": self.contact_person,
             "contact_email": self.contact_email,
             "created_at": self.created_at.isoformat() if self.created_at else None,

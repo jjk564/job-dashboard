@@ -8,7 +8,9 @@ import {
   ChevronLeft, 
   Sparkles,
   Trash2,
-  Calendar
+  Calendar,
+  AlertTriangle,
+  Archive
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 
@@ -17,6 +19,7 @@ interface JobCardProps {
   onSelect: (job: Job) => void;
   onMoveStatus: (job: Job, direction: 'prev' | 'next') => void;
   onDelete: (id: number) => void;
+  onArchive?: (job: Job) => void;
   isUpdating?: boolean;
 }
 
@@ -27,6 +30,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   onSelect,
   onMoveStatus,
   onDelete,
+  onArchive,
   isUpdating = false,
 }) => {
   const currentIndex = STATUS_ORDER.indexOf(job.status);
@@ -55,33 +59,57 @@ export const JobCard: React.FC<JobCardProps> = ({
 
   return (
     <div 
-      className="group relative bg-slate-800/90 hover:bg-slate-800 rounded-xl p-4 border border-slate-700/70 hover:border-emerald-500/50 transition-all duration-200 shadow-md hover:shadow-xl cursor-pointer"
+      className={`group relative rounded-xl p-4 transition-all duration-200 shadow-md hover:shadow-xl cursor-pointer ${
+        job.is_expired
+          ? 'bg-slate-900/90 hover:bg-slate-900 border border-rose-500/40 hover:border-rose-500/70 opacity-90 hover:opacity-100 ring-1 ring-rose-500/20'
+          : 'bg-slate-800/90 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50'
+      }`}
       onClick={() => onSelect(job)}
     >
-      {/* Header: Company & Priority */}
+      {/* Header: Company & Badges */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center space-x-2 text-slate-400 text-xs font-medium">
           <Building2 className="w-3.5 h-3.5 text-slate-400" />
           <span className="truncate max-w-[140px] text-slate-300 font-semibold">{job.company}</span>
         </div>
 
-        {/* ATS Fit Match Pill */}
-        {job.fit_score !== undefined && job.fit_score !== null ? (
-          <span className={`inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${getScoreColor(job.fit_score)}`}>
-            <Sparkles className="w-3 h-3" />
-            <span>{job.fit_score}% Fit</span>
-          </span>
-        ) : (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-400">
-            Unranked
-          </span>
-        )}
+        <div className="flex items-center space-x-1.5 shrink-0">
+          {job.is_expired && (
+            <span
+              className="inline-flex items-center space-x-1 text-[11px] px-2 py-0.5 rounded-full font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50 shadow-xs"
+              title={job.expired_reason || 'Job posting has expired or closed'}
+            >
+              <AlertTriangle className="w-3 h-3 text-rose-400" />
+              <span>Expired</span>
+            </span>
+          )}
+
+          {/* ATS Fit Match Pill */}
+          {job.fit_score !== undefined && job.fit_score !== null ? (
+            <span className={`inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${getScoreColor(job.fit_score)}`}>
+              <Sparkles className="w-3 h-3" />
+              <span>{job.fit_score}% Fit</span>
+            </span>
+          ) : (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-400">
+              Unranked
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Job Title */}
-      <h3 className="font-semibold text-slate-100 text-sm leading-snug group-hover:text-emerald-400 transition-colors line-clamp-2 mb-2.5">
+      <h3 className="font-semibold text-slate-100 text-sm leading-snug group-hover:text-emerald-400 transition-colors line-clamp-2 mb-2">
         {job.title}
       </h3>
+
+      {/* Expired Reason Banner */}
+      {job.is_expired && job.expired_reason && (
+        <div className="mb-2.5 px-2 py-1 rounded-md bg-rose-950/40 border border-rose-900/50 text-[11px] text-rose-300/90 flex items-center space-x-1.5">
+          <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+          <span className="truncate" title={job.expired_reason}>{job.expired_reason}</span>
+        </div>
+      )}
 
       {/* Meta Pills: Location, Salary, Source */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3 text-xs">
@@ -106,12 +134,12 @@ export const JobCard: React.FC<JobCardProps> = ({
         )}
       </div>
 
-      {/* Card Footer: Quick Stage Movers and External Link */}
+      {/* Card Footer: Quick Stage Movers, Archive and External Link */}
       <div 
         className="flex items-center justify-between pt-2.5 border-t border-slate-700/60 text-xs text-slate-400"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1.5">
           {canMovePrev && (
             <button
               onClick={() => onMoveStatus(job, 'prev')}
@@ -138,6 +166,18 @@ export const JobCard: React.FC<JobCardProps> = ({
                   <ChevronRight className="w-4 h-4" />
                 </>
               )}
+            </button>
+          )}
+
+          {job.is_expired && job.status !== 'REJECTED' && onArchive && (
+            <button
+              onClick={() => onArchive(job)}
+              disabled={isUpdating}
+              className="px-2 py-0.5 rounded text-[11px] font-medium bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 flex items-center space-x-1 transition disabled:opacity-40 ml-1"
+              title="Move expired job directly to Archive"
+            >
+              <Archive className="w-3 h-3 text-rose-400" />
+              <span>Archive</span>
             </button>
           )}
         </div>

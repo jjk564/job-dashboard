@@ -53,6 +53,18 @@ export const api = {
     if (!res.ok) throw new Error('Failed to add activity');
   },
 
+  async checkJobStatus(id: number): Promise<Job> {
+    const res = await fetch(`${API_BASE}/jobs/${id}/check-status`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to verify job status');
+    return res.json();
+  },
+
+  async checkAllJobStatuses(): Promise<{ checked: number; expired_found: number; jobs: Job[] }> {
+    const res = await fetch(`${API_BASE}/jobs/check-all-status`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to verify pipeline jobs');
+    return res.json();
+  },
+
   // Discovery & URL import
   async searchDiscoveredJobs(
     query?: string,
