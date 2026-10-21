@@ -88,6 +88,71 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
 
+  // Drag and drop state
+  const [draggedJob, setDraggedJob] = useState<Job | null>(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState<JobStatus | null>(null);
+  const isDraggingRef = React.useRef(false);
+
+  const handleDragStart = (e: React.DragEvent, job: Job) => {
+    isDraggingRef.current = true;
+    setDraggedJob(job);
+    e.dataTransfer.setData('text/plain', job.id.toString());
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setTimeout(() => {
+      isDraggingRef.current = false;
+    }, 150);
+    setDraggedJob(null);
+    setDragOverColumnId(null);
+  };
+
+  const handleDragOverColumn = (e: React.DragEvent, colId: JobStatus) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverColumnId !== colId) {
+      setDragOverColumnId(colId);
+    }
+  };
+
+  const handleDragLeaveColumn = (e: React.DragEvent, colId: JobStatus) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      if (dragOverColumnId === colId) {
+        setDragOverColumnId(null);
+      }
+    }
+  };
+
+  const handleDropOnColumn = (e: React.DragEvent, targetColId: JobStatus) => {
+    e.preventDefault();
+    const jobIdStr = e.dataTransfer.getData('text/plain');
+    const jobId = jobIdStr ? parseInt(jobIdStr, 10) : draggedJob?.id;
+
+    if (jobId) {
+      const targetJob = jobs.find((j) => j.id === jobId);
+      if (targetJob) {
+        const isSame =
+          targetJob.status === targetColId ||
+          (targetColId === 'TO_APPLY' && targetJob.status === 'WISHLIST');
+        if (!isSame) {
+          onUpdateJobStatus(targetJob.id, targetColId);
+        }
+      }
+    }
+
+    setDraggedJob(null);
+    setDragOverColumnId(null);
+    setTimeout(() => {
+      isDraggingRef.current = false;
+    }, 150);
+  };
+
+  const handleCardSelect = (job: Job) => {
+    if (isDraggingRef.current) return;
+    onSelectJob(job);
+  };
+
   const handleVerifyPostings = async () => {
     setIsVerifying(true);
     setVerifyMessage(null);
@@ -238,11 +303,27 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               });
 
             const columnExpiredCount = columnJobs.filter((j) => j.is_expired).length;
+            const isTargetColumn = dragOverColumnId === col.id;
+            const isSourceColumn =
+              draggedJob?.status === col.id ||
+              (col.id === 'TO_APPLY' && draggedJob?.status === 'WISHLIST');
+            const canDropHere = Boolean(draggedJob && !isSourceColumn);
 
             return (
               <div
                 key={col.id}
-                className="flex-1 flex flex-col bg-slate-900/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm"
+                onDragOver={(e) => handleDragOverColumn(e, col.id)}
+                onDragLeave={(e) => handleDragLeaveColumn(e, col.id)}
+                onDrop={(e) => handleDropOnColumn(e, col.id)}
+                className={`flex-1 flex flex-col rounded-2xl border overflow-hidden shadow-sm transition-all duration-150 ${
+                  isTargetColumn && canDropHere
+                    ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500/80 shadow-emerald-950/40 shadow-lg'
+                    : isTargetColumn && isSourceColumn
+                    ? 'ring-1 ring-slate-600 bg-slate-900/80 border-slate-700'
+                    : draggedJob && canDropHere
+                    ? 'border-slate-700/80 bg-slate-900/70 border-dashed'
+                    : 'bg-slate-900/60 border-slate-800/80'
+                }`}
               >
                 {/* Column Header */}
                 <div className={`px-4 py-3 border-b border-slate-800 flex items-center justify-between ${col.headerBg}`}>
@@ -251,6 +332,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     <span className="text-slate-200">{col.title}</span>
                   </div>
                   <div className="flex items-center space-x-1.5">
+                    {isTargetColumn && canDropHere && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 animate-pulse">
+                        Drop Here
+                      </span>
+                    )}
                     {columnExpiredCount > 0 && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40" title={`${columnExpiredCount} expired postings in this column`}>
                         {columnExpiredCount} Expired
@@ -265,19 +351,30 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 {/* Cards Container */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-3">
                   {columnJobs.length === 0 ? (
-                    <div className="h-32 border-2 border-dashed border-slate-800/60 rounded-xl flex items-center justify-center text-xs text-slate-500">
-                      No jobs in this stage
+                    <div className={`h-32 border-2 border-dashed rounded-xl flex items-center justify-center text-xs transition-all ${
+                      isTargetColumn && canDropHere
+                        ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-300 font-semibold scale-[1.01]'
+                        : 'border-slate-800/60 text-slate-500'
+                    }`}>
+                      {isTargetColumn && canDropHere ? (
+                        <span>Release to move here</span>
+                      ) : (
+                        <span>No jobs in this stage</span>
+                      )}
                     </div>
                   ) : (
                     columnJobs.map((job) => (
                       <JobCard
                         key={job.id}
                         job={job}
-                        onSelect={onSelectJob}
+                        onSelect={handleCardSelect}
                         onMoveStatus={handleMoveStatus}
                         onDelete={onDeleteJob}
                         onArchive={(j) => onUpdateJobStatus(j.id, 'REJECTED')}
                         isUpdating={updatingJobIds?.has(job.id)}
+                        onDragStart={handleDragStart}
+                        onDragEnd={handleDragEnd}
+                        isDragging={draggedJob?.id === job.id}
                       />
                     ))
                   )}

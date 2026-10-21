@@ -10,7 +10,8 @@ import {
   Trash2,
   Calendar,
   AlertTriangle,
-  Archive
+  Archive,
+  GripVertical
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 
@@ -21,6 +22,9 @@ interface JobCardProps {
   onDelete: (id: number) => void;
   onArchive?: (job: Job) => void;
   isUpdating?: boolean;
+  onDragStart?: (e: React.DragEvent, job: Job) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  isDragging?: boolean;
 }
 
 const STATUS_ORDER: JobStatus[] = ['TO_APPLY', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED'];
@@ -32,6 +36,9 @@ export const JobCard: React.FC<JobCardProps> = ({
   onDelete,
   onArchive,
   isUpdating = false,
+  onDragStart,
+  onDragEnd,
+  isDragging = false,
 }) => {
   const currentIndex = job.status === 'WISHLIST' ? 0 : STATUS_ORDER.indexOf(job.status);
   const canMovePrev = currentIndex > 0;
@@ -59,18 +66,30 @@ export const JobCard: React.FC<JobCardProps> = ({
 
   return (
     <div 
-      className={`group relative rounded-xl p-4 transition-all duration-200 shadow-md hover:shadow-xl cursor-pointer ${
-        job.is_expired
-          ? 'bg-slate-900/90 hover:bg-slate-900 border border-rose-500/40 hover:border-rose-500/70 opacity-90 hover:opacity-100 ring-1 ring-rose-500/20'
-          : 'bg-slate-800/90 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50'
+      draggable={!isUpdating}
+      onDragStart={(e) => {
+        if (isUpdating) {
+          e.preventDefault();
+          return;
+        }
+        onDragStart?.(e, job);
+      }}
+      onDragEnd={onDragEnd}
+      className={`group relative rounded-xl p-4 transition-all duration-200 shadow-md hover:shadow-xl select-none cursor-grab active:cursor-grabbing ${
+        isDragging
+          ? 'opacity-35 scale-[0.98] border-2 border-dashed border-emerald-400 ring-2 ring-emerald-500/40 bg-slate-800/50'
+          : job.is_expired
+            ? 'bg-slate-900/90 hover:bg-slate-900 border border-rose-500/40 hover:border-rose-500/70 opacity-90 hover:opacity-100 ring-1 ring-rose-500/20'
+            : 'bg-slate-800/90 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50'
       }`}
       onClick={() => onSelect(job)}
     >
       {/* Header: Company & Badges */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center space-x-2 text-slate-400 text-xs font-medium">
-          <Building2 className="w-3.5 h-3.5 text-slate-400" />
-          <span className="truncate max-w-[140px] text-slate-300 font-semibold">{job.company}</span>
+        <div className="flex items-center space-x-1.5 text-slate-400 text-xs font-medium min-w-0">
+          <GripVertical className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 shrink-0 transition-colors" />
+          <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span className="truncate max-w-[130px] text-slate-300 font-semibold">{job.company}</span>
         </div>
 
         <div className="flex items-center space-x-1.5 shrink-0">
@@ -137,6 +156,7 @@ export const JobCard: React.FC<JobCardProps> = ({
       {/* Card Footer: Quick Stage Movers, Archive and External Link */}
       <div 
         className="flex items-center justify-between pt-2.5 border-t border-slate-700/60 text-xs text-slate-400"
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center space-x-1.5">
