@@ -10,8 +10,7 @@ import {
   Trash2,
   Calendar,
   AlertTriangle,
-  Archive,
-  GripVertical
+  Archive
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 
@@ -87,9 +86,8 @@ export const JobCard: React.FC<JobCardProps> = ({
       {/* Header: Company & Badges */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center space-x-1.5 text-slate-400 text-xs font-medium min-w-0">
-          <GripVertical className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 shrink-0 transition-colors" />
           <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          <span className="truncate max-w-[130px] text-slate-300 font-semibold">{job.company}</span>
+          <span className="truncate max-w-[140px] text-slate-300 font-semibold">{job.company}</span>
         </div>
 
         <div className="flex items-center space-x-1.5 shrink-0">
