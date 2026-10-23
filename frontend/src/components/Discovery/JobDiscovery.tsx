@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
+import { checkJobLocationMatchesRange } from '../../utils/locationMatcher';
 
 export interface JobDiscoveryProps {
   pipelineJobs?: Job[];
@@ -580,6 +581,9 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
 
     // Workplace & Type
     case 'remote':
+      if (workplace === 'hybrid' || workplace === 'onsite' || /hybrid|onsite|on-site|in-office/i.test(loc + ' ' + title)) {
+        return false;
+      }
       return (
         workplace === 'remote' ||
         loc.includes('remote') ||
@@ -1115,9 +1119,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
         }
       }
 
-      // 0c. Local Location Only filter: if user unchecked includeRemote and has a search location, hide remote listings
-      if (!showHiddenOnly && searchLocation.trim() && !includeRemote) {
-        if (job.workplace_type === 'remote' || (job.location || '').toLowerCase().includes('remote')) {
+      // 0c. Target Location & Range enforcement:
+      // - Pure remote jobs are allowed if includeRemote is true, hidden if false.
+      // - Hybrid & Onsite jobs MUST be physically located within searchRadius of searchLocation.
+      //   Any hybrid job outside this range (e.g. Seattle when searching Austin) is strictly filtered out.
+      if (!showHiddenOnly && searchLocation.trim()) {
+        if (!checkJobLocationMatchesRange(job, searchLocation, searchRadius, includeRemote)) {
           return false;
         }
       }
@@ -1185,7 +1192,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
       return true;
     });
-  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap, searchLocation, includeRemote]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap, searchLocation, searchRadius, includeRemote]);
 
   // Reset pagination to page 1 whenever search, filters, source, location, or view mode changes
   useEffect(() => {

@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 import httpx
 from bs4 import BeautifulSoup
+from .location_matcher import is_job_in_range, is_job_pure_remote
 
 logger = logging.getLogger(__name__)
 
@@ -49,27 +50,21 @@ def _matches_target_location(
     job_location: str,
     target_location: Optional[str],
     is_remote: bool,
-    include_remote: bool = True
+    include_remote: bool = True,
+    radius: Optional[int] = 50,
+    workplace_type: str = "",
+    title: str = ""
 ) -> bool:
-    """Filters boards that lack native radius search when the user enters a specific city/state."""
-    if not target_location or not target_location.strip():
-        return True
-    if is_remote or "remote" in (job_location or "").lower():
-        return bool(include_remote)
-    loc_lower = (job_location or "").lower()
-    target_parts = [p.strip().lower() for p in re.split(r'[,/]+', target_location) if p.strip()]
-    if not target_parts:
-        return True
-    city_part = target_parts[0]
-    if len(city_part) > 2 and city_part in loc_lower:
-        return True
-    if len(target_parts) > 1:
-        state_part = target_parts[1].split()[0] if target_parts[1].split() else ""
-        if len(state_part) == 2 and re.search(r'\b' + re.escape(state_part) + r'\b', loc_lower):
-            return True
-        if len(state_part) > 2 and state_part in loc_lower:
-            return True
-    return False
+    """Filters listings with distance radius matching and ensures hybrid/onsite jobs outside target range are excluded."""
+    return is_job_in_range(
+        job_location=job_location,
+        target_location=target_location,
+        radius_miles=radius,
+        workplace_type=workplace_type,
+        is_remote=is_remote,
+        include_remote=include_remote,
+        title=title
+    )
 
 def is_us_eligible(
     location: str,
@@ -2259,11 +2254,21 @@ async def search_aggregated_jobs(
         elif isinstance(r, Exception):
             logger.warning(f"Error during parallel job fetch: {r}")
 
-    # If location is provided and user unchecked include_remote, filter out purely remote positions
-    if location and not include_remote:
+    # If location is provided, enforce location and radius filtering across all aggregated sources:
+    # 1. Pure remote positions are kept if include_remote is True, and excluded if include_remote is False.
+    # 2. Hybrid and Onsite positions (which expect physical office presence) MUST be within radius of location.
+    if location and location.strip():
         combined = [
             j for j in combined
-            if j.get("workplace_type") != "remote" and "remote" not in (j.get("location") or "").lower()
+            if is_job_in_range(
+                job_location=j.get("location", ""),
+                target_location=location,
+                radius_miles=radius,
+                workplace_type=j.get("workplace_type", ""),
+                is_remote=j.get("workplace_type") == "remote" or "remote" in (j.get("location") or "").lower(),
+                include_remote=include_remote,
+                title=j.get("title", "")
+            )
         ]
 
     # Deduplicate by title + company

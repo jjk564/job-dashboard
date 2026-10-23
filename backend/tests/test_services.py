@@ -166,6 +166,13 @@ def test_new_board_helpers_and_us_location_filtering():
     assert _matches_target_location("Remote, USA", "Austin, TX", is_remote=True, include_remote=True)
     assert not _matches_target_location("Remote, USA", "Austin, TX", is_remote=True, include_remote=False)
     assert not _matches_target_location("Boston, MA", "Austin, TX", is_remote=False, include_remote=True)
+    # Hybrid listings outside target range must be filtered out even when include_remote=True
+    assert not _matches_target_location("Hybrid - Seattle, WA", "Austin, TX", is_remote=False, include_remote=True, workplace_type="hybrid")
+    assert not _matches_target_location("San Francisco, CA (Hybrid)", "Austin, TX", is_remote=False, include_remote=True, workplace_type="hybrid")
+    # Hybrid listings within local commute radius are allowed
+    assert _matches_target_location("Round Rock, TX", "Austin, TX", is_remote=False, include_remote=True, radius=25, workplace_type="hybrid")
+    # Out of radius in same state (Dallas is ~180mi from Austin)
+    assert not _matches_target_location("Dallas, TX", "Austin, TX", is_remote=False, include_remote=True, radius=25, workplace_type="hybrid")
 
     # Single-company portal query cleaning
     assert _clean_bigtech_query("Google", "Google") == "software engineer"
