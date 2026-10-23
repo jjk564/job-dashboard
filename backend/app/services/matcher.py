@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Set
 
 COMMON_TECH_SKILLS = [
     # Languages
-    "python", "javascript", "typescript", "golang", "go", "java", "c++", "c#", "ruby", "rust", "php", "swift", "kotlin", "sql", "bash", "html", "css",
+    "python", "javascript", "typescript", "golang", "java", "c++", "c#", "ruby", "rust", "php", "swift", "kotlin", "sql", "bash", "html", "css",
     # Frontend
     "react", "vue", "angular", "svelte", "next.js", "nextjs", "nuxt", "tailwind", "tailwindcss", "redux", "graphql", "webpack", "vite", "sass", "bootstrap",
     # Backend & Frameworks
@@ -11,12 +11,75 @@ COMMON_TECH_SKILLS = [
     # Databases & Caching
     "postgresql", "postgres", "mysql", "mongodb", "sqlite", "redis", "elasticsearch", "dynamodb", "cassandra", "supabase", "firebase",
     # Cloud & DevOps & Infra
-    "aws", "amazon web services", "azure", "gcp", "google cloud", "docker", "kubernetes", "k8s", "terraform", "ansible", "ci/cd", "github actions", "gitlab", "jenkins", "linux", "nginx", "helm",
+    "aws", "amazon web services", "azure", "gcp", "google cloud", "docker", "kubernetes", "k8s", "terraform", "ansible", "ci/cd", "github actions", "gitlab", "jenkins", "linux", "nginx", "helm", "git", "github",
     # Architecture & Practices
-    "microservices", "rest", "restful", "api", "grpc", "event-driven", "kafka", "rabbitmq", "distributed systems", "system design", "agile", "scrum", "tdd", "unit testing",
+    "microservices", "rest", "restful", "api", "grpc", "event-driven", "kafka", "rabbitmq", "distributed systems", "system design", "agile", "scrum", "tdd", "unit testing", "automation", "workflow automation",
     # AI & Data
-    "machine learning", "deep learning", "nlp", "llm", "pytorch", "tensorflow", "pandas", "numpy", "scikit-learn", "data engineering", "spark", "airflow"
+    "machine learning", "deep learning", "nlp", "llm", "pytorch", "tensorflow", "pandas", "numpy", "scikit-learn", "data engineering", "spark", "airflow", "data processing", "data pipelines", "data analysis"
 ]
+
+# Strict Golang pattern to avoid false positives on the English verb 'go'
+GOLANG_PATTERN = re.compile(
+    r"\b(?:golang|go\s*lang(?:uage)?)\b|"
+    r"\bgo\s+(?:developer|engineer|dev|code|programming|backend)\b|"
+    r"\b(?:built|written|implemented|develop(?:ed)?|experience|coding|proficient|fluency|programming|looking for|seeking)\s+(?:in|with|for)?\s*go\b|"
+    r"(?:\bpython|\bjava|\bc\+\+|\brust|\bc#|\bkubernetes|\bdocker|\btypescript|\breact|\bkafka|\baws)[,\s/]+go\b|"
+    r"\bgo[,\s/]+(?:python|java|rust|c\+\+|c#|kubernetes|docker|typescript|react|kafka|aws)\b",
+    re.IGNORECASE
+)
+
+# Canonical synonym mapping to prevent minor phrasing mismatches
+SKILL_SYNONYMS = {
+    "golang": "go",
+    "go": "go",
+    "postgres": "postgresql",
+    "postgresql": "postgresql",
+    "nodejs": "node.js",
+    "node": "node.js",
+    "node.js": "node.js",
+    "reactjs": "react",
+    "react.js": "react",
+    "react": "react",
+    "nextjs": "next.js",
+    "next.js": "next.js",
+    "k8s": "kubernetes",
+    "kubernetes": "kubernetes",
+    "amazon web services": "aws",
+    "aws": "aws",
+    "google cloud": "gcp",
+    "gcp": "gcp",
+    "rest": "rest",
+    "restful": "rest",
+    "rest api": "rest",
+    "rest apis": "rest",
+    "api": "rest",
+    "apis": "rest",
+    "github": "git",
+    "git": "git",
+    "github actions": "github actions",
+    "tailwindcss": "tailwind",
+    "tailwind": "tailwind",
+    "workflow automation": "automation",
+    "automation": "automation",
+    "data processing": "data processing",
+    "data pipelines": "data processing",
+    "data pipeline": "data processing",
+    "data analysis": "data processing",
+    "data engineering": "data processing",
+}
+
+# Real-world implied competencies (e.g. Pandas implies data processing and data analysis)
+IMPLIED_SKILLS = {
+    "pandas": {"data processing", "data analysis"},
+    "scikit-learn": {"machine learning", "data analysis"},
+    "pytorch": {"machine learning", "deep learning"},
+    "tensorflow": {"machine learning", "deep learning"},
+    "fastapi": {"rest", "api"},
+    "django": {"rest", "api"},
+    "flask": {"rest", "api"},
+    "express": {"rest", "api"},
+    "power automate": {"automation", "workflow automation"},
+}
 
 def extract_tech_keywords(text: str) -> Set[str]:
     """Finds known technical keywords in any text block."""
@@ -28,7 +91,10 @@ def extract_tech_keywords(text: str) -> Set[str]:
         # Use regex to match word boundaries
         pattern = r"(?:\b|\s)" + re.escape(skill) + r"(?:\b|\s)"
         if re.search(pattern, text_lower):
-            found.add(skill)
+            canonical = SKILL_SYNONYMS.get(skill, skill)
+            found.add(canonical)
+    if GOLANG_PATTERN.search(text_lower):
+        found.add("go")
     return found
 
 def analyze_job_fit(job_text: str, candidate_skills: List[str], profile_text: str = "") -> Dict[str, Any]:
@@ -49,10 +115,25 @@ def analyze_job_fit(job_text: str, candidate_skills: List[str], profile_text: st
     job_reqs = extract_tech_keywords(job_text)
 
     # Candidate skills normalized
-    candidate_set = {s.lower().strip() for s in candidate_skills if s}
+    candidate_set = set()
+    for s in candidate_skills:
+        if not s:
+            continue
+        s_norm = s.lower().strip()
+        canonical = SKILL_SYNONYMS.get(s_norm, s_norm)
+        candidate_set.add(canonical)
+
     if profile_text:
         profile_skills = extract_tech_keywords(profile_text)
         candidate_set.update(profile_skills)
+
+    # Expand candidate set with implied skills (e.g. Pandas -> data processing)
+    implied = set()
+    for s in list(candidate_set):
+        if s in IMPLIED_SKILLS:
+            for imp in IMPLIED_SKILLS[s]:
+                implied.add(SKILL_SYNONYMS.get(imp, imp))
+    candidate_set.update(implied)
 
     if not job_reqs:
         # If no specific tech skills were isolated, fallback to word overlap

@@ -43,19 +43,42 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     s_res = await db.execute(select(Skill))
     skills = [s.name for s in s_res.scalars().all()]
 
+    desc = job_in.description or ""
+    salary_min = job_in.salary_min
+    salary_max = job_in.salary_max
+
+    # If description is a short snippet or placeholder and URL is present, try extracting full description
+    if job_in.url and (len(desc.strip()) < 300 or "via simplifyjobs" in desc.lower()):
+        try:
+            from ..services.job_extractor import extract_job_from_url
+            extracted = await extract_job_from_url(job_in.url)
+            if extracted.get("description") and len(extracted["description"]) > len(desc):
+                desc = extracted["description"]
+            if extracted.get("salary_min") and not salary_min:
+                salary_min = extracted["salary_min"]
+            if extracted.get("salary_max") and not salary_max:
+                salary_max = extracted["salary_max"]
+        except Exception:
+            pass
+
     fit_score = None
     fit_breakdown_json = None
     if profile:
         fit_data = analyze_job_fit(
-            job_text=f"{job_in.title} {job_in.description or ''} {job_in.requirements or ''}",
+            job_text=f"{job_in.title} {desc} {job_in.requirements or ''}",
             candidate_skills=skills,
             profile_text=f"{profile.summary} {profile.master_resume_text}"
         )
         fit_score = fit_data["score"]
         fit_breakdown_json = json.dumps(fit_data)
 
+    job_data = job_in.model_dump()
+    job_data["description"] = desc
+    job_data["salary_min"] = salary_min
+    job_data["salary_max"] = salary_max
+
     job = Job(
-        **job_in.model_dump(),
+        **job_data,
         fit_score=fit_score,
         fit_breakdown=fit_breakdown_json
     )
@@ -208,10 +231,69 @@ async def update_job(job_id: int, job_update: JobUpdate, db: AsyncSession = Depe
         )
         db.add(act)
 
+    # Auto-recalculate fit score if description or requirements updated and fit_score not explicitly passed
+    if ("description" in update_data or "requirements" in update_data) and "fit_score" not in update_data:
+        p_res = await db.execute(select(Profile).limit(1))
+        profile = p_res.scalars().first()
+        s_res = await db.execute(select(Skill))
+        skills = [s.name for s in s_res.scalars().all()]
+        if profile:
+            fit_data = analyze_job_fit(
+                job_text=f"{job.title} {job.description or ''} {job.requirements or ''}",
+                candidate_skills=skills,
+                profile_text=f"{profile.summary} {profile.master_resume_text}"
+            )
+            job.fit_score = fit_data["score"]
+            job.fit_breakdown = json.dumps(fit_data)
+
     job.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(job)
     return job.to_dict()
+
+@router.post("/{job_id}/refresh-from-url", response_model=JobResponse)
+async def refresh_job_from_url(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Fetches full job description from the job URL and recalculates fit score."""
+    res = await db.execute(
+        select(Job)
+        .options(selectinload(Job.activities), selectinload(Job.tailored_documents))
+        .where(Job.id == job_id)
+    )
+    job = res.scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.url:
+        raise HTTPException(status_code=400, detail="Job does not have a URL to fetch")
+
+    from ..services.job_extractor import extract_job_from_url
+    try:
+        extracted = await extract_job_from_url(job.url)
+        if extracted.get("description"):
+            job.description = extracted["description"]
+        if extracted.get("salary_min") and not job.salary_min:
+            job.salary_min = extracted["salary_min"]
+        if extracted.get("salary_max") and not job.salary_max:
+            job.salary_max = extracted["salary_max"]
+
+        p_res = await db.execute(select(Profile).limit(1))
+        profile = p_res.scalars().first()
+        s_res = await db.execute(select(Skill))
+        skills = [s.name for s in s_res.scalars().all()]
+        if profile:
+            fit_data = analyze_job_fit(
+                job_text=f"{job.title} {job.description or ''} {job.requirements or ''}",
+                candidate_skills=skills,
+                profile_text=f"{profile.summary} {profile.master_resume_text}"
+            )
+            job.fit_score = fit_data["score"]
+            job.fit_breakdown = json.dumps(fit_data)
+
+        job.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(job)
+        return job.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to extract from URL: {str(e)}")
 
 @router.delete("/{job_id}")
 async def delete_job(job_id: int, db: AsyncSession = Depends(get_db)):

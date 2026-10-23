@@ -36,6 +36,19 @@ def test_analyze_job_fit_partial():
     assert "kubernetes" in fit["missing_skills"]
     assert "kafka" in fit["missing_skills"]
 
+def test_golang_prose_does_not_match_english_go():
+    text = "Conducting rigorous evaluations that go beyond benchmarks and help products go live."
+    found = extract_tech_keywords(text)
+    assert "go" not in found
+    assert "golang" not in found
+
+def test_pandas_implies_data_processing():
+    job_text = "Seeking engineer to build data processing pipelines in Python."
+    candidate_skills = ["Python", "Pandas"]
+    fit = analyze_job_fit(job_text, candidate_skills)
+    assert fit["score"] >= 80
+    assert "data processing" in fit["matched_skills"]
+
 def test_salary_extraction():
     text1 = "Base salary is $130,000 - $160,000 per year plus equity."
     min_sal, max_sal = extract_salary_range(text1)
