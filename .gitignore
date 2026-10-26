@@ -62,3 +62,8 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Testing & Cache
+.pytest_cache/
+.coverage
+htmlcov/

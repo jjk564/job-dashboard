@@ -28,19 +28,19 @@ async def get_or_create_profile(db: AsyncSession) -> Profile:
     profile = res.scalars().first()
     if not profile:
         profile = Profile(
-            full_name="Justin Kilpatrick",
-            email="jkilpatrick50@gmail.com",
+            full_name="",
+            email="",
             phone="",
-            location="United States (Remote)",
-            title="Senior Full Stack Software Engineer",
-            summary="Full stack engineer specializing in Python, TypeScript, React, and robust distributed backend architectures. Passionate about automated tooling, clean interfaces, and developer velocity.",
-            linkedin_url="https://linkedin.com/in/",
-            github_url="https://github.com/jjk564",
+            location="",
+            title="Software Engineer",
+            summary="Experienced software engineer with expertise in full-stack development, distributed systems, and modern cloud technologies.",
+            linkedin_url="",
+            github_url="",
             portfolio_url="",
             work_authorization="Authorized to work in the US without sponsorship",
-            desired_salary="$140,000 - $175,000",
+            desired_salary="",
             notice_period="Immediate / 2 weeks",
-            master_resume_text="Senior Full Stack Engineer with strong expertise in Python, FastAPI, React, Node.js, SQL, Docker, and cloud deployments."
+            master_resume_text="Software Engineer with experience across full stack web development, APIs, databases, and modern software development practices."
         )
         db.add(profile)
         await db.commit()
