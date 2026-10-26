@@ -27,7 +27,13 @@ def free_port(port: int):
                     if pid != "0":
                         pids.add(pid)
             for pid in pids:
-                subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+                subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
+                # Also terminate any orphaned multiprocessing children referencing parent_pid=<pid>
+                subprocess.run(
+                    f'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object {{ $_.ParentProcessId -eq {pid} -or $_.CommandLine -like \'*parent_pid={pid}*\' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"',
+                    shell=True,
+                    capture_output=True,
+                )
             time.sleep(1)
     except Exception as e:
         print(f"    Notice: Port {port} cleanup: {e}")
@@ -92,21 +98,30 @@ def main():
     print(" - Backend API: http://127.0.0.1:8000/docs")
     print("Press Ctrl+C to stop both servers.\n")
 
-    try:
-        webbrowser.open("http://localhost:5173")
-    except Exception:
-        pass
+    if "--no-browser" not in sys.argv:
+        try:
+            webbrowser.open("http://localhost:5173")
+        except Exception:
+            pass
 
     try:
         while True:
             time.sleep(1)
-            # Check if either process died unexpectedly
+            # Automatically restart either service if it exits unexpectedly
             if backend_proc.poll() is not None:
-                print(f"Backend exited with code {backend_proc.poll()}")
-                break
+                print(f"[!] Backend exited with code {backend_proc.poll()}. Restarting backend...")
+                free_port(8000)
+                backend_proc = subprocess.Popen(
+                    [sys.executable, "run.py"],
+                    cwd=backend_dir,
+                )
             if frontend_proc.poll() is not None:
-                print(f"Frontend exited with code {frontend_proc.poll()}")
-                break
+                print(f"[!] Frontend exited with code {frontend_proc.poll()}. Restarting frontend...")
+                free_port(5173)
+                frontend_proc = subprocess.Popen(
+                    [npm_cmd, "run", "dev"],
+                    cwd=frontend_dir,
+                )
     except KeyboardInterrupt:
         pass
 
