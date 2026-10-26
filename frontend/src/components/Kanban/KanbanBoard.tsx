@@ -10,7 +10,10 @@ import {
   Filter, 
   SlidersHorizontal,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Archive,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { JobCard } from './JobCard';
@@ -65,7 +68,7 @@ const COLUMNS: ColumnConfig[] = [
   {
     id: 'REJECTED',
     title: 'Archive',
-    icon: <XCircle className="w-4 h-4 text-slate-400" />,
+    icon: <Archive className="w-4 h-4 text-slate-400" />,
     colorClass: 'border-slate-500/30 text-slate-300',
     headerBg: 'bg-slate-950/20',
   },
@@ -87,6 +90,29 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [hideExpired, setHideExpired] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
+
+  // Archive column discrete/collapsed toggle (remembered in localStorage, defaults to hidden/collapsed)
+  const [isArchiveExpanded, setIsArchiveExpanded] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('jobpulse_archive_expanded');
+      return saved !== null ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleArchive = () => {
+    if (isDraggingRef.current) return;
+    setIsArchiveExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('jobpulse_archive_expanded', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Drag and drop state
   const [draggedJob, setDraggedJob] = useState<Job | null>(null);
@@ -193,6 +219,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     });
   }, [jobs, searchTerm, workplaceFilter, minFitScore, hideExpired]);
 
+  const archiveJobsCount = useMemo(() => {
+    return filteredJobs.filter((j) => j.status === 'REJECTED').length;
+  }, [filteredJobs]);
+
   const handleMoveStatus = (job: Job, direction: 'prev' | 'next') => {
     let idx = STATUS_ORDER.indexOf(job.status);
     if (idx === -1) {
@@ -286,12 +316,38 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               <option value={85}>85% +</option>
             </select>
           </div>
+
+          {/* Archive Toggle Button */}
+          <button
+            onClick={toggleArchive}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition cursor-pointer select-none ${
+              isArchiveExpanded
+                ? 'bg-slate-800 border-slate-600 text-slate-200 shadow-xs'
+                : 'bg-slate-800/80 hover:bg-slate-700/80 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+            title={isArchiveExpanded ? 'Hide / Collapse Archive column' : 'Show / Expand Archive column'}
+          >
+            <Archive className="w-3.5 h-3.5 text-slate-400" />
+            <span>Archive</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold border ${
+              isArchiveExpanded
+                ? 'bg-slate-700/80 border-slate-600 text-slate-200'
+                : 'bg-slate-900 border-slate-700 text-slate-400'
+            }`}>
+              {archiveJobsCount}
+            </span>
+            {isArchiveExpanded ? (
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+            ) : (
+              <ChevronLeft className="w-3.5 h-3.5 text-slate-500" />
+            )}
+          </button>
         </div>
       </div>
 
       {/* Kanban Columns */}
       <div className="flex-1 overflow-x-auto p-6 bg-slate-950/40">
-        <div className="flex gap-4 h-full min-w-[1280px]">
+        <div className={`flex gap-4 h-full transition-all duration-200 ${isArchiveExpanded ? 'min-w-[1280px]' : 'min-w-[1040px]'}`}>
           {COLUMNS.map((col) => {
             const columnJobs = filteredJobs
               .filter((j) => (col.id === 'TO_APPLY' ? (j.status === 'TO_APPLY' || j.status === 'WISHLIST') : j.status === col.id))
@@ -309,6 +365,58 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               (col.id === 'TO_APPLY' && draggedJob?.status === 'WISHLIST');
             const canDropHere = Boolean(draggedJob && !isSourceColumn);
 
+            // Collapsed Discrete Archive Column View
+            if (col.id === 'REJECTED' && !isArchiveExpanded) {
+              return (
+                <div
+                  key={col.id}
+                  onDragOver={(e) => handleDragOverColumn(e, col.id)}
+                  onDragLeave={(e) => handleDragLeaveColumn(e, col.id)}
+                  onDrop={(e) => handleDropOnColumn(e, col.id)}
+                  onClick={toggleArchive}
+                  className={`w-14 shrink-0 flex flex-col items-center py-4 rounded-2xl border transition-all duration-200 select-none cursor-pointer group ${
+                    isTargetColumn && canDropHere
+                      ? 'ring-2 ring-slate-400 bg-slate-800/95 border-slate-500 shadow-lg shadow-slate-950/60 scale-[1.02]'
+                      : draggedJob && canDropHere
+                      ? 'border-slate-700/90 bg-slate-900/80 border-dashed hover:border-slate-600'
+                      : 'bg-slate-900/40 hover:bg-slate-900/70 border-slate-800/80 hover:border-slate-700/90'
+                  }`}
+                  title="Archive column (Click to expand)"
+                >
+                  {/* Top Icon & Count */}
+                  <div className="flex flex-col items-center space-y-2">
+                    <div className="p-2 rounded-xl bg-slate-800/80 border border-slate-700/60 text-slate-400 group-hover:text-slate-200 group-hover:border-slate-600 transition shadow-xs">
+                      <Archive className="w-4 h-4" />
+                    </div>
+                    <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full border ${col.colorClass}`}>
+                      {columnJobs.length}
+                    </span>
+                  </div>
+
+                  {/* Middle drop state or vertical label */}
+                  <div className="flex-1 flex flex-col items-center justify-center my-4">
+                    {isTargetColumn && canDropHere ? (
+                      <div className="text-[11px] font-bold text-slate-200 bg-slate-700/80 px-2 py-4 rounded-lg border border-slate-500 animate-pulse [writing-mode:vertical-rl] rotate-180 tracking-wider">
+                        DROP TO ARCHIVE
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center space-y-1">
+                        <span className="text-xs font-semibold text-slate-400 group-hover:text-slate-200 transition [writing-mode:vertical-rl] rotate-180 tracking-widest uppercase text-[11px]">
+                          Archive
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bottom expand chevron */}
+                  <div className="p-1.5 rounded-lg text-slate-500 group-hover:text-slate-300 transition group-hover:bg-slate-800/60" title="Expand Archive column">
+                    <ChevronLeft className="w-4 h-4" />
+                  </div>
+                </div>
+              );
+            }
+
+            // Standard / Expanded Column View
             return (
               <div
                 key={col.id}
@@ -345,6 +453,15 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${col.colorClass}`}>
                       {columnJobs.length}
                     </span>
+                    {col.id === 'REJECTED' && (
+                      <button
+                        onClick={toggleArchive}
+                        className="p-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition ml-1 cursor-pointer"
+                        title="Hide / Collapse Archive column"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
