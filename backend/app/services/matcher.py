@@ -2,8 +2,8 @@ import re
 from typing import List, Dict, Any, Set
 
 COMMON_TECH_SKILLS = [
-    # Languages
-    "python", "javascript", "typescript", "golang", "java", "c++", "c#", "ruby", "rust", "php", "swift", "kotlin", "sql", "bash", "html", "css",
+    # Languages & Scripting
+    "python", "javascript", "typescript", "golang", "java", "c++", "c#", "ruby", "rust", "php", "swift", "kotlin", "sql", "bash", "powershell", "html", "css",
     # Frontend
     "react", "vue", "angular", "svelte", "next.js", "nextjs", "nuxt", "tailwind", "tailwindcss", "redux", "graphql", "webpack", "vite", "sass", "bootstrap",
     # Backend & Frameworks
@@ -12,10 +12,20 @@ COMMON_TECH_SKILLS = [
     "postgresql", "postgres", "mysql", "mongodb", "sqlite", "redis", "elasticsearch", "dynamodb", "cassandra", "supabase", "firebase",
     # Cloud & DevOps & Infra
     "aws", "amazon web services", "azure", "gcp", "google cloud", "docker", "kubernetes", "k8s", "terraform", "ansible", "ci/cd", "github actions", "gitlab", "jenkins", "linux", "nginx", "helm", "git", "github",
+    # Enterprise IT & Identity & Platforms
+    "active directory", "azure ad", "entra id", "microsoft 365", "m365", "exchange", "microsoft teams", "servicenow", "microsoft dynamics 365", "dynamics 365", "iam", "access control", "sso", "okta",
+    # Operating Systems & Endpoint Administration
+    "windows 10", "windows 11", "windows server", "macos", "ubuntu", "debian", "endpoint administration", "endpoint management", "desktop support", "help desk", "technical support", "it support", "ticketing",
+    # Networking & Protocols
+    "tcp/ip", "dns", "dhcp", "vpn", "lan/wan", "lan", "wan", "wi-fi", "wifi", "subnetting", "firewalls", "firewall", "routing", "routers", "switches", "network administration", "network troubleshooting", "networking",
+    # Cybersecurity & Operations
+    "cybersecurity", "incident response", "log analysis", "siem", "soc", "vulnerability management", "cve", "nvd", "threat analysis", "information security",
+    # Hardware & Diagnostics
+    "hardware diagnostics", "root-cause analysis", "pcb", "firmware", "microcontroller", "endpoint imaging",
     # Architecture & Practices
     "microservices", "rest", "restful", "api", "grpc", "event-driven", "kafka", "rabbitmq", "distributed systems", "system design", "agile", "scrum", "tdd", "unit testing", "automation", "workflow automation",
-    # AI & Data
-    "machine learning", "deep learning", "nlp", "llm", "pytorch", "tensorflow", "pandas", "numpy", "scikit-learn", "data engineering", "spark", "airflow", "data processing", "data pipelines", "data analysis"
+    # AI & Data & ETL
+    "machine learning", "deep learning", "nlp", "llm", "pytorch", "tensorflow", "pandas", "numpy", "scikit-learn", "data engineering", "spark", "airflow", "data processing", "data pipelines", "data analysis", "etl"
 ]
 
 # Strict Golang pattern to avoid false positives on the English verb 'go'
@@ -66,11 +76,42 @@ SKILL_SYNONYMS = {
     "data pipeline": "data processing",
     "data analysis": "data processing",
     "data engineering": "data processing",
+    "etl": "etl",
+    # Enterprise & Identity
+    "microsoft 365": "m365",
+    "office 365": "m365",
+    "o365": "m365",
+    "azure ad": "active directory",
+    "entra id": "active directory",
+    "azure active directory": "active directory",
+    "microsoft dynamics": "dynamics 365",
+    "microsoft dynamics 365": "dynamics 365",
+    # IT Support & Admin
+    "helpdesk": "help desk",
+    "desktop support": "it support",
+    "technical support": "it support",
+    "sysadmin": "systems administration",
+    "system administration": "systems administration",
+    "systems administrator": "systems administration",
+    "endpoint administration": "endpoint administration",
+    "endpoint management": "endpoint administration",
+    # Networking
+    "wifi": "wi-fi",
+    "firewall": "firewalls",
+    "lan": "networking",
+    "wan": "networking",
+    "lan/wan": "networking",
+    "tcp/ip": "networking",
+    "network troubleshooting": "networking",
+    # Security
+    "cve": "vulnerability management",
+    "nvd": "vulnerability management",
+    "information security": "cybersecurity",
 }
 
 # Real-world implied competencies (e.g. Pandas implies data processing and data analysis)
 IMPLIED_SKILLS = {
-    "pandas": {"data processing", "data analysis"},
+    "pandas": {"data processing", "data analysis", "etl"},
     "scikit-learn": {"machine learning", "data analysis"},
     "pytorch": {"machine learning", "deep learning"},
     "tensorflow": {"machine learning", "deep learning"},
@@ -79,6 +120,18 @@ IMPLIED_SKILLS = {
     "flask": {"rest", "api"},
     "express": {"rest", "api"},
     "power automate": {"automation", "workflow automation"},
+    "active directory": {"access control", "windows server", "iam"},
+    "m365": {"active directory", "it support", "endpoint administration"},
+    "servicenow": {"ticketing", "it support", "incident response"},
+    "dynamics 365": {"ticketing", "it support", "sla"},
+    "wi-fi": {"networking"},
+    "dns": {"networking"},
+    "dhcp": {"networking"},
+    "vpn": {"networking", "cybersecurity"},
+    "firewalls": {"networking", "cybersecurity"},
+    "siem": {"log analysis", "incident response", "cybersecurity"},
+    "soc": {"incident response", "cybersecurity", "log analysis"},
+    "auth.log": {"log analysis", "linux"},
 }
 
 def extract_tech_keywords(text: str) -> Set[str]:

@@ -149,17 +149,22 @@ const FILTER_GROUPS: FilterGroupConfig[] = [
     icon: <Code className="w-4 h-4 text-emerald-400" />,
     options: [
       { id: 'python', label: 'Python', category: 'language' },
+      { id: 'sql', label: 'SQL', category: 'language' },
+      { id: 'golang', label: 'Go / Golang', category: 'language' },
+      { id: 'active_directory', label: 'Active Directory / IAM', category: 'language' },
+      { id: 'm365', label: 'Microsoft 365 / Entra', category: 'language' },
+      { id: 'servicenow', label: 'ServiceNow / CRM', category: 'language' },
+      { id: 'linux_admin', label: 'Linux / Bash', category: 'language' },
+      { id: 'networking', label: 'TCP/IP & VPN', category: 'language' },
       { id: 'javascript', label: 'JavaScript', category: 'language' },
       { id: 'typescript', label: 'TypeScript', category: 'language' },
       { id: 'react', label: 'React', category: 'language' },
       { id: 'nodejs', label: 'Node.js', category: 'language' },
-      { id: 'golang', label: 'Go / Golang', category: 'language' },
+      { id: 'aws', label: 'AWS / Cloud', category: 'language' },
       { id: 'java', label: 'Java', category: 'language' },
       { id: 'csharp', label: 'C# / .NET', category: 'language' },
       { id: 'cpp', label: 'C / C++', category: 'language' },
       { id: 'rust', label: 'Rust', category: 'language' },
-      { id: 'sql', label: 'SQL', category: 'language' },
-      { id: 'aws', label: 'AWS / Cloud', category: 'language' },
     ],
   },
   {
@@ -167,14 +172,17 @@ const FILTER_GROUPS: FilterGroupConfig[] = [
     title: 'Role & Discipline',
     icon: <Compass className="w-4 h-4 text-cyan-400" />,
     options: [
+      { id: 'it_support', label: 'IT Support & Help Desk', category: 'role' },
+      { id: 'sysadmin', label: 'Systems Administration', category: 'role' },
+      { id: 'backend', label: 'Backend', category: 'role' },
+      { id: 'data_ai', label: 'Data & ETL / AI', category: 'role' },
+      { id: 'network', label: 'Network & Infrastructure', category: 'role' },
+      { id: 'security', label: 'Cybersecurity / SOC', category: 'role' },
       { id: 'fullstack', label: 'Full Stack', category: 'role' },
       { id: 'frontend', label: 'Frontend', category: 'role' },
-      { id: 'backend', label: 'Backend', category: 'role' },
       { id: 'devops', label: 'DevOps / SRE', category: 'role' },
-      { id: 'data_ai', label: 'Data / AI / ML', category: 'role' },
-      { id: 'mobile', label: 'Mobile', category: 'role' },
-      { id: 'security', label: 'Security', category: 'role' },
       { id: 'qa', label: 'QA / Testing', category: 'role' },
+      { id: 'mobile', label: 'Mobile', category: 'role' },
     ],
   },
   {
@@ -510,8 +518,98 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         fullText.includes('kubernetes') ||
         fullText.includes('terraform')
       );
+    case 'active_directory':
+      return (
+        fullText.includes('active directory') ||
+        fullText.includes('azure ad') ||
+        fullText.includes('entra') ||
+        fullText.includes('ldap') ||
+        fullText.includes('identity') ||
+        fullText.includes('iam')
+      );
+    case 'm365':
+      return (
+        fullText.includes('m365') ||
+        fullText.includes('microsoft 365') ||
+        fullText.includes('office 365') ||
+        fullText.includes('exchange') ||
+        fullText.includes('intune') ||
+        fullText.includes('teams')
+      );
+    case 'servicenow':
+      return (
+        fullText.includes('servicenow') ||
+        fullText.includes('dynamics 365') ||
+        fullText.includes('dynamics') ||
+        fullText.includes('ticketing') ||
+        fullText.includes('itsm') ||
+        fullText.includes('jira service')
+      );
+    case 'linux_admin':
+      return (
+        fullText.includes('linux') ||
+        fullText.includes('ubuntu') ||
+        fullText.includes('debian') ||
+        fullText.includes('bash') ||
+        fullText.includes('red hat') ||
+        fullText.includes('centos') ||
+        fullText.includes('shell')
+      );
+    case 'networking':
+      return (
+        fullText.includes('tcp/ip') ||
+        fullText.includes('vpn') ||
+        fullText.includes('dns') ||
+        fullText.includes('dhcp') ||
+        fullText.includes('lan/wan') ||
+        fullText.includes('lan') ||
+        fullText.includes('wan') ||
+        fullText.includes('firewall') ||
+        fullText.includes('wi-fi') ||
+        fullText.includes('wifi') ||
+        fullText.includes('router') ||
+        fullText.includes('switch')
+      );
 
     // Role & Discipline
+    case 'it_support':
+      return (
+        fullText.includes('it support') ||
+        fullText.includes('technical support') ||
+        fullText.includes('tech support') ||
+        fullText.includes('help desk') ||
+        fullText.includes('helpdesk') ||
+        fullText.includes('desktop support') ||
+        fullText.includes('service desk') ||
+        fullText.includes('field technician') ||
+        fullText.includes('support specialist') ||
+        fullText.includes('it technician') ||
+        fullText.includes('endpoint support')
+      );
+    case 'sysadmin':
+      return (
+        fullText.includes('sysadmin') ||
+        fullText.includes('systems administrator') ||
+        fullText.includes('system administrator') ||
+        fullText.includes('systems admin') ||
+        fullText.includes('system admin') ||
+        fullText.includes('endpoint administrator') ||
+        fullText.includes('it administrator') ||
+        fullText.includes('windows administrator')
+      );
+    case 'network':
+      return (
+        fullText.includes('network') ||
+        fullText.includes('noc') ||
+        fullText.includes('lan/wan') ||
+        fullText.includes('cisco') ||
+        fullText.includes('firewall') ||
+        fullText.includes('router') ||
+        fullText.includes('switch') ||
+        fullText.includes('dns') ||
+        fullText.includes('dhcp') ||
+        fullText.includes('vpn')
+      );
     case 'fullstack':
       return fullText.includes('fullstack') || fullText.includes('full-stack') || fullText.includes('full stack');
     case 'frontend':
@@ -650,31 +748,43 @@ const FILTER_SEARCH_TERMS: Record<string, string> = {
   fulltime: 'full-time',
 
   // Role
+  it_support: 'it support',
+  sysadmin: 'systems administrator',
+  backend: 'backend developer',
+  data_ai: 'data pipeline',
+  network: 'network technician',
+  security: 'cybersecurity',
   fullstack: 'full stack',
   frontend: 'frontend',
-  backend: 'backend',
   devops: 'devops',
-  data_ai: 'data',
   mobile: 'mobile',
-  security: 'security',
   qa: 'qa',
 
   // Tech / Language
   python: 'python',
+  sql: 'sql',
+  golang: 'golang',
+  active_directory: 'active directory',
+  m365: 'microsoft 365',
+  servicenow: 'servicenow',
+  linux_admin: 'linux',
+  networking: 'network',
   javascript: 'javascript',
   typescript: 'typescript',
   react: 'react',
   nodejs: 'nodejs',
-  golang: 'golang',
   java: 'java',
   csharp: 'c#',
   cpp: 'c++',
   rust: 'rust',
-  sql: 'sql',
   aws: 'aws',
 };
 
-const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[]): string => {
+const getEffectiveSearchQuery = (
+  customQuery: string,
+  activeFilterIds: string[],
+  track: 'all' | 'software' | 'it_admin' = 'all'
+): string => {
   const parts: string[] = [];
 
   if (customQuery.trim()) {
@@ -691,7 +801,11 @@ const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[])
 
   // 2. Tech / Language keywords
   const langFilters = activeFilterIds.filter((id) =>
-    ['python', 'javascript', 'typescript', 'react', 'nodejs', 'golang', 'java', 'csharp', 'cpp', 'rust', 'sql', 'aws'].includes(id)
+    [
+      'python', 'sql', 'golang', 'active_directory', 'm365', 'servicenow',
+      'linux_admin', 'networking', 'javascript', 'typescript', 'react',
+      'nodejs', 'java', 'csharp', 'cpp', 'rust', 'aws'
+    ].includes(id)
   );
   if (langFilters.length > 0) {
     parts.push(FILTER_SEARCH_TERMS[langFilters[0]] || langFilters[0]);
@@ -699,13 +813,19 @@ const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[])
 
   // 3. Role keywords
   const roleFilters = activeFilterIds.filter((id) =>
-    ['fullstack', 'frontend', 'backend', 'devops', 'data_ai', 'mobile', 'security', 'qa'].includes(id)
+    [
+      'it_support', 'sysadmin', 'backend', 'data_ai', 'network', 'security',
+      'fullstack', 'frontend', 'devops', 'mobile', 'qa'
+    ].includes(id)
   );
   if (roleFilters.length > 0) {
     parts.push(FILTER_SEARCH_TERMS[roleFilters[0]] || roleFilters[0]);
   } else if (!customQuery.trim() && langFilters.length === 0) {
-    // Default core discipline so the query is recognized on job boards
-    parts.push('developer');
+    if (track === 'it_admin') {
+      parts.push('it support');
+    } else {
+      parts.push('developer');
+    }
   }
 
   // 4. Workplace keywords (e.g. remote)
@@ -716,7 +836,8 @@ const getEffectiveSearchQuery = (customQuery: string, activeFilterIds: string[])
     parts.push(FILTER_SEARCH_TERMS[wpFilters[0]] || wpFilters[0]);
   }
 
-  return parts.join(' ').trim() || 'developer';
+  const fallback = track === 'it_admin' ? 'it support' : 'developer';
+  return parts.join(' ').trim() || fallback;
 };
 
 export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobAdded, onOpenSettings }) => {
@@ -766,6 +887,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   const [query, setQuery] = useState('');
   const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
+  const [activeTrack, setActiveTrack] = useState<'all' | 'software' | 'it_admin'>('all');
   const [usOnly, setUsOnly] = useState(true);
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -1085,6 +1207,29 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     fetchJobs(effectiveQuery, nextSource, usOnly, searchLocation, searchRadius, includeRemote);
   };
 
+  const handleSelectTrack = (track: 'all' | 'software' | 'it_admin') => {
+    setActiveTrack(track);
+    let newFilters: string[] = [];
+    let newQuery = '';
+
+    if (track === 'software') {
+      newFilters = ['backend'];
+    } else if (track === 'it_admin') {
+      newFilters = ['it_support'];
+    } else {
+      newFilters = [];
+    }
+
+    setSelectedFilters(newFilters);
+    setQuery(newQuery);
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    const effectiveQuery = getEffectiveSearchQuery(newQuery, newFilters, track);
+    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+  };
+
   const handleResetFilters = () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -1092,6 +1237,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setQuery('');
     setSelectedFilters([]);
     setSelectedSource('all');
+    setActiveTrack('all');
     fetchJobs('developer', 'all', usOnly, searchLocation, searchRadius, includeRemote);
   };
 
@@ -1665,6 +1811,47 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
             <p className="text-slate-400 text-sm">
               Searches directly across <span className="text-slate-200 font-medium">Big Tech Careers (Google, Microsoft, Amazon, Apple, NVIDIA, Netflix, Salesforce)</span>, <span className="text-slate-200 font-medium">25+ Top Tech ATS Boards (OpenAI, Anthropic, Stripe, Cloudflare, Databricks...)</span>, <span className="text-slate-200 font-medium">SimplifyJobs (Entry-Level &amp; New Grad)</span>, <span className="text-slate-200 font-medium">LinkedIn</span>, <span className="text-slate-200 font-medium">Glassdoor</span>, <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">The Muse</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
             </p>
+
+            {/* Quick Career Track Presets */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 pb-1">
+              <span className="text-xs font-semibold text-slate-400 mr-1">Target Profile:</span>
+              <button
+                type="button"
+                onClick={() => handleSelectTrack('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+                  activeTrack === 'all'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-xs'
+                    : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800 border-slate-700/60'
+                }`}
+                title="Search across all tech roles"
+              >
+                🌐 All Tech Roles
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectTrack('software')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+                  activeTrack === 'software'
+                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-xs'
+                    : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800 border-slate-700/60'
+                }`}
+                title="Filter for Software Developer, Backend, and Data Engineering roles (Resume 1)"
+              >
+                💻 Software & Backend (Resume 1)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectTrack('it_admin')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+                  activeTrack === 'it_admin'
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-xs'
+                    : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800 border-slate-700/60'
+                }`}
+                title="Filter for IT Support, Systems Administration, and Desktop roles (Resume 2)"
+              >
+                🛠️ IT Support & SysAdmin (Resume 2)
+              </button>
+            </div>
 
             {/* Search Box */}
             <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2 pt-2">

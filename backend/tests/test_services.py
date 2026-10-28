@@ -190,6 +190,37 @@ def test_new_board_helpers_and_us_location_filtering():
     # Single-company portal query cleaning
     assert _clean_bigtech_query("Google", "Google") == "software engineer"
     assert _clean_bigtech_query("Microsoft backend python", "Microsoft") == "backend python"
+    assert _clean_bigtech_query("Amazon it support", "Amazon") == "it support"
+
+def test_it_support_and_sysadmin_matching():
+    from app.services.job_fetcher import matches_query, _term_matches, _has_junior_signals
+    from app.services.matcher import extract_tech_keywords, analyze_job_fit
+
+    # 1. Matches IT Support, Help Desk, Desktop Support synonym queries
+    assert matches_query("it support", "Help Desk Technician", "Acme Health", [], "Troubleshoot Windows 10/11 and Active Directory")
+    assert matches_query("sysadmin", "Systems Administrator", "City Hospital", [], "Administer Windows Server and M365")
+    assert matches_query("network", "NOC Technician", "Telecom Corp", [], "Monitor TCP/IP, DNS, DHCP, and VPN routing")
+    assert matches_query("cybersecurity", "SOC Analyst Tier 1", "Cyber Defense", [], "Review auth.log and investigate incidents")
+
+    # 2. Junior signals for IT Support Tier 1 & 2
+    assert _has_junior_signals("IT Support Specialist Tier 1", "Provide first-line endpoint support.")
+    assert _has_junior_signals("Desktop Support Technician I", "1 year of experience with Geek Squad or MSP.")
+
+    # 3. Matcher extraction for Resume 2 IT competencies
+    text = "Requirements: Active Directory, Microsoft 365, ServiceNow, Windows Server, TCP/IP, and VPN."
+    extracted = extract_tech_keywords(text)
+    assert "active directory" in extracted
+    assert "m365" in extracted
+    assert "servicenow" in extracted
+    assert "windows server" in extracted
+    assert "networking" in extracted  # via TCP/IP / VPN
+
+    # 4. Job fit analysis with IT skills
+    candidate_skills = ["Active Directory", "Microsoft 365", "Windows Server", "ServiceNow", "TCP/IP", "VPN"]
+    fit = analyze_job_fit(text, candidate_skills)
+    assert fit["score"] >= 80
+    assert "active directory" in fit["matched_skills"]
+    assert "m365" in fit["matched_skills"]
 
 @pytest.mark.asyncio
 async def test_check_job_expiration_deadline():

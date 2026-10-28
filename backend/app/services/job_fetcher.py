@@ -168,13 +168,22 @@ def _is_senior_or_mid_title(title: str) -> bool:
             return True
     if _has_explicit_junior_title(t):
         return False
-    if re.search(r'\b(ii|iii|iv|v|vi)\b', t):
-        return True
-    if re.search(
-        r'\b(?:engineer|developer|programmer|analyst|specialist|scientist|technician|level|tier|swe|sde)\s*(?:-\s*)?(?:2|3|4|5|6)\b',
-        t
-    ):
-        return True
+    # Tier 2 / Level 2 support and technician roles are early-career (1-2 years) and should not be treated as high-level senior
+    is_early_support_tier = bool(
+        re.search(r'\b(support|help\s*desk|technician|service\s*desk|desktop)\b', t) and
+        re.search(r'\b(?:tier|level)?\s*(?:ii|2)\b', t)
+    )
+    if not is_early_support_tier:
+        if re.search(r'\b(iii|iv|v|vi)\b', t):
+            return True
+        if re.search(
+            r'\b(?:engineer|developer|programmer|analyst|specialist|scientist|technician|level|tier|swe|sde)\s*(?:-\s*)?(?:3|4|5|6)\b',
+            t
+        ):
+            return True
+    else:
+        if re.search(r'\b(?:tier|level)\s*(?:iii|3|4|5)\b', t):
+            return True
     return False
 
 
@@ -266,14 +275,14 @@ def _has_junior_signals(
     ):
         return True
 
-    # Entry-level compensation band signal when job title is clearly a technical/software role
+    # Entry-level compensation band signal when job title is clearly a technical, IT, or software role
     is_tech_title = bool(
-        re.search(r'\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml)\b', (title or "").lower())
+        re.search(r'\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml|support|technician|administrator|helpdesk|desktop)\b', (title or "").lower())
     )
     if is_tech_title:
-        if salary_max and 45000 <= salary_max <= 95000:
+        if salary_max and 40000 <= salary_max <= 95000:
             return True
-        if salary_min and 45000 <= salary_min <= 85000 and (not salary_max or salary_max <= 105000):
+        if salary_min and 40000 <= salary_min <= 85000 and (not salary_max or salary_max <= 105000):
             return True
 
     return False
@@ -291,7 +300,7 @@ def _term_matches(term: str, full_text: str, title: str = "", description: str =
     if t in junior_group:
         return _has_junior_signals(title, description or full_text)
 
-    # Word boundary match for short tokens (<= 4 chars, e.g. ui, ai, ml, go, jr, sr, c++, sql, aws)
+    # Word boundary match for short tokens (<= 4 chars, e.g. ui, ai, ml, go, jr, sr, c++, sql, aws, it, soc, noc)
     if len(t) <= 4:
         if re.search(r'(?:\b|(?<=\s))' + re.escape(t) + r'(?:\b|(?=\s))', full_text):
             return True
@@ -306,8 +315,13 @@ def _term_matches(term: str, full_text: str, title: str = "", description: str =
         {"backend", "back-end", "api", "server", "django", "fastapi", "nodejs", "node.js"},
         {"fullstack", "full-stack", "full stack"},
         {"devops", "sre", "infrastructure", "cloud", "aws", "kubernetes", "docker", "platform"},
-        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist", "analytics", "analyst"},
+        {"data", "machine learning", "ml", "ai", "data engineer", "data scientist", "analytics", "analyst", "etl"},
         {"remote", "wfh", "work from home", "anywhere", "telecommute"},
+        {"it support", "itsupport", "technical support", "tech support", "help desk", "helpdesk", "desktop support", "desktopsupport", "field technician", "it technician", "support specialist", "endpoint support", "service desk"},
+        {"sysadmin", "systems administrator", "system administrator", "systems admin", "system admin", "endpoint administrator", "it administrator", "windows administrator"},
+        {"network", "network technician", "network administrator", "network specialist", "noc technician", "noc", "network engineer", "networking"},
+        {"cybersecurity", "cyber security", "soc analyst", "soc", "security analyst", "information security", "infosec", "threat analyst"},
+        {"hardware technician", "repair technician", "service technician", "pcb", "diagnostic technician"},
     ]
     for group in synonym_groups:
         if t in group:
@@ -371,6 +385,14 @@ def matches_query(
     normalized_q = re.sub(r'\bfront[\s-]+end\b', 'frontend', normalized_q)
     normalized_q = re.sub(r'\bback[\s-]+end\b', 'backend', normalized_q)
     normalized_q = re.sub(r'\bwork\s+from\s+home\b', 'remote', normalized_q)
+    normalized_q = re.sub(r'\bit[\s-]+support\b', 'itsupport', normalized_q)
+    normalized_q = re.sub(r'\btech(?:nical)?[\s-]+support\b', 'itsupport', normalized_q)
+    normalized_q = re.sub(r'\bhelp[\s-]+desk\b', 'helpdesk', normalized_q)
+    normalized_q = re.sub(r'\bdesktop[\s-]+support\b', 'desktopsupport', normalized_q)
+    normalized_q = re.sub(r'\bsystems?[\s-]+admin(?:istrator)?\b', 'sysadmin', normalized_q)
+    normalized_q = re.sub(r'\bnetwork[\s-]+(?:technician|admin(?:istrator)?|engineer)\b', 'network', normalized_q)
+    normalized_q = re.sub(r'\bcyber[\s-]+security\b', 'cybersecurity', normalized_q)
+    normalized_q = re.sub(r'\bsoc[\s-]+analyst\b', 'soc', normalized_q)
     normalized_q = re.sub(r'[/,()"+-]', ' ', normalized_q)
 
     stop_words = {"and", "or", "the", "for", "with", "in", "level", "role", "position", "job", "jobs"}

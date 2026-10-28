@@ -10,17 +10,24 @@ from ..schemas import ProfileUpdate, ProfileResponse, SkillCreate, SkillResponse
 router = APIRouter(prefix="/api/profile", tags=["Profile"])
 
 DEFAULT_SKILLS = [
+    # Software & Backend
     ("Python", "languages", "expert"),
-    ("TypeScript", "languages", "intermediate"),
-    ("JavaScript", "languages", "expert"),
-    ("React", "frameworks", "expert"),
-    ("FastAPI", "frameworks", "intermediate"),
-    ("Node.js", "frameworks", "intermediate"),
-    ("PostgreSQL", "databases", "intermediate"),
-    ("Docker", "cloud_devops", "intermediate"),
-    ("Git", "tools", "expert"),
+    ("SQL", "languages", "expert"),
+    ("Go", "languages", "intermediate"),
+    ("Bash", "languages", "expert"),
     ("REST APIs", "architecture", "expert"),
-    ("System Design", "architecture", "intermediate"),
+    ("SQLite3", "databases", "expert"),
+    ("Git & GitHub Actions", "tools", "expert"),
+    ("Data Pipelines / ETL", "architecture", "expert"),
+    # IT Support, SysAdmin & Networking
+    ("Active Directory", "enterprise_it", "intermediate"),
+    ("Microsoft 365 (Admin Center)", "enterprise_it", "expert"),
+    ("Windows 10/11 & Windows Server", "operating_systems", "expert"),
+    ("Linux (Ubuntu/Debian)", "operating_systems", "expert"),
+    ("Networking (TCP/IP, DNS, DHCP, VPN)", "networking", "expert"),
+    ("ServiceNow & Dynamics 365 CRM", "enterprise_it", "intermediate"),
+    ("Cybersecurity & Log Analysis", "security", "intermediate"),
+    ("Hardware & Diagnostic Triage", "hardware", "expert"),
 ]
 
 async def get_or_create_profile(db: AsyncSession) -> Profile:
