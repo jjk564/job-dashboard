@@ -194,4 +194,11 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch metrics');
     return res.json();
   },
+
+  // Health & Live Reload Sync
+  async getHealth(): Promise<{ status: string; service: string; boot_id?: string }> {
+    const res = await fetch(`${API_BASE}/health`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Health check failed');
+    return res.json();
+  },
 };

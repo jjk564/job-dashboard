@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
+import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
 from .routers import jobs, discovery, profile, assistant, analytics
+
+BOOT_ID = str(int(time.time() * 1000))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,4 +39,4 @@ app.include_router(analytics.router)
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "service": "job-dashboard-api"}
+    return {"status": "healthy", "service": "job-dashboard-api", "boot_id": BOOT_ID}

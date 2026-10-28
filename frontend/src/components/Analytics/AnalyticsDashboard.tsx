@@ -19,17 +19,22 @@ export const AnalyticsDashboard: React.FC = () => {
 
   useEffect(() => {
     loadMetrics();
+    const onReload = () => {
+      loadMetrics(true);
+    };
+    window.addEventListener('jobpulse:backend-reloaded', onReload);
+    return () => window.removeEventListener('jobpulse:backend-reloaded', onReload);
   }, []);
 
-  const loadMetrics = async () => {
-    setLoading(true);
+  const loadMetrics = async (silent: boolean = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getMetrics();
       setMetrics(data);
     } catch (err) {
       console.error('Failed to load metrics:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 

@@ -27,10 +27,15 @@ export const ProfileManager: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const onReload = () => {
+      loadData(true);
+    };
+    window.addEventListener('jobpulse:backend-reloaded', onReload);
+    return () => window.removeEventListener('jobpulse:backend-reloaded', onReload);
   }, []);
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (silent: boolean = false) => {
+    if (!silent) setLoading(true);
     try {
       const [profData, skillsData] = await Promise.all([
         api.getProfile(),
@@ -42,7 +47,7 @@ export const ProfileManager: React.FC = () => {
     } catch (err) {
       console.error('Failed to load profile data:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 

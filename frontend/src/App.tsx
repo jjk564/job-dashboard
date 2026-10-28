@@ -24,20 +24,60 @@ export const App: React.FC = () => {
   const [isImportUrlOpen, setIsImportUrlOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'ai' | 'hidden'>('ai');
+  const [liveUpdateToast, setLiveUpdateToast] = useState(false);
+  const bootIdRef = useRef<string | null>(null);
 
   // Load jobs on mount
   useEffect(() => {
     loadJobs();
   }, []);
 
-  const loadJobs = async () => {
+  // Poll backend health boot_id to automatically sync live backend updates without reopening
+  useEffect(() => {
+    let active = true;
+    let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const checkBackendReload = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const health = await api.getHealth();
+        if (!active || !health.boot_id) return;
+        if (bootIdRef.current === null) {
+          bootIdRef.current = health.boot_id;
+        } else if (bootIdRef.current !== health.boot_id) {
+          bootIdRef.current = health.boot_id;
+          await loadJobs(true);
+          window.dispatchEvent(new CustomEvent('jobpulse:backend-reloaded'));
+          setLiveUpdateToast(true);
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => {
+            if (active) setLiveUpdateToast(false);
+          }, 2500);
+        }
+      } catch {
+        // Backend is mid-reload; next tick will catch the new boot_id
+      }
+    };
+
+    checkBackendReload();
+    const interval = setInterval(checkBackendReload, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+      if (toastTimer) clearTimeout(toastTimer);
+    };
+  }, []);
+
+  const loadJobs = async (silent: boolean = false) => {
     try {
       const data = await api.getJobs();
       setJobs(data);
     } catch (err) {
       console.error('Failed to load jobs:', err);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -208,6 +248,13 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         initialTab={settingsTab}
       />
+
+      {liveUpdateToast && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-950/90 border border-emerald-500/40 text-emerald-200 text-xs font-medium shadow-lg backdrop-blur-sm">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Live update synced</span>
+        </div>
+      )}
     </div>
   );
 };
