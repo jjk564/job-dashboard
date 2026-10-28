@@ -921,10 +921,11 @@ async def fetch_indeed_jobs(
                 if isinstance(r, list):
                     raw_jobs.extend(r)
         else:
-            # Include a concurrent entry-level batch so general searches also surface entry-level opportunities
+            # Include concurrent entry-level and associate batches so general searches also surface entry-level opportunities
             t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 65, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 40, distance_val)
-            res = await asyncio.gather(t1, t2, return_exceptions=True)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, f"associate {search_term}", loc_str, is_remote_query, 35, distance_val)
+            t3 = asyncio.to_thread(_scrape_indeed_sync, f"junior {search_term}", loc_str, is_remote_query, 25, distance_val)
+            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
                 if isinstance(r, list):
@@ -1174,8 +1175,9 @@ async def fetch_ziprecruiter_jobs(
         else:
             search_term = clean_term if clean_term else "Software Developer"
             t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 4, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 3, location, radius)
-            res = await asyncio.gather(t1, t2, return_exceptions=True)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"associate {search_term}", us_only, is_remote_query, 2, location, radius)
+            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"junior {search_term}", us_only, is_remote_query, 2, location, radius)
+            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
                 if isinstance(r, list):

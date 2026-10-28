@@ -293,19 +293,19 @@ const SOURCE_FILTERS = [
 const hasExplicitJuniorTitle = (title: string): boolean => {
   const t = (title || '').toLowerCase();
   if (
-    /\b(junior|jr\.?|entry[\s-]level|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|apprentice|apprenticeship|intern|internship|trainee|rotational|campus|university\s+grad(?:uate)?|college\s+grad(?:uate)?)\b/i.test(t)
+    /\b(junior|jr\.?|entry[\s-]level|entrylevel|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|earlycareer|apprentice|apprenticeship|intern|internship|trainee|rotational|campus|university\s+grad(?:uate)?|college\s+grad(?:uate)?|graduate\s+program|emerging\s+talent)\b/i.test(t)
   ) {
     return true;
   }
   if (
     /\bassociate\b/i.test(t) &&
     !/\b(director|vp|vice\s+president|partner|principal|counsel|dean|professor|budtender|retail|store|warehouse|cashier)\b/i.test(t) &&
-    /\b(developer|engineer|engineering|programmer|software|web|frontend|backend|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|tech|technology|technical|application|support|scientist|consultant|designer|product)\b/i.test(t)
+    /\b(developer|engineer|engineering|programmer|software|web|frontend|backend|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|tech|technology|technical|application|support|scientist|consultant|designer|product|solution|solutions)\b/i.test(t)
   ) {
     return true;
   }
   if (
-    /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician|administrator|consultant|scientist|designer|qa|sdet|devops|support|swe|sde)\s*(?:-\s*)?(?:i|1)\b/i.test(t) ||
+    /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician|administrator|consultant|scientist|designer|qa|sdet|devops|support|swe|sde|solutions?\s+engineer|solutions?\s+consultant|technical\s+solutions?\s+engineer)\s*(?:-\s*)?(?:i|1)\b/i.test(t) ||
     /\b(?:level|tier)\s*(?:i|1)\b/i.test(t)
   ) {
     return true;
@@ -364,6 +364,14 @@ const requiresSeniorExperience = (desc: string): boolean => {
 // Helper to detect mid or senior experience requirements (4+, 5+ years) that disqualify entry level
 const requiresMidOrSeniorExperience = (desc: string): boolean => {
   const t = cleanExperienceText(desc);
+  // If the posting explicitly specifies entry-level requirements (0-2, 1-3 years), do not let preferred 4+ years disqualify
+  const hasEntryReq =
+    /\b[0-3]\s*(?:to|-|–|—)\s*[1-3]\s*(?:years?|yrs?)\b/i.test(t) ||
+    /\b[0-2]\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp)\b/i.test(t);
+  if (hasEntryReq) {
+    return false;
+  }
+
   if (
     /\b(?:(?:minimum|at\s+least|over|requires?)\s+(?:of\s+)?)?([4-9]|1[0-5])\s*\+?\s*(?:(?:to|-|–|—)\s*\d+\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp|hands-on|background|development|engineering|programming)\b/i.test(t)
   ) {
@@ -408,7 +416,7 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
       if (requiresMidOrSeniorExperience(fullText)) {
         return false;
       }
-      if ((job.salary_min && job.salary_min >= 160000) || (job.salary_max && job.salary_max >= 185000)) {
+      if ((job.salary_min && job.salary_min >= 170000) || (job.salary_max && job.salary_max >= 195000)) {
         return false;
       }
 
@@ -421,38 +429,35 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
         .replace(/\bgraduate\s+degree\b/gi, ''); // "graduate degree" means MS/PhD, not entry-level
 
       if (
-        /\b(junior|jr\.?|entry[\s-]level|entrylevel|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|earlycareer|apprentice|apprenticeship|internship|trainee|campus\s+hire|rotational\s+program|university\s+grad(?:uate)?|college\s+grad(?:uate)?|bootcamp)\b/i.test(
+        /\b(junior|jr\.?|entry[\s-]level|entrylevel|new\s+grad(?:uate)?|recent\s+grad(?:uate)?|fresh\s+grad(?:uate)?|early[\s-]career|earlycareer|apprentice|apprenticeship|intern|internship|trainee|campus\s+hire|rotational\s+program|university\s+grad(?:uate)?|college\s+grad(?:uate)?|bootcamp|associate)\b/i.test(
           cleanDesc
         ) ||
-        /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician)\s+(?:i|1)\b/i.test(cleanDesc) ||
+        /\b(software\s+engineer|developer|engineer|analyst|programmer|specialist|technician|solutions?\s+engineer|solutions?\s+consultant)\s+(?:i|1)\b/i.test(cleanDesc) ||
         /\b(?:level|tier)\s+(?:i|1)\b/i.test(cleanDesc) ||
-        /\b[0-2]\s*(?:to|-|–|—)\s*[1-3]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
-        /\b[0-2]\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,2}?(?:experience|exp|hands-on|development|engineering)\b/i.test(
+        /\b[0-3]\s*(?:to|-|–|—)\s*[1-4]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
+        /\b[0-3]\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,4}?(?:experience|exp|hands-on|development|engineering|technical|customer|sales|support|consulting|saas|cloud)\b/i.test(
           cleanDesc
         ) ||
-        /\b(?:minimum|at\s+least|up\s+to|under|less\s+than)\s+(?:of\s+)?[1-2]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
-        cleanDesc.includes('no experience required') ||
-        cleanDesc.includes('no prior experience') ||
-        cleanDesc.includes('on-the-job training') ||
-        cleanDesc.includes('on-job-training')
+        /\b(?:minimum|at\s+least|up\s+to|under|less\s+than|no\s+more\s+than)\s+(?:of\s+)?[1-3]\s*(?:years?|yrs?)\b/i.test(cleanDesc) ||
+        /\b(?:no\s+(?:prior\s+)?experience\s+required|little\s+to\s+no\s+experience|willing\s+to\s+train|on-the-job\s+training|on-job-training)\b/i.test(cleanDesc)
       ) {
         return true;
       }
 
-      // Entry-level compensation band signal when job title is clearly a technical/software role
+      // Entry-level compensation band signal when job title is clearly a technical/software/solutions role
       const isTechTitle =
-        /\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml)\b/i.test(
+        /\b(developer|engineer|programmer|software|web|frontend|front-end|backend|back-end|full[\s-]stack|data|analyst|qa|devops|cloud|cyber|security|it|systems|network|ai|ml|solution|solutions)\b/i.test(
           title
         );
       if (isTechTitle) {
-        if (job.salary_max && job.salary_max >= 45000 && job.salary_max <= 95000) {
+        if (job.salary_max && job.salary_max >= 45000 && job.salary_max <= 135000) {
           return true;
         }
         if (
           job.salary_min &&
           job.salary_min >= 45000 &&
-          job.salary_min <= 85000 &&
-          (!job.salary_max || job.salary_max <= 105000)
+          job.salary_min <= 115000 &&
+          (!job.salary_max || job.salary_max <= 145000)
         ) {
           return true;
         }
