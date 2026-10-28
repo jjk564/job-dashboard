@@ -16,8 +16,10 @@ async def search_jobs(
     adzuna_app_id: Optional[str] = Query(None),
     adzuna_app_key: Optional[str] = Query(None),
     us_only: bool = Query(True),
+    min_salary: Optional[float] = Query(None),
+    include_undisclosed_salary: bool = Query(True),
 ) -> List[Dict[str, Any]]:
-    """Search active listings across public job boards with optional US and location/radius filtering."""
+    """Search active listings across public job boards with optional US, salary, and location/radius filtering."""
     jobs = await search_aggregated_jobs(
         query=query,
         source=source,
@@ -27,6 +29,8 @@ async def search_jobs(
         location=location,
         radius=radius,
         include_remote=include_remote,
+        min_salary=min_salary,
+        include_undisclosed_salary=include_undisclosed_salary,
     )
     return jobs
 

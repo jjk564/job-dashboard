@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from bs4 import BeautifulSoup
 from .location_matcher import is_job_in_range, is_job_pure_remote
+from .job_extractor import extract_salary_range
 
 logger = logging.getLogger(__name__)
 
@@ -1192,7 +1193,8 @@ async def fetch_adzuna_jobs(
     app_key: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    min_salary: Optional[float] = None
 ) -> List[Dict[str, Any]]:
     """Fetch live US jobs across Indeed, ZipRecruiter & major boards via Adzuna API with location & radius distance."""
     app_id = app_id or os.getenv("ADZUNA_APP_ID")
@@ -1211,6 +1213,8 @@ async def fetch_adzuna_jobs(
         "what": search_query,
         "content-type": "application/json",
     }
+    if min_salary and min_salary > 0:
+        params["salary_min"] = int(min_salary)
     if location and location.strip():
         params["where"] = location.strip()
         if radius:
@@ -2224,9 +2228,11 @@ async def search_aggregated_jobs(
     us_only: bool = True,
     location: Optional[str] = None,
     radius: Optional[int] = None,
-    include_remote: bool = True
+    include_remote: bool = True,
+    min_salary: Optional[float] = None,
+    include_undisclosed_salary: bool = True
 ) -> List[Dict[str, Any]]:
-    """Aggregates listings concurrently across all supported boards with US & location/radius filtering."""
+    """Aggregates listings concurrently across all supported boards with US, salary, and location/radius filtering."""
 
     tasks = []
     source_lower = (source or "all").lower()
@@ -2248,7 +2254,7 @@ async def search_aggregated_jobs(
     if source_lower in ("all", "themuse"):
         tasks.append(fetch_themuse_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "adzuna"):
-        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only, location=location, radius=radius))
+        tasks.append(fetch_adzuna_jobs(query, adzuna_app_id, adzuna_app_key, us_only=us_only, location=location, radius=radius, min_salary=min_salary))
 
     # Remote / global boards: include if include_remote is True, or if user hasn't specified a strict local location, or if explicitly selected
     should_fetch_remote_boards = include_remote or not location or source_lower != "all"
@@ -2292,6 +2298,27 @@ async def search_aggregated_jobs(
                 title=j.get("title", "")
             )
         ]
+
+    # Backfill salary from description for any listings missing salary
+    for j in combined:
+        if j.get("salary_min") is None and j.get("salary_max") is None and j.get("description"):
+            s_min, s_max = extract_salary_range(j["description"])
+            if s_min is not None or s_max is not None:
+                j["salary_min"] = s_min
+                j["salary_max"] = s_max
+
+    # Enforce minimum compensation filter if requested
+    if min_salary and min_salary > 0:
+        def meets_salary(job: Dict[str, Any]) -> bool:
+            s_min = job.get("salary_min")
+            s_max = job.get("salary_max")
+            if s_max is not None:
+                return s_max >= min_salary
+            if s_min is not None:
+                return s_min >= min_salary
+            return include_undisclosed_salary
+
+        combined = [j for j in combined if meets_salary(j)]
 
     # Deduplicate by title + company
     seen = set()

@@ -74,7 +74,9 @@ export const api = {
     usOnly: boolean = true,
     location?: string,
     radius?: number,
-    includeRemote: boolean = true
+    includeRemote: boolean = true,
+    minSalary?: number,
+    includeUndisclosedSalary: boolean = true
   ): Promise<DiscoveredJob[]> {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
@@ -85,6 +87,8 @@ export const api = {
     if (location && location.trim()) params.append('location', location.trim());
     if (radius) params.append('radius', String(radius));
     params.append('include_remote', String(includeRemote));
+    if (minSalary && minSalary > 0) params.append('min_salary', String(minSalary));
+    params.append('include_undisclosed_salary', String(includeUndisclosedSalary));
 
     const res = await fetch(`${API_BASE}/discovery/search?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to search jobs');

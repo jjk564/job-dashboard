@@ -24,20 +24,68 @@ def clean_html_text(html_content: str) -> str:
     return "\n".join(chunk for chunk in lines if chunk)
 
 def extract_salary_range(text: str) -> tuple[Optional[float], Optional[float]]:
-    """Tries to find salary numbers in description."""
-    # Pattern e.g. $120,000 - $160,000 or $120k - $160k or $120,000 to $160,000
-    pattern = r"\$([0-9]+(?:,[0-9]{3})*k?)\s*(?:-|to|–)\s*\$([0-9]+(?:,[0-9]{3})*k?)"
-    match = re.search(pattern, text, re.IGNORECASE)
+    """Tries to find salary and hourly compensation figures in text/description."""
+    if not text:
+        return None, None
+
+    # 1. Hourly range pattern: e.g. $25 - $35/hr, $25.00 to $40.00 per hour
+    hourly_range_pattern = r"\$([0-9]+(?:\.[0-9]{2})?)\s*(?:-|to|–)\s*\$([0-9]+(?:\.[0-9]{2})?)\s*(?:\/|\s*(?:per|an)\s*)?(?:hr|hour)\b"
+    m_hr = re.search(hourly_range_pattern, text, re.IGNORECASE)
+    if m_hr:
+        try:
+            h_min = float(m_hr.group(1)) * 2080
+            h_max = float(m_hr.group(2)) * 2080
+            return h_min, h_max
+        except Exception:
+            pass
+
+    # Single hourly rate: e.g. $35/hr, $40 per hour
+    single_hr_pattern = r"\$([0-9]+(?:\.[0-9]{2})?)\s*(?:\/|\s*(?:per|an)\s*)(?:hr|hour)\b"
+    m_shr = re.search(single_hr_pattern, text, re.IGNORECASE)
+    if m_shr:
+        try:
+            val = float(m_shr.group(1)) * 2080
+            return val, val
+        except Exception:
+            pass
+
+    # 2. Standard annual range: e.g. $120,000 - $160,000 or $120k - $160k or $120,000 to $160,000
+    range_pattern = r"\$([0-9]+(?:,[0-9]{3})*k?)\s*(?:-|to|–)\s*\$([0-9]+(?:,[0-9]{3})*k?)"
+    match = re.search(range_pattern, text, re.IGNORECASE)
     if match:
         def parse_val(v: str) -> float:
             v = v.lower().replace(",", "")
             if "k" in v:
                 return float(v.replace("k", "")) * 1000
-            return float(v)
+            val = float(v)
+            if val < 200:  # Hourly wage without explicit /hr marker
+                return val * 2080
+            return val
         try:
-            return parse_val(match.group(1)), parse_val(match.group(2))
+            val_min = parse_val(match.group(1))
+            val_max = parse_val(match.group(2))
+            return val_min, val_max
         except Exception:
             pass
+
+    # 3. Single annual figure: e.g. $85,000/year or $90k/yr
+    single_pattern = r"\$([0-9]+(?:,[0-9]{3})*k?)\s*(?:\/|\s*(?:per|a)\s*)?(?:year|yr|annually)\b"
+    m_single = re.search(single_pattern, text, re.IGNORECASE)
+    if m_single:
+        def parse_val(v: str) -> float:
+            v = v.lower().replace(",", "")
+            if "k" in v:
+                return float(v.replace("k", "")) * 1000
+            val = float(v)
+            if val < 200:
+                return val * 2080
+            return val
+        try:
+            val = parse_val(m_single.group(1))
+            return val, val
+        except Exception:
+            pass
+
     return None, None
 
 async def extract_greenhouse_job(url: str, html: str, soup: BeautifulSoup) -> Dict[str, Any]:

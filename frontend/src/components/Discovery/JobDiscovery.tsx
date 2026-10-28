@@ -117,6 +117,74 @@ export const PIPELINE_STATUS_LABELS: Record<string, string> = {
   WISHLIST: 'To Apply',
 };
 
+export const parseSalaryStringToAnnual = (str: string): number | null => {
+  if (!str) return null;
+  const clean = str.trim().toLowerCase();
+
+  // Hourly pattern e.g. $35/hr, $35 / hour, 35/hr
+  const hourlyMatch = clean.match(/\$?(\d+(?:\.\d{2})?)\s*(?:\/|\s*(?:per|an)\s*)?(?:hr|hour)\b/);
+  if (hourlyMatch) {
+    const num = parseFloat(hourlyMatch[1]);
+    if (!isNaN(num) && num > 0) return Math.round(num * 2080);
+  }
+
+  // Range pattern e.g. $80k - $120k or $80,000 - $120,000
+  const rangeMatch = clean.match(/\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*k?\s*(?:-|to)\s*\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k?)/);
+  if (rangeMatch) {
+    let num = parseFloat(rangeMatch[1].replace(/,/g, ''));
+    if (rangeMatch[3] === 'k' || clean.includes('k')) {
+      if (num < 1000) num *= 1000;
+    }
+    if (!isNaN(num) && num > 0) {
+      if (num < 200) num *= 2080;
+      return Math.round(num);
+    }
+  }
+
+  // Single annual figure e.g. $85k, 85000, $85,000
+  const singleMatch = clean.match(/\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(k?)/);
+  if (singleMatch) {
+    let num = parseFloat(singleMatch[1].replace(/,/g, ''));
+    if (singleMatch[2] === 'k' || clean.includes('k')) {
+      if (num < 1000) num *= 1000;
+    }
+    if (!isNaN(num) && num > 0) {
+      if (num < 200) num *= 2080;
+      return Math.round(num);
+    }
+  }
+
+  return null;
+};
+
+export const formatSalaryBadge = (
+  min?: number,
+  max?: number,
+  currency = 'USD',
+  rateType: 'annual' | 'hourly' = 'annual'
+): string | null => {
+  if (!min && !max) return null;
+
+  if (rateType === 'hourly') {
+    const hMin = min ? Math.round(min / 2080) : null;
+    const hMax = max ? Math.round(max / 2080) : null;
+    if (hMin && hMax && hMin !== hMax) {
+      return `$${hMin} - $${hMax}/hr`;
+    }
+    if (hMin) return `$${hMin}/hr+`;
+    if (hMax) return `Up to $${hMax}/hr`;
+  } else {
+    const kMin = min ? Math.round(min / 1000) : null;
+    const kMax = max ? Math.round(max / 1000) : null;
+    if (kMin && kMax && kMin !== kMax) {
+      return `$${kMin}k - $${kMax}k`;
+    }
+    if (kMin) return `$${kMin}k+`;
+    if (kMax) return `Up to $${kMax}k`;
+  }
+  return null;
+};
+
 export interface FilterOption {
   id: string;
   label: string;
@@ -910,6 +978,20 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   const [profileLocation, setProfileLocation] = useState<string>('');
   const [detectingLocation, setDetectingLocation] = useState<boolean>(false);
 
+  // Salary / Hourly Compensation Filter State (persisted in localStorage)
+  const [salaryRateType, setSalaryRateType] = useState<'annual' | 'hourly'>(() => {
+    return (localStorage.getItem('job_pulse_salary_rate_type') as 'annual' | 'hourly') || 'annual';
+  });
+  const [minSalary, setMinSalary] = useState<number>(() => {
+    const saved = localStorage.getItem('job_pulse_min_salary');
+    return saved !== null ? Number(saved) : 0; // 0 = no minimum
+  });
+  const [includeUnlistedSalary, setIncludeUnlistedSalary] = useState<boolean>(() => {
+    const saved = localStorage.getItem('job_pulse_include_unlisted_salary');
+    return saved !== null ? saved === 'true' : true; // default true
+  });
+  const [profileSalary, setProfileSalary] = useState<string>('');
+
   // Map of discovered job URL -> matching pipeline Job
   const pipelineMatchMap = useMemo(() => {
     const map = new Map<string, Job>();
@@ -1035,7 +1117,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     isUsOnly: boolean = usOnly,
     loc: string = searchLocation,
     rad: number = searchRadius,
-    incRemote: boolean = includeRemote
+    incRemote: boolean = includeRemote,
+    minSal: number = minSalary,
+    incUnlisted: boolean = includeUnlistedSalary
   ) => {
     setLoading(true);
     try {
@@ -1052,7 +1136,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
         isUsOnly,
         effectiveLoc,
         effectiveRad,
-        incRemote
+        incRemote,
+        minSal > 0 ? minSal : undefined,
+        incUnlisted
       );
       setJobs(results);
     } catch (err) {
@@ -1069,12 +1155,15 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const savedIncRemote = localStorage.getItem('job_pulse_include_remote');
     const incRemoteBool = savedIncRemote !== null ? savedIncRemote === 'true' : true;
 
-    fetchJobs('developer', 'all', true, savedLoc, radNum, incRemoteBool);
+    fetchJobs('developer', 'all', true, savedLoc, radNum, incRemoteBool, minSalary, includeUnlistedSalary);
 
-    // Load profile location for quick suggestion
+    // Load profile location & compensation for quick suggestions
     api.getProfile().then((prof) => {
       if (prof && prof.location) {
         setProfileLocation(prof.location);
+      }
+      if (prof && prof.desired_salary) {
+        setProfileSalary(prof.desired_salary);
       }
     }).catch(() => {});
 
@@ -1230,6 +1319,31 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
   };
 
+  const handleSalaryRateTypeChange = (type: 'annual' | 'hourly') => {
+    setSalaryRateType(type);
+    localStorage.setItem('job_pulse_salary_rate_type', type);
+  };
+
+  const handleMinSalaryChange = (val: number) => {
+    const cleaned = Math.max(0, val);
+    setMinSalary(cleaned);
+    localStorage.setItem('job_pulse_min_salary', String(cleaned));
+  };
+
+  const handleIncludeUnlistedSalaryToggle = () => {
+    const nextVal = !includeUnlistedSalary;
+    setIncludeUnlistedSalary(nextVal);
+    localStorage.setItem('job_pulse_include_unlisted_salary', String(nextVal));
+  };
+
+  const handleApplyProfileSalary = () => {
+    if (!profileSalary) return;
+    const parsed = parseSalaryStringToAnnual(profileSalary);
+    if (parsed && parsed > 0) {
+      handleMinSalaryChange(parsed);
+    }
+  };
+
   const handleResetFilters = () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -1238,7 +1352,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setSelectedFilters([]);
     setSelectedSource('all');
     setActiveTrack('all');
-    fetchJobs('developer', 'all', usOnly, searchLocation, searchRadius, includeRemote);
+    setMinSalary(0);
+    localStorage.removeItem('job_pulse_min_salary');
+    fetchJobs('developer', 'all', usOnly, searchLocation, searchRadius, includeRemote, 0, includeUnlistedSalary);
   };
 
   // Compound client-side filtering:
@@ -1271,6 +1387,22 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       //   Any hybrid job outside this range (e.g. Seattle when searching Austin) is strictly filtered out.
       if (!showHiddenOnly && searchLocation.trim()) {
         if (!checkJobLocationMatchesRange(job, searchLocation, searchRadius, includeRemote)) {
+          return false;
+        }
+      }
+
+      // 0d. Minimum Compensation (Salary / Hourly) filter
+      if (!showHiddenOnly && minSalary > 0) {
+        const salMin = job.salary_min;
+        const salMax = job.salary_max;
+        const hasSalary = (salMin !== undefined && salMin !== null && salMin > 0) || (salMax !== undefined && salMax !== null && salMax > 0);
+
+        if (hasSalary) {
+          const effectiveMax = (salMax && salMax > 0) ? salMax : (salMin ?? 0);
+          if (effectiveMax < minSalary) {
+            return false;
+          }
+        } else if (!includeUnlistedSalary) {
           return false;
         }
       }
@@ -1338,12 +1470,12 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
       return true;
     });
-  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap, searchLocation, searchRadius, includeRemote]);
+  }, [jobs, hiddenJobsMap, hiddenUrls, showHiddenOnly, selectedSource, selectedFilters, query, blockedCompanies, hidePipelineJobs, pipelineMatchMap, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary]);
 
-  // Reset pagination to page 1 whenever search, filters, source, location, or view mode changes
+  // Reset pagination to page 1 whenever search, filters, source, location, compensation, or view mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs, searchLocation, searchRadius, includeRemote]);
+  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary]);
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -1671,6 +1803,161 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           </label>
         </div>
 
+        {/* Compensation / Desired Salary Section */}
+        <div className="space-y-3 pt-3 border-t border-slate-800/80">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2 text-slate-200 font-semibold">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Compensation</span>
+              {minSalary > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                  {salaryRateType === 'hourly' ? `$${Math.round(minSalary / 2080)}/hr+` : `$${Math.round(minSalary / 1000)}k+`}
+                </span>
+              )}
+            </div>
+            {minSalary > 0 && (
+              <button
+                type="button"
+                onClick={() => handleMinSalaryChange(0)}
+                className="text-[11px] text-slate-400 hover:text-emerald-400 transition underline font-normal"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+
+          {/* Rate Switcher: Annual vs Hourly */}
+          <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-900 border border-slate-800 rounded-xl">
+            <button
+              type="button"
+              onClick={() => handleSalaryRateTypeChange('annual')}
+              className={`py-1 text-center rounded-lg text-xs font-semibold transition ${
+                salaryRateType === 'annual'
+                  ? 'bg-slate-800 text-emerald-300 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Annual ($/yr)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSalaryRateTypeChange('hourly')}
+              className={`py-1 text-center rounded-lg text-xs font-semibold transition ${
+                salaryRateType === 'hourly'
+                  ? 'bg-slate-800 text-emerald-300 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Hourly ($/hr)
+            </button>
+          </div>
+
+          {/* Quick Preset Chips */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Minimum Pay:</span>
+              <span className="text-emerald-400 font-semibold">
+                {minSalary > 0
+                  ? salaryRateType === 'hourly'
+                    ? `$${Math.round(minSalary / 2080)}/hr (~$${Math.round(minSalary / 1000)}k/yr)`
+                    : `$${Math.round(minSalary / 1000)}k/yr (~$${Math.round(minSalary / 2080)}/hr)`
+                  : 'Any pay'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {(salaryRateType === 'hourly'
+                ? [
+                    { label: 'Any', value: 0 },
+                    { label: '$25/hr', value: 25 * 2080 },
+                    { label: '$35/hr', value: 35 * 2080 },
+                    { label: '$45/hr', value: 45 * 2080 },
+                    { label: '$55/hr', value: 55 * 2080 },
+                    { label: '$70/hr', value: 70 * 2080 },
+                  ]
+                : [
+                    { label: 'Any', value: 0 },
+                    { label: '$50k', value: 50000 },
+                    { label: '$70k', value: 70000 },
+                    { label: '$90k', value: 90000 },
+                    { label: '$110k', value: 110000 },
+                    { label: '$130k', value: 130000 },
+                  ]
+              ).map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => handleMinSalaryChange(preset.value)}
+                  className={`py-1 text-center rounded-lg text-xs font-medium border transition ${
+                    minSalary === preset.value
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 font-semibold ring-1 ring-emerald-500/30'
+                      : 'bg-slate-800/70 text-slate-400 border-slate-700/60 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Min Input */}
+          <div className="relative">
+            <span className="absolute left-3 top-2 text-xs text-slate-500 font-semibold">$</span>
+            <input
+              type="number"
+              placeholder={salaryRateType === 'hourly' ? "Custom /hr (e.g. 40)" : "Custom /yr (e.g. 85000)"}
+              value={
+                minSalary > 0
+                  ? salaryRateType === 'hourly'
+                    ? Math.round(minSalary / 2080)
+                    : minSalary
+                  : ''
+              }
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                if (salaryRateType === 'hourly') {
+                  handleMinSalaryChange(val > 0 ? val * 2080 : 0);
+                } else {
+                  handleMinSalaryChange(val > 0 ? val : 0);
+                }
+              }}
+              className="w-full pl-7 pr-12 py-1.5 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <span className="absolute right-3 top-2 text-[10px] text-slate-500 font-semibold uppercase">
+              {salaryRateType === 'hourly' ? '/hr' : '/yr'}
+            </span>
+          </div>
+
+          {/* Profile Salary Target Shortcut */}
+          {profileSalary && (
+            <button
+              type="button"
+              onClick={handleApplyProfileSalary}
+              className="text-[11px] text-emerald-400 hover:text-emerald-300 transition flex items-center space-x-1"
+            >
+              <span className="text-slate-400">Profile Target:</span>
+              <span className="font-semibold underline truncate max-w-[160px]">{profileSalary}</span>
+            </button>
+          )}
+
+          {/* Include Unlisted Compensation Toggle */}
+          <label className="flex items-start space-x-2 text-xs text-slate-300 cursor-pointer pt-0.5">
+            <input
+              type="checkbox"
+              checked={includeUnlistedSalary}
+              onChange={handleIncludeUnlistedSalaryToggle}
+              className="mt-0.5 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-emerald-500/40"
+            />
+            <div className="flex flex-col">
+              <span className="font-medium text-slate-200 text-xs">Include Unlisted Pay</span>
+              <span className="text-[10px] text-slate-500">
+                {includeUnlistedSalary
+                  ? 'Showing roles with undisclosed pay'
+                  : 'Only showing roles with verified pay'}
+              </span>
+            </div>
+          </label>
+        </div>
+
         {/* Source Platform Section */}
         <div className="space-y-2 pt-2 border-t border-slate-800/80">
           <div className="flex items-center justify-between text-xs">
@@ -1943,7 +2230,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           </div>
         </div>
           {/* Active Filter Indicators Bar */}
-        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly || searchLocation.trim()) && (
+        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly || searchLocation.trim() || minSalary > 0 || !includeUnlistedSalary) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
             <span className="text-slate-400 flex items-center gap-1.5 font-medium">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
@@ -1952,12 +2239,38 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                 {[
                   query.trim(),
                   searchLocation.trim() ? `near:${searchLocation}` : '',
+                  minSalary > 0 ? `min:${minSalary}` : '',
+                  !includeUnlistedSalary ? 'verified-pay-only' : '',
                   ...selectedFilters,
                   selectedSource !== 'all' ? selectedSource : '',
                 ].filter(Boolean).length}
                 ):
               </span>
             </span>
+
+            {/* Compensation Pill */}
+            {minSalary > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-medium shadow-xs">
+                <DollarSign className="w-3 h-3 text-emerald-400" />
+                <span>
+                  Pay:{' '}
+                  <strong>
+                    {salaryRateType === 'hourly'
+                      ? `$${Math.round(minSalary / 2080)}/hr+`
+                      : `$${Math.round(minSalary / 1000)}k/yr+`}
+                  </strong>
+                  {!includeUnlistedSalary && ' (Verified)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleMinSalaryChange(0)}
+                  className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
+                  title="Remove salary filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
             {/* Location Pill */}
             {searchLocation.trim() && (
@@ -2274,10 +2587,17 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                         <span className="truncate max-w-[120px]">{job.location || 'Remote'}</span>
                       </span>
 
-                      {job.salary_min && (
-                        <span className="inline-flex items-center space-x-1 text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40 font-medium">
+                      {formatSalaryBadge(job.salary_min, job.salary_max, job.salary_currency, salaryRateType) && (
+                        <span
+                          className="inline-flex items-center space-x-1 text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40 font-medium cursor-help"
+                          title={
+                            salaryRateType === 'hourly'
+                              ? `Approx. annual: $${Math.round((job.salary_min || 0) / 1000)}k${job.salary_max ? ` - $${Math.round(job.salary_max / 1000)}k` : ''}/yr`
+                              : `Approx. hourly: $${Math.round((job.salary_min || 0) / 2080)}${job.salary_max ? ` - $${Math.round(job.salary_max / 2080)}` : ''}/hr`
+                          }
+                        >
                           <DollarSign className="w-3 h-3 shrink-0" />
-                          <span>${Math.round(job.salary_min / 1000)}k+</span>
+                          <span>{formatSalaryBadge(job.salary_min, job.salary_max, job.salary_currency, salaryRateType)}</span>
                         </span>
                       )}
                     </div>

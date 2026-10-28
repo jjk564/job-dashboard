@@ -60,6 +60,17 @@ def test_salary_extraction():
     assert min_sal2 == 140000.0
     assert max_sal2 == 180000.0
 
+    # Hourly rate extraction (converted to annual at 2080 hrs/yr)
+    text3 = "Pay: $30 - $45 per hour depending on experience."
+    min_sal3, max_sal3 = extract_salary_range(text3)
+    assert min_sal3 == 30.0 * 2080
+    assert max_sal3 == 45.0 * 2080
+
+    text4 = "Rate: $35/hr"
+    min_sal4, max_sal4 = extract_salary_range(text4)
+    assert min_sal4 == 35.0 * 2080
+    assert max_sal4 == 35.0 * 2080
+
 def test_generate_offline_template():
     job_data = {
         "title": "Lead Backend Engineer",
