@@ -18,6 +18,7 @@ async def search_jobs(
     us_only: bool = Query(True),
     min_salary: Optional[float] = Query(None),
     include_undisclosed_salary: bool = Query(True),
+    force_refresh: bool = Query(False),
 ) -> List[Dict[str, Any]]:
     """Search active listings across public job boards with optional US, salary, and location/radius filtering."""
     jobs = await search_aggregated_jobs(
@@ -31,6 +32,7 @@ async def search_jobs(
         include_remote=include_remote,
         min_salary=min_salary,
         include_undisclosed_salary=include_undisclosed_salary,
+        force_refresh=force_refresh,
     )
     return jobs
 

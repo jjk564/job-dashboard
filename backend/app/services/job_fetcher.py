@@ -2,6 +2,7 @@ import logging
 import asyncio
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 import httpx
@@ -1649,12 +1650,28 @@ async def fetch_simplify_jobs(
         return []
 
 
-# 13. Direct Multi-Company ATS Boards (Greenhouse, Ashby, Lever for 25+ Top Tech Companies)
+# 13. Direct Multi-Company ATS Boards (Greenhouse, Ashby, Lever for 45+ Top Tech Companies)
 GREENHOUSE_COMPANIES = [
     ("anthropic", "Anthropic"),
     ("stripe", "Stripe"),
     ("cloudflare", "Cloudflare"),
     ("databricks", "Databricks"),
+    ("datadog", "Datadog"),
+    ("mongodb", "MongoDB"),
+    ("elastic", "Elastic"),
+    ("okta", "Okta"),
+    ("toast", "Toast"),
+    ("samsara", "Samsara"),
+    ("brex", "Brex"),
+    ("roblox", "Roblox"),
+    ("affirm", "Affirm"),
+    ("epicgames", "Epic Games"),
+    ("asana", "Asana"),
+    ("instacart", "Instacart"),
+    ("carta", "Carta"),
+    ("gusto", "Gusto"),
+    ("twitch", "Twitch"),
+    ("coursera", "Coursera"),
     ("vercel", "Vercel"),
     ("coinbase", "Coinbase"),
     ("discord", "Discord"),
@@ -1677,6 +1694,12 @@ ASHBY_COMPANIES = [
     ("plaid", "Plaid"),
     ("supabase", "Supabase"),
     ("posthog", "PostHog"),
+    ("perplexity", "Perplexity"),
+    ("elevenlabs", "ElevenLabs"),
+    ("cohere", "Cohere"),
+    ("modal", "Modal"),
+    ("replit", "Replit"),
+    ("warp", "Warp"),
 ]
 
 LEVER_COMPANIES = [
@@ -1848,7 +1871,7 @@ async def fetch_company_boards_jobs(
         q_lower = (query or "").lower().strip()
         all_company_names = [n.lower() for _, n in GREENHOUSE_COMPANIES + ASHBY_COMPANIES + LEVER_COMPANIES]
         is_specific_company_q = any(c in q_lower for c in all_company_names)
-        max_per_company = 60 if is_specific_company_q else 8
+        max_per_company = 60 if is_specific_company_q else 25
 
         company_counts: Dict[str, int] = {}
         results = []
@@ -1871,7 +1894,7 @@ async def fetch_company_boards_jobs(
 
             company_counts[comp] = company_counts.get(comp, 0) + 1
             results.append(j)
-            if len(results) >= 120:
+            if len(results) >= 350:
                 break
 
         return results
@@ -2236,6 +2259,9 @@ async def fetch_bigtech_jobs(
 
 
 # Aggregated Search with Source Filtering, US-Only, and Location Radius Support
+_SEARCH_CACHE: Dict[str, Dict[str, Any]] = {}
+_SEARCH_CACHE_TTL_SECONDS = 300  # 5 minutes TTL
+
 async def search_aggregated_jobs(
     query: Optional[str] = None,
     source: Optional[str] = None,
@@ -2246,9 +2272,19 @@ async def search_aggregated_jobs(
     radius: Optional[int] = None,
     include_remote: bool = True,
     min_salary: Optional[float] = None,
-    include_undisclosed_salary: bool = True
+    include_undisclosed_salary: bool = True,
+    force_refresh: bool = False
 ) -> List[Dict[str, Any]]:
     """Aggregates listings concurrently across all supported boards with US, salary, and location/radius filtering."""
+    q_norm = (query or "").lower().strip()
+    cache_key = f"{q_norm}|{source or 'all'}|{us_only}|{(location or '').lower().strip()}|{radius or 0}|{include_remote}|{min_salary or 0}|{include_undisclosed_salary}"
+    now = time.time()
+
+    if not force_refresh and cache_key in _SEARCH_CACHE:
+        entry = _SEARCH_CACHE[cache_key]
+        if now - entry["timestamp"] < _SEARCH_CACHE_TTL_SECONDS:
+            logger.info(f"Returning {len(entry['jobs'])} cached jobs for search key: {cache_key}")
+            return list(entry["jobs"])
 
     tasks = []
     source_lower = (source or "all").lower()
@@ -2344,6 +2380,11 @@ async def search_aggregated_jobs(
         if key not in seen:
             seen.add(key)
             unique_jobs.append(j)
+
+    _SEARCH_CACHE[cache_key] = {
+        "timestamp": now,
+        "jobs": list(unique_jobs)
+    }
 
     return unique_jobs
 

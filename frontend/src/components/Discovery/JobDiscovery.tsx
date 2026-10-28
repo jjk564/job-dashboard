@@ -1044,6 +1044,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchSequenceRef = useRef<number>(0);
 
   const hiddenUrls = useMemo(() => new Set(Object.keys(hiddenJobsMap)), [hiddenJobsMap]);
   const hiddenCount = hiddenUrls.size;
@@ -1123,8 +1124,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     rad: number = searchRadius,
     incRemote: boolean = includeRemote,
     minSal: number = minSalary,
-    incUnlisted: boolean = includeUnlistedSalary
+    incUnlisted: boolean = includeUnlistedSalary,
+    forceRefresh: boolean = false
   ) => {
+    const currentFetchId = ++fetchSequenceRef.current;
     setLoading(true);
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
@@ -1142,13 +1145,20 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
         effectiveRad,
         incRemote,
         minSal > 0 ? minSal : undefined,
-        incUnlisted
+        incUnlisted,
+        forceRefresh
       );
-      setJobs(results);
+      if (currentFetchId === fetchSequenceRef.current) {
+        setJobs(results);
+      }
     } catch (err) {
-      console.error('Failed to search jobs:', err);
+      if (currentFetchId === fetchSequenceRef.current) {
+        console.error('Failed to search jobs:', err);
+      }
     } finally {
-      setLoading(false);
+      if (currentFetchId === fetchSequenceRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1256,6 +1266,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       : [...selectedFilters, filterId];
     setSelectedFilters(nextFilters);
 
+    // If an explicit query is set, all matching listings are already in local memory
+    // and instant client-side filtering (filteredJobs) handles it immediately.
+    // Avoid re-scraping live boards on simple filter chip clicks.
+    if (query.trim()) {
+      return;
+    }
+
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -1272,6 +1289,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const nextFilters = selectedFilters.filter((id) => !groupOptionIds.has(id));
     setSelectedFilters(nextFilters);
 
+    if (query.trim()) {
+      return;
+    }
+
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -1287,7 +1308,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
   };
 
   const handleSourceSelect = (sourceId: string) => {
@@ -1448,7 +1469,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
             return matchesOption('junior', fullText, job);
           }
           if (['developer', 'engineer', 'dev', 'programmer', 'software', 'coder', 'engineering', 'development'].includes(w)) {
-            return /\b(developer|engineer|dev|programmer|software|coder|engineering|development|swe|sde)\b/i.test(fullText);
+            return /\b(developer|engineer|dev|programmer|software|coder|engineering|development|swe|sde|consultant|specialist|architect)\b/i.test(fullText);
           }
           if (['solutions', 'solution'].includes(w)) {
             return /\b(solution|solutions)\b/i.test(fullText);
@@ -2528,7 +2549,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                     type="button"
                     onClick={() => {
                       const effective = getEffectiveSearchQuery(query, selectedFilters);
-                      fetchJobs(effective, selectedSource, usOnly);
+                      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
                     }}
                     className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
                   >
