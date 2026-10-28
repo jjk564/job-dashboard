@@ -450,14 +450,14 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
           title
         );
       if (isTechTitle) {
-        if (job.salary_max && job.salary_max >= 45000 && job.salary_max <= 135000) {
+        if (job.salary_max && job.salary_max >= 45000 && job.salary_max <= 155000) {
           return true;
         }
         if (
           job.salary_min &&
           job.salary_min >= 45000 &&
-          job.salary_min <= 115000 &&
-          (!job.salary_max || job.salary_max <= 145000)
+          job.salary_min <= 135000 &&
+          (!job.salary_max || job.salary_max <= 180000)
         ) {
           return true;
         }
