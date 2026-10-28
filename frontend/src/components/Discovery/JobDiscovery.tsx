@@ -1043,8 +1043,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   const mainScrollRef = useRef<HTMLElement | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchSequenceRef = useRef<number>(0);
+  const lastFetchedQueryRef = useRef<string>('');
 
   const hiddenUrls = useMemo(() => new Set(Object.keys(hiddenJobsMap)), [hiddenJobsMap]);
   const hiddenCount = hiddenUrls.size;
@@ -1128,6 +1130,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     forceRefresh: boolean = false
   ) => {
     const currentFetchId = ++fetchSequenceRef.current;
+    lastFetchedQueryRef.current = searchQuery.trim();
     setLoading(true);
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
@@ -1183,6 +1186,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (queryDebounceRef.current) clearTimeout(queryDebounceRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, []);
@@ -1260,26 +1264,45 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     );
   };
 
+  const handleQueryChange = (val: string) => {
+    setQuery(val);
+    if (queryDebounceRef.current) {
+      clearTimeout(queryDebounceRef.current);
+    }
+    const trimmed = val.trim();
+    // Debounce live fetch when user pauses typing
+    queryDebounceRef.current = setTimeout(() => {
+      const effective = getEffectiveSearchQuery(trimmed, selectedFilters);
+      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+    }, 550);
+  };
+
   const handleFilterToggle = (filterId: string) => {
     const nextFilters = selectedFilters.includes(filterId)
       ? selectedFilters.filter((id) => id !== filterId)
       : [...selectedFilters, filterId];
     setSelectedFilters(nextFilters);
 
-    // If an explicit query is set, all matching listings are already in local memory
-    // and instant client-side filtering (filteredJobs) handles it immediately.
-    // Avoid re-scraping live boards on simple filter chip clicks.
-    if (query.trim()) {
+    const trimmedQuery = query.trim();
+    // If user typed a query that hasn't been fetched from backend yet, fetch it immediately!
+    if (trimmedQuery && trimmedQuery.toLowerCase() !== lastFetchedQueryRef.current.toLowerCase()) {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (queryDebounceRef.current) clearTimeout(queryDebounceRef.current);
+      const effectiveQuery = getEffectiveSearchQuery(trimmedQuery, nextFilters);
+      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       return;
     }
 
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+    // If no query is typed, debounce fetch with the new filter keyword
+    if (!trimmedQuery) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        const effectiveQuery = getEffectiveSearchQuery('', nextFilters);
+        fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+      }, 450);
     }
-    debounceTimerRef.current = setTimeout(() => {
-      const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
-    }, 450);
   };
 
   const handleClearGroup = (groupId: string) => {
@@ -1289,23 +1312,33 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const nextFilters = selectedFilters.filter((id) => !groupOptionIds.has(id));
     setSelectedFilters(nextFilters);
 
-    if (query.trim()) {
+    const trimmedQuery = query.trim();
+    if (trimmedQuery && trimmedQuery.toLowerCase() !== lastFetchedQueryRef.current.toLowerCase()) {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (queryDebounceRef.current) clearTimeout(queryDebounceRef.current);
+      const effectiveQuery = getEffectiveSearchQuery(trimmedQuery, nextFilters);
+      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       return;
     }
 
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+    if (!trimmedQuery) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        const effectiveQuery = getEffectiveSearchQuery('', nextFilters);
+        fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+      }, 450);
     }
-    debounceTimerRef.current = setTimeout(() => {
-      const effectiveQuery = getEffectiveSearchQuery(query, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
-    }, 450);
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
+    }
+    if (queryDebounceRef.current) {
+      clearTimeout(queryDebounceRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
     fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
@@ -2181,7 +2214,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                   type="text"
                   placeholder="Role, skills, or keywords (e.g. Senior Python, Full Stack, React)..."
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => handleQueryChange(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                 />
                 {query && (
