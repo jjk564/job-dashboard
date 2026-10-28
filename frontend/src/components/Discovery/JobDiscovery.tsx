@@ -407,7 +407,7 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
       if (requiresMidOrSeniorExperience(fullText)) {
         return false;
       }
-      if ((job.salary_min && job.salary_min >= 120000) || (job.salary_max && job.salary_max >= 145000)) {
+      if ((job.salary_min && job.salary_min >= 160000) || (job.salary_max && job.salary_max >= 185000)) {
         return false;
       }
 
@@ -853,11 +853,15 @@ const getEffectiveSearchQuery = (
   activeFilterIds: string[],
   track: 'all' | 'software' | 'it_admin' = 'all'
 ): string => {
-  const parts: string[] = [];
-
-  if (customQuery.trim()) {
-    parts.push(customQuery.trim());
+  const trimmed = customQuery.trim();
+  // When a user provides an explicit search query (e.g. "Solutions Engineer"), use that pure term
+  // for upstream board search engines so queries aren't polluted with experience terms like "junior"
+  // which causes external scrapers (Indeed, LinkedIn, Glassdoor, ZipRecruiter) to return 0 or very few results.
+  if (trimmed) {
+    return trimmed;
   }
+
+  const parts: string[] = [];
 
   // 1. Experience keywords
   const expFilters = activeFilterIds.filter((id) =>
@@ -888,7 +892,7 @@ const getEffectiveSearchQuery = (
   );
   if (roleFilters.length > 0) {
     parts.push(FILTER_SEARCH_TERMS[roleFilters[0]] || roleFilters[0]);
-  } else if (!customQuery.trim() && langFilters.length === 0) {
+  } else if (langFilters.length === 0) {
     if (track === 'it_admin') {
       parts.push('it support');
     } else {
@@ -1446,13 +1450,20 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           if (['developer', 'engineer', 'dev', 'programmer', 'software', 'coder', 'engineering', 'development'].includes(w)) {
             return /\b(developer|engineer|dev|programmer|software|coder|engineering|development|swe|sde)\b/i.test(fullText);
           }
+          if (['solutions', 'solution'].includes(w)) {
+            return /\b(solution|solutions)\b/i.test(fullText);
+          }
           if (['remote', 'wfh', 'telecommute'].includes(w)) {
             return matchesOption('remote', fullText, job);
           }
           if (['fullstack', 'frontend', 'backend', 'devops', 'python', 'javascript', 'typescript', 'react', 'nodejs', 'golang', 'java', 'csharp', 'cpp', 'rust', 'sql', 'aws'].includes(w)) {
             return matchesOption(w, fullText, job);
           }
-          return fullText.includes(w);
+          // Support plural/singular stem matching
+          if (fullText.includes(w)) return true;
+          if (w.endsWith('s') && fullText.includes(w.slice(0, -1))) return true;
+          if (!w.endsWith('s') && fullText.includes(w + 's')) return true;
+          return false;
         });
         if (!matchesAll) return false;
       }

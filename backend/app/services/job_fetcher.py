@@ -238,7 +238,7 @@ def _has_junior_signals(
         return True
     if _requires_4plus_years(description):
         return False
-    if (salary_min and salary_min >= 120000) or (salary_max and salary_max >= 145000):
+    if (salary_min and salary_min >= 160000) or (salary_max and salary_max >= 185000):
         return False
 
     desc_lower = (description or "").lower()
@@ -308,8 +308,19 @@ def _term_matches(term: str, full_text: str, title: str = "", description: str =
     else:
         if t in full_text:
             return True
+        # Basic plural/singular stem matching (e.g. "solutions" -> "solution", "cloud" -> "clouds")
+        if t.endswith('s') and t[:-1] in full_text:
+            return True
+        if not t.endswith('s') and (t + 's') in full_text:
+            return True
 
     synonym_groups = [
+        {
+            "solutions engineer", "solutionsengineer", "solution engineer", "solutions consultant",
+            "solution consultant", "technical solutions engineer", "technical solutions consultant",
+            "sales engineer", "presales engineer", "pre-sales engineer", "customer solutions engineer",
+            "solutions specialist", "solution architect", "solutions architect"
+        },
         {"developer", "engineer", "dev", "programmer", "software", "coder", "architect", "engineering", "development"},
         {"senior", "sr", "lead", "principal", "staff"},
         {"frontend", "front-end", "ui", "react", "vue", "angular", "javascript", "typescript"},
@@ -394,6 +405,10 @@ def matches_query(
     normalized_q = re.sub(r'\bnetwork[\s-]+(?:technician|admin(?:istrator)?|engineer)\b', 'network', normalized_q)
     normalized_q = re.sub(r'\bcyber[\s-]+security\b', 'cybersecurity', normalized_q)
     normalized_q = re.sub(r'\bsoc[\s-]+analyst\b', 'soc', normalized_q)
+    normalized_q = re.sub(r'\bsolutions?[\s-]+engineers?\b', 'solutionsengineer', normalized_q)
+    normalized_q = re.sub(r'\bsolutions?[\s-]+consultants?\b', 'solutionsengineer', normalized_q)
+    normalized_q = re.sub(r'\bsales[\s-]+engineers?\b', 'solutionsengineer', normalized_q)
+    normalized_q = re.sub(r'\bpre[\s-]?sales[\s-]+engineers?\b', 'solutionsengineer', normalized_q)
     normalized_q = re.sub(r'[/,()"+-]', ' ', normalized_q)
 
     stop_words = {"and", "or", "the", "for", "with", "in", "level", "role", "position", "job", "jobs"}
@@ -896,9 +911,9 @@ async def fetch_indeed_jobs(
                 q2 = f'junior {core_term}'
                 q3 = f'associate {core_term}'
 
-            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 35, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 35, distance_val)
-            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 25, distance_val)
+            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 45, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 45, distance_val)
+            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 35, distance_val)
             res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -906,8 +921,8 @@ async def fetch_indeed_jobs(
                     raw_jobs.extend(r)
         else:
             # Include a concurrent entry-level batch so general searches also surface entry-level opportunities
-            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 35, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 20, distance_val)
+            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 50, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 30, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -1157,8 +1172,8 @@ async def fetch_ziprecruiter_jobs(
                     raw_jobs.extend(r)
         else:
             search_term = clean_term if clean_term else "Software Developer"
-            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 2, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 1, location, radius)
+            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 3, location, radius)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 2, location, radius)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -1209,7 +1224,7 @@ async def fetch_adzuna_jobs(
     params = {
         "app_id": app_id,
         "app_key": app_key,
-        "results_per_page": 50,
+        "results_per_page": 100,
         "what": search_query,
         "content-type": "application/json",
     }
@@ -1385,12 +1400,13 @@ async def _fetch_jobspy_board_jobs(
         if is_junior_query:
             q1 = f"entry level {core_term}"
             q2 = f"junior {core_term}"
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 25, distance_val)
-            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 25, distance_val)
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 35, distance_val)
+            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 35, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
         else:
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 30, distance_val)
-            res = await asyncio.gather(t1, return_exceptions=True)
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 45, distance_val)
+            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, f"associate {search_term}", loc_str, is_remote_query, 25, distance_val)
+            res = await asyncio.gather(t1, t2, return_exceptions=True)
 
         raw_jobs = []
         for r in res:
