@@ -912,9 +912,9 @@ async def fetch_indeed_jobs(
                 q2 = f'junior {core_term}'
                 q3 = f'associate {core_term}'
 
-            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 45, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 45, distance_val)
-            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 35, distance_val)
+            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 55, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 55, distance_val)
+            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 45, distance_val)
             res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -922,8 +922,8 @@ async def fetch_indeed_jobs(
                     raw_jobs.extend(r)
         else:
             # Include a concurrent entry-level batch so general searches also surface entry-level opportunities
-            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 50, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 30, distance_val)
+            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 65, distance_val)
+            t2 = asyncio.to_thread(_scrape_indeed_sync, f'"entry level" {search_term}', loc_str, is_remote_query, 40, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -1163,9 +1163,9 @@ async def fetch_ziprecruiter_jobs(
                 q2 = f"entry level {core_term}"
                 q3 = f"associate {core_term}"
 
-            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, q1, us_only, is_remote_query, 2, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, q2, us_only, is_remote_query, 2, location, radius)
-            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, q3, us_only, is_remote_query, 1, location, radius)
+            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, q1, us_only, is_remote_query, 3, location, radius)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, q2, us_only, is_remote_query, 3, location, radius)
+            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, q3, us_only, is_remote_query, 2, location, radius)
             res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -1173,8 +1173,8 @@ async def fetch_ziprecruiter_jobs(
                     raw_jobs.extend(r)
         else:
             search_term = clean_term if clean_term else "Software Developer"
-            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 3, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 2, location, radius)
+            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 4, location, radius)
+            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"entry level {search_term}", us_only, is_remote_query, 3, location, radius)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
             raw_jobs = []
             for r in res:
@@ -1221,7 +1221,6 @@ async def fetch_adzuna_jobs(
         return []
 
     search_query = query or "software developer"
-    url = "https://api.adzuna.com/v1/api/jobs/us/search/1"
     params = {
         "app_id": app_id,
         "app_key": app_key,
@@ -1239,10 +1238,17 @@ async def fetch_adzuna_jobs(
     results = []
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(url, params=params)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("results", [])
+            url_p1 = "https://api.adzuna.com/v1/api/jobs/us/search/1"
+            url_p2 = "https://api.adzuna.com/v1/api/jobs/us/search/2"
+            r1, r2 = await asyncio.gather(
+                client.get(url_p1, params=params),
+                client.get(url_p2, params=params),
+                return_exceptions=True
+            )
+            items = []
+            for resp in (r1, r2):
+                if not isinstance(resp, Exception) and resp.status_code == 200:
+                    items.extend(resp.json().get("results", []))
                 for item in items:
                     title = item.get("title", "")
                     company = item.get("company", {}).get("display_name", "Company")
@@ -1401,12 +1407,12 @@ async def _fetch_jobspy_board_jobs(
         if is_junior_query:
             q1 = f"entry level {core_term}"
             q2 = f"junior {core_term}"
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 35, distance_val)
-            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 35, distance_val)
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 45, distance_val)
+            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 45, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
         else:
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 45, distance_val)
-            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, f"associate {search_term}", loc_str, is_remote_query, 25, distance_val)
+            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 60, distance_val)
+            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, f"associate {search_term}", loc_str, is_remote_query, 35, distance_val)
             res = await asyncio.gather(t1, t2, return_exceptions=True)
 
         raw_jobs = []
@@ -1684,6 +1690,9 @@ GREENHOUSE_COMPANIES = [
     ("duolingo", "Duolingo"),
     ("twilio", "Twilio"),
     ("scaleai", "Scale AI"),
+    ("zscaler", "Zscaler"),
+    ("ripple", "Ripple"),
+    ("launchdarkly", "LaunchDarkly"),
 ]
 
 ASHBY_COMPANIES = [
@@ -1700,6 +1709,9 @@ ASHBY_COMPANIES = [
     ("modal", "Modal"),
     ("replit", "Replit"),
     ("warp", "Warp"),
+    ("snyk", "Snyk"),
+    ("deepgram", "Deepgram"),
+    ("langchain", "LangChain"),
 ]
 
 LEVER_COMPANIES = [

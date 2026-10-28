@@ -28,8 +28,8 @@ def extract_salary_range(text: str) -> tuple[Optional[float], Optional[float]]:
     if not text:
         return None, None
 
-    # 1. Hourly range pattern: e.g. $25 - $35/hr, $25.00 to $40.00 per hour
-    hourly_range_pattern = r"\$([0-9]+(?:\.[0-9]{2})?)\s*(?:-|to|–)\s*\$([0-9]+(?:\.[0-9]{2})?)\s*(?:\/|\s*(?:per|an)\s*)?(?:hr|hour)\b"
+    # 1. Hourly range pattern: e.g. $25 - $35/hr, $25.00 to $40.00 per hour, $30 - 45 / hr
+    hourly_range_pattern = r"\$([0-9]+(?:\.[0-9]{2})?)\s*(?:-|to|–|—)\s*\$?([0-9]+(?:\.[0-9]{2})?)\s*(?:\/|\s*(?:per|an)\s*)?(?:hr|hour)\b"
     m_hr = re.search(hourly_range_pattern, text, re.IGNORECASE)
     if m_hr:
         try:
@@ -49,8 +49,8 @@ def extract_salary_range(text: str) -> tuple[Optional[float], Optional[float]]:
         except Exception:
             pass
 
-    # 2. Standard annual range: e.g. $120,000 - $160,000 or $120k - $160k or $120,000 to $160,000
-    range_pattern = r"\$([0-9]+(?:,[0-9]{3})*k?)\s*(?:-|to|–)\s*\$([0-9]+(?:,[0-9]{3})*k?)"
+    # 2. Standard annual range: e.g. $120,000 - $160,000 or $120k - $160k or $120,000 - 160,000 or $120k - 160k
+    range_pattern = r"\$((?:\d{2,3}k)|[0-9]{2,3}(?:,[0-9]{3})*)\s*(?:-|to|–|—)\s*\$?((?:\d{2,3}k)|[0-9]{2,3}(?:,[0-9]{3})*)"
     match = re.search(range_pattern, text, re.IGNORECASE)
     if match:
         def parse_val(v: str) -> float:
@@ -64,12 +64,13 @@ def extract_salary_range(text: str) -> tuple[Optional[float], Optional[float]]:
         try:
             val_min = parse_val(match.group(1))
             val_max = parse_val(match.group(2))
-            return val_min, val_max
+            if val_min > 0 and val_max >= val_min:
+                return val_min, val_max
         except Exception:
             pass
 
-    # 3. Single annual figure: e.g. $85,000/year or $90k/yr
-    single_pattern = r"\$([0-9]+(?:,[0-9]{3})*k?)\s*(?:\/|\s*(?:per|a)\s*)?(?:year|yr|annually)\b"
+    # 3. Single annual figure: e.g. $85,000/year or $90k/yr or base salary of $120,000
+    single_pattern = r"\$((?:\d{2,3}k)|[0-9]{2,3}(?:,[0-9]{3})*)\s*(?:\/|\s*(?:per|a)\s*)?(?:year|yr|annually)\b"
     m_single = re.search(single_pattern, text, re.IGNORECASE)
     if m_single:
         def parse_val(v: str) -> float:
@@ -82,6 +83,24 @@ def extract_salary_range(text: str) -> tuple[Optional[float], Optional[float]]:
             return val
         try:
             val = parse_val(m_single.group(1))
+            return val, val
+        except Exception:
+            pass
+
+    # 4. Phrase-based salary: e.g. "base salary of $130,000" or "base pay: $125,000"
+    phrase_pattern = r"(?:base\s+salary|base\s+pay|target\s+salary|salary\s+range)[\s:]+\$((?:\d{2,3}k)|[0-9]{2,3}(?:,[0-9]{3})*)"
+    m_phrase = re.search(phrase_pattern, text, re.IGNORECASE)
+    if m_phrase:
+        def parse_val(v: str) -> float:
+            v = v.lower().replace(",", "")
+            if "k" in v:
+                return float(v.replace("k", "")) * 1000
+            val = float(v)
+            if val < 200:
+                return val * 2080
+            return val
+        try:
+            val = parse_val(m_phrase.group(1))
             return val, val
         except Exception:
             pass

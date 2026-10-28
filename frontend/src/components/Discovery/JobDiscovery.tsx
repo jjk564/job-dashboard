@@ -317,7 +317,8 @@ const hasExplicitJuniorTitle = (title: string): boolean => {
 const isSeniorOrStaffTitle = (title: string): boolean => {
   const t = (title || '').toLowerCase();
   if (
-    /\b(staff|senior|sr\.?|principal|lead|tech\s+lead|team\s+lead|manager|director|vp|vice\s+president|head\s+of|architect|distinguished|fellow|partner|chief|cto|cio)\b/i.test(t)
+    /\b(staff|senior|sr\.?|principal|lead|tech\s+lead|team\s+lead|manager|director|vp|vice\s+president|head\s+of|distinguished|fellow|partner|chief|cto|cio)\b/i.test(t) ||
+    /\b(?:enterprise|principal|senior|sr\.?|lead|chief|staff|head)\s+(?:[\w-]+\s+)?architect\b/i.test(t)
   ) {
     if (!/\b(junior|jr\.?|entry[\s-]level|intern|apprentice)\b/i.test(t)) {
       return true;
@@ -462,7 +463,7 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
 
     case 'mid': {
       // 1. Strict Exclusions for Mid Level:
-      // A) Title cannot be senior, staff, lead, principal, manager, architect, Level 3+
+      // A) Title cannot be senior, staff, lead, principal, manager, Level 3+
       if (isSeniorOrStaffTitle(title)) {
         return false;
       }
@@ -470,12 +471,17 @@ const matchesOption = (optionId: string, fullText: string, job: DiscoveredJob): 
       if (/\b(junior|jr\.?|entry|intern|internship|apprentice)\b/i.test(title)) {
         return false;
       }
-      // C) Cannot require 6+, 7+, 8+, 10+ years senior experience
+      // C) Cannot require 6+, 7+, 8+, 10+ years senior experience (unless it also explicitly accepts 2-4 or 3-5 years)
       if (requiresSeniorExperience(fullText)) {
-        return false;
+        const hasMidExpRequirement = /\b([1-4])\+?\s*(?:(?:to|-|–|—)\s*[3-5]\s*)?(?:years?|yrs?)\s+(?:of\s+)?(?:[\w/-]+\s+){0,3}?(?:experience|exp|hands-on|background)\b/i.test(fullText);
+        if (!hasMidExpRequirement) {
+          return false;
+        }
       }
-      // D) High salary ceiling for mid-level: rarely starts at $180k+ base
-      if (job.salary_min && job.salary_min >= 180000 && !/\b(mid|intermediate|ii|2)\b/i.test(title)) {
+      // D) High salary ceiling for mid-level:
+      // Top-tier companies (OpenAI, Stripe, Datadog) pay mid-level Solutions Engineers $180k-$260k base.
+      // Only reject if starting salary is strictly executive level (e.g. >= $285k)
+      if (job.salary_min && job.salary_min >= 285000 && !/\b(mid|intermediate|ii|2)\b/i.test(title)) {
         return false;
       }
 
