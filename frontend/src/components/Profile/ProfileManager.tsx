@@ -9,10 +9,15 @@ import {
   Link2, 
   FileText 
 } from 'lucide-react';
-import { Profile, Skill } from '../../types';
+import { Profile, Skill, Job } from '../../types';
 import { api } from '../../api/client';
+import { SearchProfilesSection } from './SearchProfilesSection';
 
-export const ProfileManager: React.FC = () => {
+interface ProfileManagerProps {
+  onJobsScored?: (jobs: Job[]) => void;
+}
+
+export const ProfileManager: React.FC<ProfileManagerProps> = ({ onJobsScored }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [initialProfile, setInitialProfile] = useState<Profile | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -147,6 +152,9 @@ export const ProfileManager: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Multi-Profile Search Criteria & Scraper Directives */}
+      <SearchProfilesSection onJobsScored={onJobsScored} />
 
       {profile && (
         <form onSubmit={handleSaveProfile} className="space-y-8">

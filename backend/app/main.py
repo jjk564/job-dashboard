@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import jobs, discovery, profile, assistant, analytics
+from .routers import jobs, discovery, profile, assistant, analytics, search_profiles
 
 BOOT_ID = str(int(time.time() * 1000))
 
@@ -34,6 +34,7 @@ app.add_middleware(
 app.include_router(jobs.router)
 app.include_router(discovery.router)
 app.include_router(profile.router)
+app.include_router(search_profiles.router)
 app.include_router(assistant.router)
 app.include_router(analytics.router)
 

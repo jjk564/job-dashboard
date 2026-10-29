@@ -149,6 +149,16 @@ export const JobCard: React.FC<JobCardProps> = ({
             {job.workplace_type}
           </span>
         )}
+
+        {job.role_track && job.role_track !== 'unknown' && (
+          <span
+            className="text-emerald-300 bg-slate-900/60 px-1.5 py-0.5 rounded uppercase text-[10px] tracking-wider border border-slate-700/60 font-mono"
+            title={`Inferred Role Track: ${job.role_track.toUpperCase()}${job.role_level ? ` · Level: ${job.role_level}` : ''}`}
+          >
+            {job.role_track === 'manager' ? 'MGR' : 'IC'}
+            {job.role_level ? ` · ${job.role_level.replace('_', ' ')}` : ''}
+          </span>
+        )}
       </div>
 
       {/* Card Footer: Quick Stage Movers, Archive and External Link */}

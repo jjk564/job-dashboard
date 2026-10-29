@@ -12,6 +12,7 @@ from ..models import Job, ApplicationActivity, TailoredDocument, Profile, Skill
 from ..schemas import JobCreate, JobUpdate, JobResponse, ActivityCreate, ActivityResponse
 from ..services.matcher import analyze_job_fit
 from ..services.expiration_checker import check_job_expiration
+from ..services.role_classifier import classify_role
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 
@@ -72,6 +73,7 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
         fit_score = fit_data["score"]
         fit_breakdown_json = json.dumps(fit_data)
 
+    classified = classify_role(job_in.title, desc)
     job_data = job_in.model_dump()
     job_data["description"] = desc
     job_data["salary_min"] = salary_min
@@ -80,7 +82,10 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     job = Job(
         **job_data,
         fit_score=fit_score,
-        fit_breakdown=fit_breakdown_json
+        fit_breakdown=fit_breakdown_json,
+        role_track=classified["track"],
+        role_level=classified["level"],
+        role_discipline=classified["discipline"],
     )
     db.add(job)
     await db.commit()

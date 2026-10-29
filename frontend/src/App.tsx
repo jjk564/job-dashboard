@@ -10,8 +10,9 @@ import { AddJobModal } from './components/Common/AddJobModal';
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { Job, JobStatus } from './types';
 import { api } from './api/client';
+import type { JobPlatformProps } from './entry';
 
-export const App: React.FC = () => {
+export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   const [activeTab, setActiveTab] = useState<'pipeline' | 'discovery' | 'profile' | 'analytics'>('pipeline');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,8 +166,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="h-screen max-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden">
+    <div
+      data-theme={theme}
+      className="job-platform-container h-screen max-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden"
+    >
       <Navbar
+        appName={appName}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddJob={() => setIsAddJobOpen(true)}
@@ -209,7 +214,7 @@ export const App: React.FC = () => {
 
             {activeTab === 'profile' && (
               <div className="flex-1 overflow-y-auto">
-                <ProfileManager />
+                <ProfileManager onJobsScored={handleJobsRefreshed} />
               </div>
             )}
 

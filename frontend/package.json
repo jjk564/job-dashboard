@@ -3,9 +3,20 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/entry.tsx",
+      "default": "./src/entry.tsx"
+    },
+    "./style.css": "./src/index.css"
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node ../scripts/dev-vault.mjs -- vite",
+    "build": "node scripts/check-theme-tokens.mjs && tsc && vite build",
+    "lint:css": "node scripts/check-theme-tokens.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

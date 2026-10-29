@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Bookmark, 
   Send, 
@@ -13,9 +13,10 @@ import {
   AlertTriangle,
   Archive,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Layers
 } from 'lucide-react';
-import { Job, JobStatus } from '../../types';
+import { Job, JobStatus, SearchProfile } from '../../types';
 import { JobCard } from './JobCard';
 import { api } from '../../api/client';
 
@@ -86,10 +87,53 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [workplaceFilter, setWorkplaceFilter] = useState<string>('all');
+  const [trackFilter, setTrackFilter] = useState<'all' | 'ic' | 'manager'>('all');
   const [minFitScore, setMinFitScore] = useState<number>(0);
   const [hideExpired, setHideExpired] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
+  const [searchProfiles, setSearchProfiles] = useState<SearchProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<number | 'all'>('all');
+
+  useEffect(() => {
+    api.getSearchProfiles()
+      .then((list) => setSearchProfiles(list))
+      .catch(() => {});
+  }, []);
+
+  const handleSelectSearchProfile = async (val: string) => {
+    if (val === 'all') {
+      setActiveProfileId('all');
+      setTrackFilter('all');
+      setWorkplaceFilter('all');
+      return;
+    }
+    const id = Number(val);
+    setActiveProfileId(id);
+    const prof = searchProfiles.find((p) => p.id === id);
+    if (prof) {
+      if (prof.track === 'ic' || prof.track === 'manager') {
+        setTrackFilter(prof.track);
+      } else {
+        setTrackFilter('all');
+      }
+      if (prof.remote_pref && prof.remote_pref !== 'any') {
+        setWorkplaceFilter(prof.remote_pref);
+      } else {
+        setWorkplaceFilter('all');
+      }
+      try {
+        const res = await api.scorePipelineWithProfile(prof.id);
+        if (onJobsRefreshed && res.jobs) {
+          onJobsRefreshed(res.jobs);
+        }
+        setVerifyMessage(`Scored against "${prof.name}"`);
+        setTimeout(() => setVerifyMessage(null), 3500);
+      } catch (err) {
+        console.error('Failed to score pipeline:', err);
+      }
+    }
+  };
 
   // Archive column discrete/collapsed toggle (remembered in localStorage, defaults to hidden/collapsed)
   const [isArchiveExpanded, setIsArchiveExpanded] = useState<boolean>(() => {
@@ -210,14 +254,18 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         workplaceFilter === 'all' ||
         (job.workplace_type && job.workplace_type.toLowerCase() === workplaceFilter.toLowerCase());
 
+      const matchesTrack =
+        trackFilter === 'all' ||
+        (job.role_track && job.role_track.toLowerCase() === trackFilter.toLowerCase());
+
       const matchesScore =
         minFitScore === 0 || (job.fit_score && job.fit_score >= minFitScore);
 
       const matchesExpired = !hideExpired || !job.is_expired;
 
-      return matchesSearch && matchesWorkplace && matchesScore && matchesExpired;
+      return matchesSearch && matchesWorkplace && matchesTrack && matchesScore && matchesExpired;
     });
-  }, [jobs, searchTerm, workplaceFilter, minFitScore, hideExpired]);
+  }, [jobs, searchTerm, workplaceFilter, trackFilter, minFitScore, hideExpired]);
 
   const archiveJobsCount = useMemo(() => {
     return filteredJobs.filter((j) => j.status === 'REJECTED').length;
@@ -282,6 +330,48 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               {verifyMessage}
             </span>
           )}
+
+          {/* Active Search Profile Switcher */}
+          {searchProfiles.length > 0 && (
+            <div className="flex items-center space-x-1.5 bg-slate-800/80 px-2.5 py-1.5 rounded-lg border border-slate-700">
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-slate-300 font-medium">Profile:</span>
+              <select
+                value={activeProfileId}
+                onChange={(e) => handleSelectSearchProfile(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs focus:outline-none"
+                title="Switch active Search Profile to filter & re-score pipeline"
+              >
+                <option value="all">All Profiles</option>
+                {searchProfiles.map((sp) => (
+                  <option key={sp.id} value={sp.id}>
+                    {sp.name} ({sp.track.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Orthogonal Role Track Filter */}
+          <div className="flex items-center space-x-1 bg-slate-800/80 p-1 rounded-lg border border-slate-700" title="Filter by Role Track (IC vs People Manager)">
+            {([
+              { id: 'all', label: 'All Tracks' },
+              { id: 'ic', label: 'IC' },
+              { id: 'manager', label: 'Mgr' },
+            ] as const).map((trk) => (
+              <button
+                key={trk.id}
+                onClick={() => setTrackFilter(trk.id)}
+                className={`px-2 py-1 rounded font-medium transition ${
+                  trackFilter === trk.id
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {trk.label}
+              </button>
+            ))}
+          </div>
 
           {/* Workplace Filter */}
           <div className="flex items-center space-x-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700">

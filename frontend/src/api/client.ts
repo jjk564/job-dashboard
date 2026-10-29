@@ -1,4 +1,4 @@
-import { Job, Profile, Skill, DiscoveredJob, Metrics, AutofillPayload, FitBreakdown } from '../types';
+import { Job, Profile, Skill, DiscoveredJob, Metrics, AutofillPayload, FitBreakdown, SearchProfile } from '../types';
 
 const API_BASE = '/api';
 
@@ -77,7 +77,8 @@ export const api = {
     includeRemote: boolean = true,
     minSalary?: number,
     includeUndisclosedSalary: boolean = true,
-    forceRefresh: boolean = false
+    forceRefresh: boolean = false,
+    track?: string
   ): Promise<DiscoveredJob[]> {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
@@ -90,6 +91,7 @@ export const api = {
     params.append('include_remote', String(includeRemote));
     if (minSalary && minSalary > 0) params.append('min_salary', String(minSalary));
     params.append('include_undisclosed_salary', String(includeUndisclosedSalary));
+    if (track && track !== 'either' && track !== 'all') params.append('track', track);
     if (forceRefresh) params.append('force_refresh', 'true');
 
     const res = await fetch(`${API_BASE}/discovery/search?${params.toString()}`);
@@ -146,6 +148,50 @@ export const api = {
   async deleteSkill(id: number): Promise<void> {
     const res = await fetch(`${API_BASE}/profile/skills/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete skill');
+  },
+
+  // Search Profiles (Multi-Profile per-user search criteria & directives)
+  async getSearchProfiles(): Promise<SearchProfile[]> {
+    const res = await fetch(`${API_BASE}/search-profiles`);
+    if (!res.ok) throw new Error('Failed to fetch search profiles');
+    return res.json();
+  },
+
+  async createSearchProfile(profile: Omit<SearchProfile, 'id' | 'created_at' | 'updated_at'>): Promise<SearchProfile> {
+    const res = await fetch(`${API_BASE}/search-profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    if (!res.ok) throw new Error('Failed to create search profile');
+    return res.json();
+  },
+
+  async updateSearchProfile(id: number, updates: Partial<SearchProfile>): Promise<SearchProfile> {
+    const res = await fetch(`${API_BASE}/search-profiles/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update search profile');
+    return res.json();
+  },
+
+  async deleteSearchProfile(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/search-profiles/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete search profile');
+  },
+
+  async scorePipelineWithProfile(id: number): Promise<{ profile_id: number; profile_name: string; jobs_scored: number; jobs: Job[] }> {
+    const res = await fetch(`${API_BASE}/search-profiles/${id}/score-pipeline`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to score pipeline with profile');
+    return res.json();
+  },
+
+  async getDirectives(): Promise<{ companies: string[]; keywords: string[]; profiles_count: number }> {
+    const res = await fetch(`${API_BASE}/directives`);
+    if (!res.ok) throw new Error('Failed to fetch directives');
+    return res.json();
   },
 
   // Assistant & Copilot

@@ -1,3 +1,11 @@
+/**
+ * TailwindCSS configuration mapped strictly to @wolffm/themes semantic CSS variables.
+ * Zero hardcoded hex/RGB values exist in this file so any host theme package can
+ * dynamically theme the entire application (including Tailwind /opacity modifiers).
+ */
+const withThemeAlpha = (cssVar) =>
+  `color-mix(in srgb, var(${cssVar}) calc(<alpha-value> * 100%), transparent)`;
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -6,16 +14,123 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['var(--font-family)'],
+      },
+      borderRadius: {
+        sm: 'var(--hdk-radius-sm)',
+        DEFAULT: 'var(--hdk-radius)',
+        lg: 'var(--hdk-radius-lg)',
+      },
+      boxShadow: {
+        sm: 'var(--hdk-shadow-sm)',
+        DEFAULT: 'var(--hdk-shadow-md)',
+        md: 'var(--hdk-shadow-md)',
+        lg: 'var(--hdk-shadow-lg)',
+      },
       colors: {
+        theme: {
+          bg: withThemeAlpha('--color-bg'),
+          'bg-alt': withThemeAlpha('--color-bg-alt'),
+          card: withThemeAlpha('--color-bg-card'),
+          hover: withThemeAlpha('--color-bg-hover'),
+          overlay: withThemeAlpha('--color-bg-overlay'),
+          border: withThemeAlpha('--color-border'),
+          'border-light': withThemeAlpha('--color-border-light'),
+          text: withThemeAlpha('--color-text'),
+          'text-secondary': withThemeAlpha('--color-text-secondary'),
+          'text-tertiary': withThemeAlpha('--color-text-tertiary'),
+          primary: withThemeAlpha('--color-primary'),
+          'primary-hover': withThemeAlpha('--color-primary-hover'),
+          'primary-dark': withThemeAlpha('--color-primary-dark'),
+          'primary-bg': withThemeAlpha('--color-primary-bg'),
+          'on-primary': withThemeAlpha('--color-on-primary'),
+          'on-primary-bg': withThemeAlpha('--color-on-primary-bg'),
+          success: withThemeAlpha('--color-success'),
+          'success-bg': withThemeAlpha('--color-success-bg'),
+          'success-dark': withThemeAlpha('--color-success-dark'),
+          'on-success-bg': withThemeAlpha('--color-on-success-bg'),
+          warning: withThemeAlpha('--color-warning'),
+          'warning-bg': withThemeAlpha('--color-warning-bg'),
+          'on-warning-bg': withThemeAlpha('--color-on-warning-bg'),
+          danger: withThemeAlpha('--color-danger'),
+          'danger-bg': withThemeAlpha('--color-danger-bg'),
+          'danger-dark': withThemeAlpha('--color-danger-dark'),
+          'on-danger': withThemeAlpha('--color-on-danger'),
+          'on-danger-bg': withThemeAlpha('--color-on-danger-bg'),
+          neutral: withThemeAlpha('--color-neutral'),
+          'neutral-bg': withThemeAlpha('--color-neutral-bg'),
+        },
         brand: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-        }
-      }
+          50: withThemeAlpha('--color-primary-bg'),
+          100: withThemeAlpha('--color-primary-bg'),
+          400: withThemeAlpha('--color-primary'),
+          500: withThemeAlpha('--color-primary'),
+          600: withThemeAlpha('--color-primary-hover'),
+          700: withThemeAlpha('--color-primary-dark'),
+        },
+        slate: {
+          50: withThemeAlpha('--color-text'),
+          100: withThemeAlpha('--color-text'),
+          200: withThemeAlpha('--color-text'),
+          300: withThemeAlpha('--color-text-secondary'),
+          400: withThemeAlpha('--color-text-secondary'),
+          500: withThemeAlpha('--color-text-tertiary'),
+          600: withThemeAlpha('--color-border'),
+          700: withThemeAlpha('--color-border-light'),
+          800: withThemeAlpha('--color-bg-card'),
+          900: withThemeAlpha('--color-bg'),
+          950: withThemeAlpha('--color-bg-alt'),
+        },
+        emerald: {
+          50: withThemeAlpha('--color-success-bg'),
+          100: withThemeAlpha('--color-on-success-bg'),
+          200: withThemeAlpha('--color-on-success-bg'),
+          300: withThemeAlpha('--color-primary'),
+          400: withThemeAlpha('--color-primary'),
+          500: withThemeAlpha('--color-primary'),
+          600: withThemeAlpha('--color-primary-hover'),
+          700: withThemeAlpha('--color-primary-dark'),
+          800: withThemeAlpha('--color-primary-dark'),
+          900: withThemeAlpha('--color-primary-bg'),
+          950: withThemeAlpha('--color-primary-bg'),
+        },
+        teal: {
+          300: withThemeAlpha('--color-primary'),
+          400: withThemeAlpha('--color-primary'),
+          500: withThemeAlpha('--color-primary-hover'),
+          600: withThemeAlpha('--color-primary-dark'),
+        },
+        amber: {
+          200: withThemeAlpha('--color-on-warning-bg'),
+          300: withThemeAlpha('--color-warning'),
+          400: withThemeAlpha('--color-warning'),
+          500: withThemeAlpha('--color-warning'),
+          600: withThemeAlpha('--color-warning'),
+          800: withThemeAlpha('--color-warning-bg'),
+          900: withThemeAlpha('--color-warning-bg'),
+          950: withThemeAlpha('--color-warning-bg'),
+        },
+        rose: {
+          200: withThemeAlpha('--color-on-danger-bg'),
+          300: withThemeAlpha('--color-danger'),
+          400: withThemeAlpha('--color-danger'),
+          500: withThemeAlpha('--color-danger'),
+          600: withThemeAlpha('--color-danger-dark'),
+          800: withThemeAlpha('--color-danger-bg'),
+          900: withThemeAlpha('--color-danger-bg'),
+          950: withThemeAlpha('--color-danger-bg'),
+        },
+        red: {
+          300: withThemeAlpha('--color-danger'),
+          400: withThemeAlpha('--color-danger'),
+          500: withThemeAlpha('--color-danger'),
+          600: withThemeAlpha('--color-danger-dark'),
+          900: withThemeAlpha('--color-danger-bg'),
+          950: withThemeAlpha('--color-danger-bg'),
+        },
+      },
     },
   },
   plugins: [],
-}
+};

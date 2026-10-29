@@ -50,5 +50,11 @@ async def init_db():
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_at DATETIME"))
         if "expired_reason" not in existing_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN expired_reason VARCHAR(255)"))
+        if "role_track" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN role_track VARCHAR(50)"))
+        if "role_level" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN role_level VARCHAR(50)"))
+        if "role_discipline" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN role_discipline VARCHAR(50)"))
         # Migrate any legacy 'WISHLIST' status jobs to 'TO_APPLY'
         await conn.execute(text("UPDATE jobs SET status = 'TO_APPLY' WHERE status = 'WISHLIST'"))

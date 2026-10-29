@@ -258,4 +258,62 @@ async def test_check_job_expiration_invalid_url():
     assert reason is None
 
 
+def test_orthogonal_role_classifier_and_profile_scoring():
+    from app.services.role_classifier import (
+        classify_role,
+        match_level_score,
+        score_job_for_search_profile,
+    )
+
+    # 1. Head-of-title rule: "Software Engineer, Ads Manager" is IC, not Manager
+    c1 = classify_role("Senior Software Engineer, Ads Manager")
+    assert c1["track"] == "ic"
+    assert c1["level"] == "senior"
+    assert c1["discipline"] == "eng"
+
+    # 2. Engineering Manager is manager track
+    c2 = classify_role("Senior Engineering Manager, Core Platform")
+    assert c2["track"] == "manager"
+    assert c2["level"] == "senior_manager"
+
+    # 3. Technical Program Manager is IC-qualified (not people manager)
+    c3 = classify_role("Senior Technical Program Manager")
+    assert c3["track"] == "ic"
+    assert c3["level"] == "senior"
+
+    # 4. Member of Technical Staff is base IC (not 'staff' rung)
+    c4 = classify_role("Member of Technical Staff")
+    assert c4["track"] == "ic"
+    assert c4["level"] is None
+
+    # 5. Ambiguous 'Engineering Lead' probes description for direct reports
+    c5_ic = classify_role("Engineering Lead", "Design distributed systems and mentor junior engineers.")
+    assert c5_ic["track"] == "ic"
+    c5_mgr = classify_role("Engineering Lead", "Manage a team of 8 engineers with direct reports and performance reviews.")
+    assert c5_mgr["track"] == "manager"
+
+    # 6. Ladder distance scoring
+    assert match_level_score("senior", ["senior"]) == 1.0
+    assert match_level_score("mid", ["senior"]) == 0.7  # 1 rung off
+    assert match_level_score("junior", ["staff"]) == 0.2  # 2+ rungs off
+
+    # 7. Multi-signal profile scoring with synonym/implied skills
+    scored = score_job_for_search_profile(
+        title="Senior Backend Python Engineer",
+        description="Build data processing pipelines with Python, FastAPI, PostgreSQL, and Docker.",
+        company="Stripe",
+        workplace_type="remote",
+        role_track="ic",
+        role_level="senior",
+        profile_keywords=["Python", "Pandas", "FastAPI", "PostgreSQL", "Docker"],
+        profile_levels=["mid", "senior"],
+        profile_remote_pref="remote",
+        profile_companies=["Stripe"],
+    )
+    assert scored["score"] >= 85
+    assert scored["role_track"] == "ic"
+    assert scored["role_level"] == "senior"
+
+
+
 

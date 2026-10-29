@@ -23,6 +23,9 @@ class Job(Base):
     priority = Column(String(20), default="medium")  # low, medium, high
     fit_score = Column(Integer, nullable=True)
     fit_breakdown = Column(Text, nullable=True)  # JSON {matched: [], missing: [], score: int}
+    role_track = Column(String(50), nullable=True)  # ic, manager, unknown
+    role_level = Column(String(50), nullable=True)  # junior, mid, senior, staff, principal, fellow, manager, senior_manager, director, vp, cxo
+    role_discipline = Column(String(50), nullable=True)  # eng, adjacent, unknown
     notes = Column(Text, nullable=True)
     applied_at = Column(DateTime, nullable=True)
     deadline = Column(DateTime, nullable=True)
@@ -45,6 +48,19 @@ class Job(Base):
             except Exception:
                 breakdown = None
 
+        r_track = self.role_track
+        r_level = self.role_level
+        r_disc = self.role_discipline
+        if not r_track:
+            try:
+                from .services.role_classifier import classify_role
+                classified = classify_role(self.title or "", self.description or "")
+                r_track = classified["track"]
+                r_level = classified["level"]
+                r_disc = classified["discipline"]
+            except Exception:
+                r_track = "unknown"
+
         return {
             "id": self.id,
             "title": self.title,
@@ -62,6 +78,9 @@ class Job(Base):
             "priority": self.priority,
             "fit_score": self.fit_score,
             "fit_breakdown": breakdown,
+            "role_track": r_track,
+            "role_level": r_level,
+            "role_discipline": r_disc,
             "notes": self.notes,
             "applied_at": self.applied_at.isoformat() if self.applied_at else None,
             "deadline": self.deadline.isoformat() if self.deadline else None,
@@ -169,3 +188,59 @@ class TailoredDocument(Base):
             "content": self.content,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class SearchProfile(Base):
+    """
+    Per-user customizable job search & scoring profile (hadoku-jobplatform compatible).
+    Isolates preferred search criteria: keywords, target companies, orthogonal role track
+    (ic vs manager), target ladder levels, workplace preference, salary floor, and geo radius.
+    """
+    __tablename__ = "search_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(128), default="default", index=True)
+    name = Column(String(255), nullable=False)
+    is_default = Column(Boolean, default=False)
+    keywords_json = Column(Text, default="[]")  # JSON list[str]
+    target_companies_json = Column(Text, default="[]")  # JSON list[str]
+    track = Column(String(32), default="ic")  # ic, manager, either
+    levels_json = Column(Text, default="[]")  # JSON list[str] e.g. ["mid", "senior", "staff"]
+    remote_pref = Column(String(32), default="any")  # remote, hybrid, onsite, any
+    location = Column(String(255), default="")
+    radius_miles = Column(Integer, default=50)
+    min_salary = Column(Float, nullable=True)
+    include_undisclosed_salary = Column(Boolean, default=True)
+    us_only = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def _parse_json_list(self, raw: str) -> list:
+        if not raw:
+            return []
+        try:
+            val = json.loads(raw)
+            return val if isinstance(val, list) else []
+        except Exception:
+            return []
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id or "default",
+            "name": self.name,
+            "is_default": bool(self.is_default),
+            "keywords": self._parse_json_list(self.keywords_json),
+            "target_companies": self._parse_json_list(self.target_companies_json),
+            "track": self.track or "ic",
+            "levels": self._parse_json_list(self.levels_json),
+            "remote_pref": self.remote_pref or "any",
+            "location": self.location or "",
+            "radius_miles": self.radius_miles if self.radius_miles is not None else 50,
+            "min_salary": self.min_salary,
+            "include_undisclosed_salary": bool(self.include_undisclosed_salary) if self.include_undisclosed_salary is not None else True,
+            "us_only": bool(self.us_only) if self.us_only is not None else True,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+

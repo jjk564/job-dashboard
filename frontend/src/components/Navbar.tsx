@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 interface NavbarProps {
+  appName?: string;
   activeTab: 'pipeline' | 'discovery' | 'profile' | 'analytics';
   setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
@@ -19,6 +20,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
+  appName,
   activeTab,
   setActiveTab,
   onOpenAddJob,
@@ -37,7 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-bold text-lg text-white tracking-tight">JobPulse</span>
+                <span className="font-bold text-lg text-white tracking-tight">{appName || 'JobPulse'}</span>
                 <span className="text-xs bg-emerald-500/10 text-emerald-400 font-medium px-2 py-0.5 rounded-full border border-emerald-500/20">
                   Local Copilot
                 </span>

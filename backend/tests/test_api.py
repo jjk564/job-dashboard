@@ -128,3 +128,78 @@ async def test_job_expiration_check_endpoints():
         assert all_res.json()["checked"] >= 1
         assert all_res.json()["expired_found"] >= 1
 
+
+@pytest.mark.asyncio
+async def test_search_profiles_directives_and_ingest():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Default seeded profiles
+        res = await ac.get("/api/search-profiles")
+        assert res.status_code == 200
+        profiles = res.json()
+        assert len(profiles) >= 2
+        assert any(p["is_default"] for p in profiles)
+
+        # 2. Create custom search profile scoped to X-User-Id
+        create_res = await ac.post(
+            "/api/search-profiles",
+            headers={"X-User-Id": "friend_wolffm"},
+            json={
+                "name": "Staff Platform Engineer (IC)",
+                "is_default": True,
+                "keywords": ["Rust", "Go", "Kubernetes"],
+                "target_companies": ["Cloudflare", "Anthropic"],
+                "track": "ic",
+                "levels": ["staff", "principal"],
+                "remote_pref": "remote",
+                "location": "Seattle, WA",
+                "radius_miles": 25,
+            },
+        )
+        assert create_res.status_code == 200
+        created = create_res.json()
+        assert created["user_id"] == "friend_wolffm"
+        assert created["track"] == "ic"
+        assert "staff" in created["levels"]
+
+        # 3. Check directives pull endpoint (union of companies and keywords)
+        dir_res = await ac.get("/api/directives")
+        assert dir_res.status_code == 200
+        directives = dir_res.json()
+        assert "Cloudflare" in directives["companies"]
+        assert "Rust" in directives["keywords"]
+
+        # 4. Ingest webhook batch from scraper
+        ingest_res = await ac.post(
+            "/api/ingest",
+            json={
+                "source": "greenhouse",
+                "batch_number": 1,
+                "is_final": True,
+                "jobs": [
+                    {
+                        "id": "gh_101",
+                        "title": "Senior Backend Engineer, Core APIs",
+                        "company": "Stripe",
+                        "url": "https://boards.greenhouse.io/stripe/jobs/101",
+                        "location": "Remote, US",
+                        "remote_type": "remote",
+                        "description": "Build scalable services in Python, Go, and SQL.",
+                    }
+                ],
+            },
+        )
+        assert ingest_res.status_code == 200
+        assert ingest_res.json()["inserted"] == 1
+
+        # 5. Re-score pipeline with profile
+        score_res = await ac.post(
+            f"/api/search-profiles/{created['id']}/score-pipeline",
+            headers={"X-User-Id": "friend_wolffm"},
+        )
+        assert score_res.status_code == 200
+        assert score_res.json()["jobs_scored"] >= 1
+        scored_job = score_res.json()["jobs"][0]
+        assert scored_job["role_track"] == "ic"
+        assert scored_job["role_level"] == "senior"
+
+

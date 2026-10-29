@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ..schemas import URLImportRequest, URLImportResponse
 from ..services.job_fetcher import search_aggregated_jobs
 from ..services.job_extractor import extract_job_from_url
+from ..services.role_classifier import classify_role
 
 router = APIRouter(prefix="/api/discovery", tags=["Discovery"])
 
@@ -18,9 +19,10 @@ async def search_jobs(
     us_only: bool = Query(True),
     min_salary: Optional[float] = Query(None),
     include_undisclosed_salary: bool = Query(True),
+    track: Optional[str] = Query(None),
     force_refresh: bool = Query(False),
 ) -> List[Dict[str, Any]]:
-    """Search active listings across public job boards with optional US, salary, and location/radius filtering."""
+    """Search active listings across public job boards with optional US, salary, track, and location/radius filtering."""
     jobs = await search_aggregated_jobs(
         query=query,
         source=source,
@@ -34,7 +36,17 @@ async def search_jobs(
         include_undisclosed_salary=include_undisclosed_salary,
         force_refresh=force_refresh,
     )
-    return jobs
+    enriched = []
+    for j in jobs:
+        classified = classify_role(j.get("title", ""), j.get("description", ""))
+        j_copy = dict(j)
+        j_copy["role_track"] = classified["track"]
+        j_copy["role_level"] = classified["level"]
+        j_copy["role_discipline"] = classified["discipline"]
+        if track and track in ("ic", "manager") and classified["track"] != track:
+            continue
+        enriched.append(j_copy)
+    return enriched
 
 @router.post("/import-url", response_model=URLImportResponse)
 async def import_job_from_url(req: URLImportRequest):

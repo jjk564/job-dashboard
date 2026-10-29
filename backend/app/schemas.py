@@ -91,6 +91,9 @@ class JobUpdate(BaseModel):
     priority: Optional[str] = None
     fit_score: Optional[int] = None
     fit_breakdown: Optional[Dict[str, Any]] = None
+    role_track: Optional[str] = None
+    role_level: Optional[str] = None
+    role_discipline: Optional[str] = None
     notes: Optional[str] = None
     applied_at: Optional[datetime] = None
     deadline: Optional[datetime] = None
@@ -117,6 +120,9 @@ class JobResponse(BaseModel):
     priority: str
     fit_score: Optional[int] = None
     fit_breakdown: Optional[Dict[str, Any]] = None
+    role_track: Optional[str] = None
+    role_level: Optional[str] = None
+    role_discipline: Optional[str] = None
     notes: Optional[str] = None
     applied_at: Optional[str] = None
     deadline: Optional[str] = None
@@ -210,3 +216,78 @@ class AutofillPayloadResponse(BaseModel):
     notice_period: str
     summary: str
     cover_letter_snippet: str
+
+
+# Search Profile Schemas (Multi-Profile per-user search & scoring criteria)
+class SearchProfileBase(BaseModel):
+    name: str
+    is_default: Optional[bool] = False
+    keywords: List[str] = Field(default_factory=list)
+    target_companies: List[str] = Field(default_factory=list)
+    track: str = "ic"  # ic, manager, either
+    levels: List[str] = Field(default_factory=list)  # junior, mid, senior, staff, principal, fellow, manager, senior_manager, director, vp, cxo
+    remote_pref: str = "any"  # remote, hybrid, onsite, any
+    location: Optional[str] = ""
+    radius_miles: Optional[int] = 50
+    min_salary: Optional[float] = None
+    include_undisclosed_salary: Optional[bool] = True
+    us_only: Optional[bool] = True
+
+
+class SearchProfileCreate(SearchProfileBase):
+    pass
+
+
+class SearchProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    is_default: Optional[bool] = None
+    keywords: Optional[List[str]] = None
+    target_companies: Optional[List[str]] = None
+    track: Optional[str] = None
+    levels: Optional[List[str]] = None
+    remote_pref: Optional[str] = None
+    location: Optional[str] = None
+    radius_miles: Optional[int] = None
+    min_salary: Optional[float] = None
+    include_undisclosed_salary: Optional[bool] = None
+    us_only: Optional[bool] = None
+
+
+class SearchProfileResponse(SearchProfileBase):
+    id: int
+    user_id: str = "default"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DirectivesResponse(BaseModel):
+    companies: List[str]
+    keywords: List[str]
+    profiles_count: int
+
+
+class IngestJobItem(BaseModel):
+    id: Optional[str] = None
+    title: str
+    company: str
+    url: Optional[str] = None
+    location: Optional[str] = "Remote"
+    remote_type: Optional[str] = None
+    workplace_type: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    description: Optional[str] = ""
+    source: Optional[str] = None
+    source_site: Optional[str] = None
+
+
+class IngestBatchRequest(BaseModel):
+    jobs: List[IngestJobItem]
+    source: Optional[str] = "scraper"
+    batch_number: Optional[int] = 1
+    is_final: Optional[bool] = True
+    search_term: Optional[str] = None
+
