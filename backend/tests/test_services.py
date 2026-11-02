@@ -315,5 +315,102 @@ def test_orthogonal_role_classifier_and_profile_scoring():
     assert scored["role_level"] == "senior"
 
 
+def test_stealth_headers_and_json_ld_extraction():
+    from bs4 import BeautifulSoup
+    from app.services.job_extractor import (
+        get_stealth_headers,
+        _looks_like_waf_challenge,
+        extract_json_ld_job_posting,
+    )
+
+    headers = get_stealth_headers("https://www.linkedin.com/jobs/view/12345")
+    assert "JobPulse" not in headers["User-Agent"]
+    assert "Candidate Assistant Bot" not in headers["User-Agent"]
+    assert "Referer" in headers
+
+    json_headers = get_stealth_headers("https://api.ashbyhq.com/posting-api/job-board/openai", json_api=True)
+    assert "application/json" in json_headers["Accept"]
+
+    assert _looks_like_waf_challenge("<html><title>Just a moment...</title>cf-browser-verification</html>", 403) is True
+    assert _looks_like_waf_challenge("<html><body><h1>Software Engineer</h1><p>" + ("A" * 800) + "</p></body></html>", 200) is False
+
+    sample_html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Staff Distributed Systems Engineer",
+          "description": "<p>Build resilient multi-region cloud infrastructure using Go, Rust, and Kubernetes for high-throughput workloads.</p>",
+          "hiringOrganization": {
+            "@type": "Organization",
+            "name": "Acme Cloud"
+          },
+          "jobLocation": {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "San Francisco",
+              "addressRegion": "CA",
+              "addressCountry": "US"
+            }
+          },
+          "jobLocationType": "TELECOMMUTE",
+          "baseSalary": {
+            "@type": "MonetaryAmount",
+            "currency": "USD",
+            "value": {
+              "@type": "QuantitativeValue",
+              "minValue": 190000,
+              "maxValue": 240000
+            }
+          }
+        }
+        </script>
+      </head>
+      <body></body>
+    </html>
+    """
+    soup = BeautifulSoup(sample_html, "html.parser")
+    extracted = extract_json_ld_job_posting(soup)
+    assert extracted is not None
+    assert extracted["title"] == "Staff Distributed Systems Engineer"
+    assert extracted["company"] == "Acme Cloud"
+    assert extracted["workplace_type"] == "remote"
+    assert extracted["salary_min"] == 190000.0
+    assert extracted["salary_max"] == 240000.0
+    assert "Kubernetes" in extracted["description"]
+
+
+@pytest.mark.asyncio
+async def test_domain_jitter_and_ashby_hydrated_extraction():
+    from bs4 import BeautifulSoup
+    from app.services.job_extractor import extract_ashby_job
+    from app.services.job_fetcher import _domain_jitter_wait
+
+    # Verify domain jitter wait executes cleanly
+    await _domain_jitter_wait("test.example.com", min_delay=0.01, max_delay=0.02)
+
+    # Verify Ashby hydrated window.__appData fallback
+    ashby_html = """
+    <html>
+      <head><title>Machine Learning Engineer @ Linear</title></head>
+      <body>
+        <script>
+          window.__appData = {"posting":{"title":"Machine Learning Engineer","locationName":"San Francisco, CA","workplaceType":"Remote","descriptionPlain":"Design and deploy production ML models and evaluation pipelines at scale with PyTorch and TypeScript."}};
+        </script>
+      </body>
+    </html>
+    """
+    soup = BeautifulSoup(ashby_html, "html.parser")
+    res = await extract_ashby_job("https://jobs.ashbyhq.com/linear/00000000-0000-0000-0000-000000000000", ashby_html, soup)
+    assert res["title"] == "Machine Learning Engineer"
+    assert res["company"] == "Linear"
+    assert res["workplace_type"] == "remote"
+    assert "PyTorch" in res["description"]
+
+
+
 
 

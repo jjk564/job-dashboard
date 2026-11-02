@@ -3,18 +3,46 @@ import asyncio
 import os
 import re
 import time
+import random
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional
 import httpx
 from bs4 import BeautifulSoup
 from .location_matcher import is_job_in_range, is_job_pure_remote
-from .job_extractor import extract_salary_range
+from .job_extractor import (
+    extract_salary_range,
+    get_stealth_headers,
+    get_configured_proxy,
+    stealth_fetch_text,
+)
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": "JobPulse/1.0 (Mozilla/5.0; Candidate Assistant Bot; +https://github.com/jjk564/job-dashboard)"
-}
+# Use realistic browser header profile instead of bot-identifying User-Agent
+HEADERS = get_stealth_headers()
+
+# Per-domain rate-limiter state & ETag delta cache for anti-bot evasion
+_DOMAIN_LOCKS: Dict[str, asyncio.Lock] = {}
+_DOMAIN_LAST_HIT: Dict[str, float] = {}
+_BOARD_ETAG_CACHE: Dict[str, Dict[str, Any]] = {}
+_LINKEDIN_DELTA_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+async def _domain_jitter_wait(domain: str, min_delay: float = 0.25, max_delay: float = 0.85) -> None:
+    """
+    Spaces outbound requests to the same domain with randomized Poisson-like jitter
+    so traffic never exhibits mechanical fixed-interval cadence.
+    """
+    lock = _DOMAIN_LOCKS.setdefault(domain, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        last = _DOMAIN_LAST_HIT.get(domain, 0.0)
+        target_gap = random.uniform(min_delay, max_delay)
+        wait_for = (last + target_gap) - now
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        _DOMAIN_LAST_HIT[domain] = time.monotonic()
 
 def clean_html(raw_html: str) -> str:
     """Helper to convert HTML strings to clean readable text."""
@@ -1443,14 +1471,165 @@ async def _fetch_jobspy_board_jobs(
         logger.warning(f"Error fetching {site_name} jobs: {e}")
         return []
 
+async def _fetch_linkedin_guest_api(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    radius: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Zero-Auth LinkedIn Guest API Scraper (/jobs-guest/jobs/api/seeMoreJobPostings/search)
+    using curl_cffi Chrome TLS impersonation, randomized per-page jitter, and delta caching.
+    Requires zero login cookies (li_at), eliminating personal account ban risk.
+    """
+    q_lower = (query or "").lower().strip()
+    is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
+    is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
+
+    clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower, flags=re.I).strip()
+    clean_term = re.sub(r"[/,()+-]", " ", clean_term)
+    clean_term = " ".join(clean_term.split()) or "software engineer"
+
+    loc_str = location.strip() if (location and location.strip()) else ("United States" if us_only else "Worldwide")
+    base_url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+
+    params: Dict[str, Any] = {
+        "keywords": clean_term,
+        "location": loc_str,
+        "start": 0,
+    }
+    if is_remote_query:
+        params["f_WT"] = "2"  # LinkedIn Remote workplace code
+    if is_junior_query:
+        params["f_E"] = "1,2,3"  # Internship, Entry level, Associate
+    if radius and location and location.strip():
+        params["distance"] = radius
+
+    results: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    try:
+        from curl_cffi.requests import AsyncSession
+        proxy = get_configured_proxy()
+        headers = get_stealth_headers(base_url, referer="https://www.linkedin.com/jobs/search/")
+        session_kwargs: Dict[str, Any] = {
+            "impersonate": "chrome124",
+            "timeout": 12.0,
+            "headers": headers,
+        }
+        if proxy:
+            session_kwargs["proxies"] = {"http": proxy, "https": proxy}
+
+        async with AsyncSession(**session_kwargs) as session:
+            for start_offset in (0, 25):
+                await _domain_jitter_wait("linkedin.com", min_delay=0.35, max_delay=1.15)
+                page_params = dict(params, start=start_offset)
+                resp = await session.get(base_url, params=page_params, allow_redirects=True)
+                if resp.status_code != 200 or not resp.text.strip():
+                    break
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+                cards = soup.find_all("li") or soup.find_all("div", class_=re.compile(r"base-card", re.I))
+                if not cards:
+                    break
+
+                for card in cards:
+                    urn_div = card.find(attrs={"data-entity-urn": True})
+                    urn = urn_div["data-entity-urn"] if urn_div else ""
+                    job_id_match = re.search(r"jobPosting:(\d+)", urn)
+                    job_id = job_id_match.group(1) if job_id_match else ""
+                    if job_id and job_id in seen_ids:
+                        continue
+
+                    title_el = card.find("h3", class_=re.compile(r"base-search-card__title", re.I)) or card.find("h3")
+                    comp_el = card.find("h4", class_=re.compile(r"base-search-card__subtitle", re.I)) or card.find("h4")
+                    loc_el = card.find("span", class_=re.compile(r"job-search-card__location", re.I))
+                    link_el = card.find("a", class_=re.compile(r"base-card__full-link", re.I)) or card.find("a", href=True)
+                    sal_el = card.find("span", class_=re.compile(r"job-search-card__salary-info", re.I))
+
+                    title = title_el.get_text(strip=True) if title_el else ""
+                    company = comp_el.get_text(strip=True) if comp_el else ""
+                    loc = loc_el.get_text(strip=True) if loc_el else loc_str
+                    href = (link_el["href"].split("?")[0] if link_el and link_el.get("href") else "").strip()
+                    if not title or not href:
+                        continue
+
+                    if job_id:
+                        seen_ids.add(job_id)
+
+                    # Check delta cache so known job IDs reuse previously parsed metadata
+                    if job_id and job_id in _LINKEDIN_DELTA_CACHE:
+                        cached_item = dict(_LINKEDIN_DELTA_CACHE[job_id])
+                        results.append(cached_item)
+                        continue
+
+                    sal_text = sal_el.get_text(strip=True) if sal_el else ""
+                    sal_min, sal_max = extract_salary_range(sal_text) if sal_text else (None, None)
+                    card_remote = is_remote_query or "remote" in loc.lower() or "remote" in title.lower()
+                    tags = ["linkedin", "guest-api", "direct-hire"]
+                    if card_remote:
+                        tags.append("remote")
+
+                    desc = f"{title} ({loc}) at {company}. Matched search criteria: {clean_term}."
+                    item = {
+                        "title": title,
+                        "company": company or "LinkedIn Employer",
+                        "location": loc,
+                        "workplace_type": "remote" if card_remote else "hybrid",
+                        "url": href,
+                        "salary_min": sal_min,
+                        "salary_max": sal_max,
+                        "salary_currency": "USD",
+                        "tags": tags,
+                        "description": desc,
+                        "source": "linkedin",
+                    }
+                    if job_id:
+                        _LINKEDIN_DELTA_CACHE[job_id] = item
+                    results.append(item)
+    except Exception as e:
+        logger.debug(f"LinkedIn Guest API scraper error: {e}")
+
+    return results
+
+
 async def fetch_linkedin_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
     radius: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Fetch live US listings from LinkedIn via JobSpy."""
-    return await _fetch_jobspy_board_jobs("linkedin", query=query, us_only=us_only, location=location, radius=radius)
+    """
+    Fetch live US listings from LinkedIn using the zero-auth TLS-impersonated Guest API
+    with JobSpy fallback, deduplicated and filtered for US & query eligibility.
+    """
+    guest_task = _fetch_linkedin_guest_api(query=query, us_only=us_only, location=location, radius=radius)
+    jobspy_task = _fetch_jobspy_board_jobs("linkedin", query=query, us_only=us_only, location=location, radius=radius)
+    guest_jobs, jobspy_jobs = await asyncio.gather(guest_task, jobspy_task, return_exceptions=True)
+
+    combined: List[Dict[str, Any]] = []
+    if isinstance(guest_jobs, list):
+        combined.extend(guest_jobs)
+    if isinstance(jobspy_jobs, list):
+        combined.extend(jobspy_jobs)
+
+    filtered = []
+    seen = set()
+    for j in combined:
+        key = f"{j['title'].lower().strip()}|{j['company'].lower().strip()}"
+        if key in seen:
+            continue
+        if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+            continue
+        if not matches_query(
+            query, j["title"], j["company"], j.get("tags", []), j["description"],
+            location=j["location"], workplace_type=j["workplace_type"],
+            salary_min=j.get("salary_min"), salary_max=j.get("salary_max")
+        ):
+            continue
+        seen.add(key)
+        filtered.append(j)
+    return filtered
 
 async def fetch_glassdoor_jobs(
     query: Optional[str] = None,
@@ -1723,11 +1902,32 @@ LEVER_COMPANIES = [
 
 _COMPANY_BOARDS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "jobs": []}
 
-async def _fetch_single_greenhouse_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+async def _fetch_single_greenhouse_board(
+    client: httpx.AsyncClient,
+    slug: str,
+    company_name: str,
+    sem: Optional[asyncio.Semaphore] = None,
+) -> List[Dict[str, Any]]:
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+    cache_key = f"gh:{slug}"
+    cached = _BOARD_ETAG_CACHE.get(cache_key)
     out = []
     try:
-        resp = await client.get(url)
+        if sem:
+            async with sem:
+                await asyncio.sleep(random.uniform(0.04, 0.20))
+                req_headers = {}
+                if cached and cached.get("etag"):
+                    req_headers["If-None-Match"] = cached["etag"]
+                if cached and cached.get("last_modified"):
+                    req_headers["If-Modified-Since"] = cached["last_modified"]
+                resp = await client.get(url, headers=req_headers)
+        else:
+            resp = await client.get(url)
+
+        if resp.status_code == 304 and cached:
+            return cached.get("jobs", [])
+
         if resp.status_code == 200:
             for j in resp.json().get("jobs", []):
                 title = (j.get("title") or "").strip()
@@ -1754,15 +1954,42 @@ async def _fetch_single_greenhouse_board(client: httpx.AsyncClient, slug: str, c
                     "description": desc,
                     "source": "company_boards",
                 })
+            _BOARD_ETAG_CACHE[cache_key] = {
+                "etag": resp.headers.get("ETag"),
+                "last_modified": resp.headers.get("Last-Modified"),
+                "jobs": out,
+                "ts": time.time(),
+            }
     except Exception as e:
         logger.debug(f"Greenhouse board {slug} error: {e}")
+        if cached and cached.get("jobs"):
+            return cached["jobs"]
     return out
 
-async def _fetch_single_ashby_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+async def _fetch_single_ashby_board(
+    client: httpx.AsyncClient,
+    slug: str,
+    company_name: str,
+    sem: Optional[asyncio.Semaphore] = None,
+) -> List[Dict[str, Any]]:
     url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
+    cache_key = f"ashby:{slug}"
+    cached = _BOARD_ETAG_CACHE.get(cache_key)
     out = []
     try:
-        resp = await client.get(url)
+        if sem:
+            async with sem:
+                await asyncio.sleep(random.uniform(0.05, 0.25))
+                req_headers = {}
+                if cached and cached.get("etag"):
+                    req_headers["If-None-Match"] = cached["etag"]
+                resp = await client.get(url, headers=req_headers)
+        else:
+            resp = await client.get(url)
+
+        if resp.status_code == 304 and cached:
+            return cached.get("jobs", [])
+
         if resp.status_code == 200:
             for j in resp.json().get("jobs", []):
                 if not j.get("isListed", True):
@@ -1809,15 +2036,42 @@ async def _fetch_single_ashby_board(client: httpx.AsyncClient, slug: str, compan
                     "description": desc,
                     "source": "company_boards",
                 })
+            _BOARD_ETAG_CACHE[cache_key] = {
+                "etag": resp.headers.get("ETag"),
+                "last_modified": resp.headers.get("Last-Modified"),
+                "jobs": out,
+                "ts": time.time(),
+            }
     except Exception as e:
         logger.debug(f"Ashby board {slug} error: {e}")
+        if cached and cached.get("jobs"):
+            return cached["jobs"]
     return out
 
-async def _fetch_single_lever_board(client: httpx.AsyncClient, slug: str, company_name: str) -> List[Dict[str, Any]]:
+async def _fetch_single_lever_board(
+    client: httpx.AsyncClient,
+    slug: str,
+    company_name: str,
+    sem: Optional[asyncio.Semaphore] = None,
+) -> List[Dict[str, Any]]:
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    cache_key = f"lever:{slug}"
+    cached = _BOARD_ETAG_CACHE.get(cache_key)
     out = []
     try:
-        resp = await client.get(url)
+        if sem:
+            async with sem:
+                await asyncio.sleep(random.uniform(0.05, 0.22))
+                req_headers = {}
+                if cached and cached.get("etag"):
+                    req_headers["If-None-Match"] = cached["etag"]
+                resp = await client.get(url, headers=req_headers)
+        else:
+            resp = await client.get(url)
+
+        if resp.status_code == 304 and cached:
+            return cached.get("jobs", [])
+
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, list):
@@ -1850,8 +2104,16 @@ async def _fetch_single_lever_board(client: httpx.AsyncClient, slug: str, compan
                         "description": desc,
                         "source": "company_boards",
                     })
+                _BOARD_ETAG_CACHE[cache_key] = {
+                    "etag": resp.headers.get("ETag"),
+                    "last_modified": resp.headers.get("Last-Modified"),
+                    "jobs": out,
+                    "ts": time.time(),
+                }
     except Exception as e:
         logger.debug(f"Lever board {slug} error: {e}")
+        if cached and cached.get("jobs"):
+            return cached["jobs"]
     return out
 
 async def fetch_company_boards_jobs(
@@ -1860,18 +2122,18 @@ async def fetch_company_boards_jobs(
     location: Optional[str] = None,
     include_remote: bool = True
 ) -> List[Dict[str, Any]]:
-    """Fetch jobs directly from 25+ top tech companies' Greenhouse, Ashby, and Lever ATS boards."""
-    import time
+    """Fetch jobs directly from 50+ top tech companies' Greenhouse, Ashby, and Lever ATS boards with bounded concurrency, micro-jitter, and conditional ETag caching."""
     now = time.time()
-    headers = {"Accept-Encoding": "gzip, deflate", "User-Agent": HEADERS["User-Agent"]}
+    headers = get_stealth_headers(json_api=True)
 
     try:
         if now - _COMPANY_BOARDS_CACHE["timestamp"] > 300 or not _COMPANY_BOARDS_CACHE["jobs"]:
+            sem = asyncio.Semaphore(8)
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
                 board_tasks = (
-                    [_fetch_single_greenhouse_board(client, s, n) for s, n in GREENHOUSE_COMPANIES]
-                    + [_fetch_single_ashby_board(client, s, n) for s, n in ASHBY_COMPANIES]
-                    + [_fetch_single_lever_board(client, s, n) for s, n in LEVER_COMPANIES]
+                    [_fetch_single_greenhouse_board(client, s, n, sem=sem) for s, n in GREENHOUSE_COMPANIES]
+                    + [_fetch_single_ashby_board(client, s, n, sem=sem) for s, n in ASHBY_COMPANIES]
+                    + [_fetch_single_lever_board(client, s, n, sem=sem) for s, n in LEVER_COMPANIES]
                 )
                 board_results = await asyncio.gather(*board_tasks, return_exceptions=True)
                 all_board_jobs = []
