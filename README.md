@@ -70,11 +70,13 @@ grant; you have grants for `jobplatform-service-key` and `resume-bot-service-key
 ```bash
 npx @hadoku/dev-vault@latest login
 ```
-1. It prints a code and a `hadoku.me/account/device` link. Open it signed in
-   with your passkey.
-2. The first time, scan the QR code into an authenticator app.
-3. Pick `jobplatform-service-key`, then approve with a passkey tap and a code
-   from the app.
+1. It prints a code and a `hadoku.me/account/device` link, valid for 24 hours.
+   Leave the command running and open the link, signed in to hadoku.me.
+2. The first time, set up your authenticator: **Set up** asks for your passkey,
+   then shows a QR code. Scan it into an authenticator app (Google
+   Authenticator, 1Password, …) and confirm with the 6-digit code it shows.
+3. Pick `jobplatform-service-key`, enter a fresh code from the app and press
+   **Approve** (your passkey again). The command finishes on its own.
 
 The command writes `.devvault.local.json` (your key, mode 600) in the checkout;
 it is gitignored and must stay that way. The credential lasts 7 days; run
@@ -87,6 +89,8 @@ run the command through dev-vault from the repo root:
 npx @hadoku/dev-vault@latest -- python start.py
 npx @hadoku/dev-vault@latest --check   # diagnoses the mapping, broker and access
 ```
+`--check` also warns about "ACL drift": items the identity may read that
+`.devvault.json` does not map. That is expected and needs nothing from you.
 Nothing is mapped today: the code's only env reads are `ADZUNA_APP_ID`,
 `ADZUNA_APP_KEY`, `SCRAPER_PROXY_POOL` and `SCRAPER_PROXY_URL`, and none of
 them are in the vault. To add one, ask the operator to store it and grant it to
@@ -95,8 +99,16 @@ them are in the vault. To add one, ask the operator to store it and grant it to
 **Calling hadoku.me directly.** The credential authenticates as
 `jobplatform-service-key` (service tier) when sent as the `X-User-Key` header to
 `https://hadoku.me/...`, e.g. the jobplatform API at
-`https://hadoku.me/jobplatform/api/*`. Treat it like a password: never commit
-it, log it, or paste it anywhere.
+`https://hadoku.me/jobplatform/api/*`:
+```bash
+K=$(node -p "require('./.devvault.local.json').key")
+curl -H "X-User-Key: $K" "https://hadoku.me/jobplatform/api/jobs?limit=5"
+```
+It acts as that service identity, **not as you**: its profiles and job states
+are the identity's own, not yours. Your own jobs, profiles and statuses come
+through your signed-in browser session, which is what the dashboard uses. Use
+the credential for scripts and server-side calls. Treat it like a password:
+never commit it, log it, or paste it anywhere.
 
 Never map the `CLOUDFLARE_*` items for local dev: they deploy workers and push
 every worker's secrets. `@wolffm/*` packages need no token outside the fleet;
