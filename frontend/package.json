@@ -14,7 +14,7 @@
     "./style.css": "./src/index.css"
   },
   "scripts": {
-    "dev": "node ../scripts/dev-vault.mjs -- vite",
+    "dev": "vite",
     "build": "node scripts/check-theme-tokens.mjs && tsc && vite build",
     "lint:css": "node scripts/check-theme-tokens.mjs",
     "preview": "vite preview"

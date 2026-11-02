@@ -33,6 +33,9 @@ venv/
 .env.*
 !.env.example
 
+# Your own hadoku vault credential (written by `npx @hadoku/dev-vault login`)
+.devvault.local.json
+
 # Node / Frontend
 node_modules/
 frontend/dist/

@@ -60,6 +60,49 @@ python start.py
 ```
 This automatically boots the FastAPI backend (`http://127.0.0.1:8000`) and the Vite React frontend (`http://localhost:5173`) and opens the dashboard in your default browser.
 
+### 3. Hadoku vault (secrets without `.env` files)
+
+Secrets come from the hadoku vault at run time and live only in the process
+they are handed to. You need a hadoku.me account at friend tier with a service
+grant; you have grants for `jobplatform-service-key` and `resume-bot-service-key`.
+
+**Get your credential** (once a week), from the repo root:
+```bash
+npx @hadoku/dev-vault@latest login
+```
+1. It prints a code and a `hadoku.me/account/device` link. Open it signed in
+   with your passkey.
+2. The first time, scan the QR code into an authenticator app.
+3. Pick `jobplatform-service-key`, then approve with a passkey tap and a code
+   from the app.
+
+The command writes `.devvault.local.json` (your key, mode 600) in the checkout;
+it is gitignored and must stay that way. The credential lasts 7 days; run
+`login` again when it expires.
+
+**Use it.** `.devvault.json` maps env var names to vault item names (names
+only, never values). Add an entry only when the code reads that variable, then
+run the command through dev-vault from the repo root:
+```bash
+npx @hadoku/dev-vault@latest -- python start.py
+npx @hadoku/dev-vault@latest --check   # diagnoses the mapping, broker and access
+```
+Nothing is mapped today: the code's only env reads are `ADZUNA_APP_ID`,
+`ADZUNA_APP_KEY`, `SCRAPER_PROXY_POOL` and `SCRAPER_PROXY_URL`, and none of
+them are in the vault. To add one, ask the operator to store it and grant it to
+`jobplatform-service-key`.
+
+**Calling hadoku.me directly.** The credential authenticates as
+`jobplatform-service-key` (service tier) when sent as the `X-User-Key` header to
+`https://hadoku.me/...`, e.g. the jobplatform API at
+`https://hadoku.me/jobplatform/api/*`. Treat it like a password: never commit
+it, log it, or paste it anywhere.
+
+Never map the `CLOUDFLARE_*` items for local dev: they deploy workers and push
+every worker's secrets. `@wolffm/*` packages need no token outside the fleet;
+install them from the public npm mirror by alias, e.g.
+`"@wolffm/themes": "npm:@hadoku/themes@<version>"`.
+
 ---
 
 ## 📁 Project Structure
