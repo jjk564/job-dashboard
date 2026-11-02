@@ -12,8 +12,60 @@ import { Job, JobStatus } from './types';
 import { api } from './api/client';
 import type { JobPlatformProps } from './entry';
 
+type AppTab = 'pipeline' | 'discovery' | 'profile' | 'analytics';
+const VALID_TABS: AppTab[] = ['pipeline', 'discovery', 'profile', 'analytics'];
+
+function getInitialTab(): AppTab {
+  if (typeof window !== 'undefined') {
+    const hash = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase() as AppTab;
+    if (VALID_TABS.includes(hash)) {
+      return hash;
+    }
+    const saved = localStorage.getItem('job_pulse_active_tab') as AppTab | null;
+    if (saved && VALID_TABS.includes(saved)) {
+      return saved;
+    }
+  }
+  return 'pipeline';
+}
+
 export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'discovery' | 'profile' | 'analytics'>('pipeline');
+  const [activeTab, setActiveTabState] = useState<AppTab>(getInitialTab);
+
+  const setActiveTab = (tab: AppTab) => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('job_pulse_active_tab', tab);
+      if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
+        window.history.replaceState(null, '', `#${tab}`);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('job_pulse_active_tab', activeTab);
+      if (typeof window !== 'undefined' && window.location.hash !== `#${activeTab}`) {
+        window.history.replaceState(null, '', `#${activeTab}`);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase() as AppTab;
+      if (VALID_TABS.includes(hash)) {
+        setActiveTabState(hash);
+        localStorage.setItem('job_pulse_active_tab', hash);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingJobIds, setUpdatingJobIds] = useState<Set<number>>(new Set());
@@ -201,7 +253,7 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
               />
             )}
 
-            {activeTab === 'discovery' && (
+            <div className={activeTab === 'discovery' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
               <JobDiscovery
                 pipelineJobs={jobs}
                 onJobAdded={handleJobAdded}
@@ -210,7 +262,7 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
                   setIsSettingsOpen(true);
                 }}
               />
-            )}
+            </div>
 
             {activeTab === 'profile' && (
               <div className="flex-1 overflow-y-auto">

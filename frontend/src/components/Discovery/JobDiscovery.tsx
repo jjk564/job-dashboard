@@ -967,16 +967,52 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     });
   }, [pipelineJobs, internalPipelineJobs]);
 
-  const [query, setQuery] = useState('');
-  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
-  const [selectedSource, setSelectedSource] = useState('all');
-  const [activeTrack, setActiveTrack] = useState<'all' | 'software' | 'it_admin'>('all');
-  const [usOnly, setUsOnly] = useState(true);
+  const [query, setQuery] = useState<string>(() => {
+    return localStorage.getItem('job_pulse_discover_query') || '';
+  });
+  const [selectedFilters, setSelectedFilters] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('job_pulse_discover_filters');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedSource, setSelectedSource] = useState<string>(() => {
+    return localStorage.getItem('job_pulse_discover_source') || 'all';
+  });
+  const [activeTrack, setActiveTrack] = useState<'all' | 'software' | 'it_admin'>(() => {
+    const saved = localStorage.getItem('job_pulse_discover_track');
+    return saved === 'software' || saved === 'it_admin' ? saved : 'all';
+  });
+  const [usOnly, setUsOnly] = useState<boolean>(() => {
+    const saved = localStorage.getItem('job_pulse_discover_us_only');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
+  const [jobs, setJobs] = useState<DiscoveredJob[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('job_pulse_discover_cached_jobs');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('job_pulse_discover_query', query);
+      localStorage.setItem('job_pulse_discover_filters', JSON.stringify(selectedFilters));
+      localStorage.setItem('job_pulse_discover_source', selectedSource);
+      localStorage.setItem('job_pulse_discover_track', activeTrack);
+      localStorage.setItem('job_pulse_discover_us_only', String(usOnly));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [query, selectedFilters, selectedSource, activeTrack, usOnly]);
 
   // Location & Radius Filtering State (persisted in localStorage)
   const [searchLocation, setSearchLocation] = useState<string>(() => {
@@ -1142,7 +1178,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   ) => {
     const currentFetchId = ++fetchSequenceRef.current;
     lastFetchedQueryRef.current = searchQuery.trim();
-    setLoading(true);
+    if (jobs.length === 0 || forceRefresh) {
+      setLoading(true);
+    }
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
       const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
@@ -1164,6 +1202,11 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       );
       if (currentFetchId === fetchSequenceRef.current) {
         setJobs(results);
+        try {
+          sessionStorage.setItem('job_pulse_discover_cached_jobs', JSON.stringify(results));
+        } catch {
+          // Ignore sessionStorage quota errors
+        }
       }
     } catch (err) {
       if (currentFetchId === fetchSequenceRef.current) {
@@ -1182,8 +1225,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const radNum = savedRad !== null ? Number(savedRad) : 25;
     const savedIncRemote = localStorage.getItem('job_pulse_include_remote');
     const incRemoteBool = savedIncRemote !== null ? savedIncRemote === 'true' : true;
+    const initialEffectiveQuery = getEffectiveSearchQuery(query, selectedFilters, activeTrack);
 
-    fetchJobs('developer', 'all', true, savedLoc, radNum, incRemoteBool, minSalary, includeUnlistedSalary);
+    fetchJobs(initialEffectiveQuery, selectedSource, usOnly, savedLoc, radNum, incRemoteBool, minSalary, includeUnlistedSalary);
 
     // Load profile location & compensation for quick suggestions
     api.getProfile().then((prof) => {
