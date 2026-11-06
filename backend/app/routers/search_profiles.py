@@ -414,3 +414,160 @@ async def ingest_scraped_jobs(
         "batch_number": payload.batch_number,
         "is_final": payload.is_final,
     }
+
+
+@router.get("/api/scraper/status")
+async def get_hadoku_scraper_status():
+    """
+    Returns connectivity and vault key status for Hadoku Resume API,
+    Hadoku JobPlatform API, and Hadoku Scraper Workers (`scraper.hadoku.me`).
+    """
+    from ..services.hadoku_client import check_hadoku_services_health
+    return await check_hadoku_services_health()
+
+
+@router.post("/api/scraper/match-companies")
+async def match_companies_via_scraper(payload: dict):
+    """
+    Proxies POST https://scraper.hadoku.me/api/v1/jobboards/match
+    Resolves typed company names (e.g., ["Stripe", "Linear"]) to their active ATS board
+    (Greenhouse, Ashby, Lever) with open job count and sample titles.
+    """
+    from ..services.hadoku_client import match_companies_on_scraper
+    names = payload.get("names") or []
+    providers = payload.get("providers")
+    if isinstance(names, str):
+        names = [n.strip() for n in names.split(",") if n.strip()]
+    results = await match_companies_on_scraper(names=names, providers=providers)
+    return {"results": results}
+
+
+@router.post("/api/scraper/probe-slugs")
+async def probe_slugs_via_scraper(payload: dict):
+    """
+    Proxies POST https://scraper.hadoku.me/api/v1/jobboards/probe
+    Probes explicit ATS slugs across Greenhouse, Ashby, and Lever.
+    """
+    from ..services.hadoku_client import probe_slugs_on_scraper
+    slugs = payload.get("slugs") or []
+    providers = payload.get("providers")
+    if isinstance(slugs, str):
+        slugs = [s.strip() for s in slugs.split(",") if s.strip()]
+    results = await probe_slugs_on_scraper(slugs=slugs, providers=providers)
+    return {"results": results}
+
+
+@router.get("/api/scraper/targets")
+async def get_scraper_targets(active_only: bool = True, ats: Optional[str] = None):
+    """Lists active company ATS targets registered on scraper.hadoku.me."""
+    from ..services.hadoku_client import list_scraper_targets
+    return await list_scraper_targets(active_only=active_only, ats=ats)
+
+
+@router.post("/api/scraper/trigger")
+async def trigger_hadoku_scraper_search():
+    """Triggers a scrape across all active registry targets on scraper.hadoku.me."""
+    from ..services.hadoku_client import trigger_scraper_run
+    return await trigger_scraper_run()
+
+
+@router.post("/api/scraper/sync-corpus")
+async def sync_hadoku_corpus_to_pipeline(
+    limit: int = 40,
+    min_score: int = 65,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Pulls recent scraped postings from https://hadoku.me/jobplatform/api/jobs,
+    scores them against the active SearchProfile, and imports high-fit matches
+    into the local pipeline.
+    """
+    from ..services.hadoku_client import fetch_hadoku_jobplatform_jobs
+    from ..schemas import IngestJobItem
+
+    raw_jobs = await fetch_hadoku_jobplatform_jobs(limit=min(max(10, limit), 100), sort="date")
+    if not raw_jobs:
+        return {"fetched": 0, "inserted": 0, "skipped": 0}
+
+    profiles = await ensure_seed_search_profiles(db, "default")
+    default_sp = next((p for p in profiles if p.is_default), profiles[0]).to_dict()
+
+    p_res = await db.execute(select(Profile).limit(1))
+    cand_profile = p_res.scalars().first()
+    s_res = await db.execute(select(Skill))
+    cand_skills = [s.name for s in s_res.scalars().all()]
+    resume_text = f"{cand_profile.summary} {cand_profile.master_resume_text}" if cand_profile else ""
+
+    existing_res = await db.execute(select(Job))
+    existing_jobs = list(existing_res.scalars().all())
+    existing_urls = {j.url.strip().lower() for j in existing_jobs if j.url}
+
+    inserted = 0
+    skipped = 0
+
+    for item in raw_jobs:
+        url_clean = (item.get("url") or "").strip()
+        if not url_clean or url_clean.lower() in existing_urls:
+            skipped += 1
+            continue
+
+        title = (item.get("title") or "").strip()
+        company = (item.get("company") or "").strip()
+        if not title or not company:
+            skipped += 1
+            continue
+
+        wp = (item.get("workplace_type") or "remote").lower()
+        if wp not in ("remote", "hybrid", "onsite"):
+            wp = "remote"
+
+        classified = classify_role(title, item.get("description") or "")
+        scored = score_job_for_search_profile(
+            title=title,
+            description=item.get("description") or f"{title} at {company}",
+            company=company,
+            workplace_type=wp,
+            role_track=classified["track"],
+            role_level=classified["level"],
+            profile_keywords=default_sp["keywords"],
+            profile_levels=default_sp["levels"],
+            profile_remote_pref=default_sp["remote_pref"],
+            profile_companies=default_sp["target_companies"],
+            candidate_skills=cand_skills,
+            master_resume_text=resume_text,
+        )
+
+        if scored["score"] < min_score:
+            skipped += 1
+            continue
+
+        new_job = Job(
+            title=title,
+            company=company,
+            location=item.get("location") or "Remote",
+            workplace_type=wp,
+            url=url_clean,
+            salary_min=item.get("salary_min"),
+            salary_max=item.get("salary_max"),
+            description=item.get("description") or f"{title} at {company} (via Hadoku Scraper - {item.get('source_site', 'ats')})",
+            source=f"hadoku:{item.get('ats') or item.get('source_site') or 'scraper'}",
+            status="TO_APPLY",
+            priority="high" if scored["score"] >= 80 else "medium",
+            fit_score=scored["score"],
+            fit_breakdown=json.dumps(scored),
+            role_track=classified["track"],
+            role_level=classified["level"],
+            role_discipline=classified["discipline"],
+        )
+        db.add(new_job)
+        existing_urls.add(url_clean.lower())
+        inserted += 1
+
+    await db.commit()
+    return {
+        "fetched": len(raw_jobs),
+        "inserted": inserted,
+        "skipped": skipped,
+        "profile_used": default_sp["name"],
+    }
+

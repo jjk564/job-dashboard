@@ -272,6 +272,7 @@ const ALL_FILTER_OPTIONS: FilterOption[] = FILTER_GROUPS.flatMap((g) => g.option
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
+  { id: 'hadoku', label: 'Hadoku Scraper (200+ ATS Boards)' },
   { id: 'bigtech', label: 'Big Tech (Google, MSFT, AMZN...)' },
   { id: 'company_boards', label: 'Top Tech ATS (OpenAI, Stripe...)' },
   { id: 'simplify', label: 'SimplifyJobs (Entry-Level)' },
@@ -1656,6 +1657,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
   const getSourceBadge = (source: string) => {
     switch (source.toLowerCase()) {
+      case 'hadoku':
+        return 'bg-emerald-950/70 text-emerald-300 border-emerald-500/60';
       case 'bigtech':
         return 'bg-amber-950/70 text-amber-300 border-amber-700/60';
       case 'company_boards':

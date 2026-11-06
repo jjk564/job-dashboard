@@ -2534,6 +2534,96 @@ async def fetch_bigtech_jobs(
         return []
 
 
+# 15. Hadoku Scraper Corpus (https://hadoku.me/jobplatform/api/jobs fed by scraper.hadoku.me)
+_HADOKU_CORPUS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "jobs": []}
+
+async def fetch_hadoku_scraper_jobs(
+    query: Optional[str] = None,
+    us_only: bool = True,
+    location: Optional[str] = None,
+    include_remote: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Pulls scraped postings from the Hadoku JobPlatform D1 corpus (populated nightly
+    and on-demand by hadoku-scrape across 200+ Greenhouse, Ashby, Lever, RemoteOK,
+    Remotive, and Muse targets).
+    """
+    from .hadoku_client import fetch_hadoku_jobplatform_jobs, get_hadoku_user_key
+
+    now = time.time()
+    try:
+        if now - _HADOKU_CORPUS_CACHE["timestamp"] > 300 or not _HADOKU_CORPUS_CACHE["jobs"]:
+            if not get_hadoku_user_key():
+                return []
+            page1, page2 = await asyncio.gather(
+                fetch_hadoku_jobplatform_jobs(limit=100, page=1, sort="date"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=2, sort="date"),
+                return_exceptions=True,
+            )
+            raw_list = []
+            if isinstance(page1, list):
+                raw_list.extend(page1)
+            if isinstance(page2, list):
+                raw_list.extend(page2)
+
+            normalized = []
+            for item in raw_list:
+                title = (item.get("title") or "").strip()
+                company = (item.get("company") or "").strip()
+                apply_url = (item.get("url") or item.get("application_url") or "").strip()
+                if not title or not company or not apply_url:
+                    continue
+                loc = (item.get("location") or "United States").strip()
+                wp_raw = (item.get("workplace_type") or "").lower().strip()
+                is_rem = wp_raw == "remote" or "remote" in loc.lower() or "remote" in title.lower()
+                wp = "remote" if is_rem else ("onsite" if wp_raw in ("onsite", "on_site") else "hybrid")
+                ats_tag = (item.get("ats") or item.get("source_site") or "hadoku").lower()
+                slug_tag = (item.get("slug") or "").lower()
+                role_level = (item.get("role_level") or "").lower()
+                tags = [t for t in ["hadoku", ats_tag, slug_tag, role_level, "remote" if is_rem else ""] if t]
+                desc = (
+                    item.get("description")
+                    or f"{title} at {company} ({loc}). Scraped via Hadoku ({ats_tag}{':' + slug_tag if slug_tag else ''})."
+                )
+                normalized.append({
+                    "title": title,
+                    "company": company,
+                    "location": loc,
+                    "workplace_type": wp,
+                    "url": apply_url,
+                    "salary_min": float(item["salary_min"]) if item.get("salary_min") else None,
+                    "salary_max": float(item["salary_max"]) if item.get("salary_max") else None,
+                    "salary_currency": "USD",
+                    "tags": tags[:6],
+                    "description": desc[:4000],
+                    "source": "hadoku",
+                })
+            if normalized:
+                _HADOKU_CORPUS_CACHE["jobs"] = normalized
+                _HADOKU_CORPUS_CACHE["timestamp"] = now
+
+        results = []
+        for j in _HADOKU_CORPUS_CACHE["jobs"]:
+            if us_only and not is_us_eligible(location=j["location"], title=j["title"], text=j["description"]):
+                continue
+            is_rem = j["workplace_type"] == "remote" or "remote" in j["location"].lower()
+            if not _matches_target_location(j["location"], location, is_rem, include_remote):
+                continue
+            if not matches_query(
+                query, j["title"], j["company"], j["tags"], j["description"],
+                location=j["location"], workplace_type=j["workplace_type"],
+                salary_min=j.get("salary_min"), salary_max=j.get("salary_max"),
+            ):
+                continue
+            results.append(j)
+            if len(results) >= 150:
+                break
+        return results
+    except Exception as e:
+        logger.debug(f"Hadoku scraper corpus fetch error: {e}")
+        return []
+
+
 # Aggregated Search with Source Filtering, US-Only, and Location Radius Support
 _SEARCH_CACHE: Dict[str, Dict[str, Any]] = {}
 _SEARCH_CACHE_TTL_SECONDS = 300  # 5 minutes TTL
@@ -2565,6 +2655,8 @@ async def search_aggregated_jobs(
     tasks = []
     source_lower = (source or "all").lower()
 
+    if source_lower in ("all", "hadoku"):
+        tasks.append(fetch_hadoku_scraper_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "bigtech"):
         tasks.append(fetch_bigtech_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "company_boards"):

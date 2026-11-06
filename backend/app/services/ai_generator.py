@@ -82,6 +82,47 @@ Best regards,
 {candidate_email}
 """
 
+    elif doc_type == "tailored_resume":
+        from .hadoku_client import chunk_resume_into_blocks, assemble_local_tailored_resume
+        blocks = chunk_resume_into_blocks(
+            master_resume_text=profile_data.get("master_resume_text") or "",
+            full_name=candidate_name,
+            title=candidate_title,
+            summary=candidate_summary,
+            email=candidate_email,
+            phone=candidate_phone,
+            location=candidate_location,
+            linkedin_url=profile_data.get("linkedin_url") or "",
+            github_url=profile_data.get("github_url") or "",
+            skills=matched_skills,
+        )
+        return assemble_local_tailored_resume(
+            blocks=blocks,
+            job_title=job_title,
+            company=company,
+            job_description=job_data.get("description") or "",
+            matched_skills=matched_skills,
+        )
+
+    elif doc_type == "application_kit":
+        return f"""# Full Application Kit — {job_title} at {company}
+
+### Why {company} Hook
+I am drawn to {company}'s engineering culture and the opportunity to contribute to **{job_title}** using my background in **{skills_highlight}**.
+
+### Recruiter Intro Email
+Hi Hiring Team, I recently applied for the **{job_title}** role at {company}. With hands-on experience in {skills_highlight}, I would love to share how I can help your team hit its upcoming milestones.
+
+### LinkedIn Connection Note (<300 chars)
+Hi! I just applied for the {job_title} role at {company}. Given my background in {skills_highlight}, I'd love to connect and learn more about the team's priorities!
+
+### Screening Answers
+- **Why are you interested in this role?** Opportunity to apply my expertise in {skills_highlight} to high-impact problems at {company}.
+- **Work Authorization:** {profile_data.get('work_authorization') or 'Authorized to work in the US'}
+- **Target Compensation:** {profile_data.get('desired_salary') or 'Open / Competitive'}
+- **Availability / Notice Period:** {profile_data.get('notice_period') or '2 weeks'}
+"""
+
     return f"Document type '{doc_type}' generated for {job_title} at {company}."
 
 async def generate_ai_document(
@@ -94,7 +135,100 @@ async def generate_ai_document(
     provider: str = "template",
     api_key: Optional[str] = None,
 ) -> tuple[str, str]:
-    """Generates document via template or LLM API (Gemini, OpenAI, Ollama)."""
+    """Generates document via Hadoku Resume service, template, or LLM API (Gemini, OpenAI, Ollama)."""
+
+    # 0. Hadoku Resume Service (https://hadoku.me/resume/api/*)
+    if provider in ("hadoku", "hadoku-resume"):
+        from .hadoku_client import (
+            get_hadoku_user_key,
+            generate_hadoku_tailored_resume,
+            generate_hadoku_cover_letter,
+            generate_hadoku_application_extras,
+        )
+        if get_hadoku_user_key(api_key):
+            job_title = job_data.get("title") or "Software Engineer"
+            company = job_data.get("company") or "Company"
+            description = job_data.get("description") or f"{job_title} at {company}"
+            try:
+                if doc_type == "cover_letter":
+                    res = await generate_hadoku_cover_letter(
+                        job_title=job_title,
+                        company=company,
+                        description=description,
+                        tone="formal" if tone == "professional" else "conversational",
+                        explicit_key=api_key,
+                    )
+                    if res and res.get("cover_letter_markdown"):
+                        return res["cover_letter_markdown"], "hadoku-resume"
+
+                elif doc_type == "tailored_resume":
+                    res = await generate_hadoku_tailored_resume(
+                        job_title=job_title,
+                        company=company,
+                        description=description,
+                        tailor=True,
+                        explicit_key=api_key,
+                    )
+                    if res and res.get("resume_markdown"):
+                        return res["resume_markdown"], "hadoku-resume"
+
+                elif doc_type in ("application_kit", "pitch", "resume_bullets"):
+                    # First fetch or assemble resume markdown to ground the application extras
+                    tailored = await generate_hadoku_tailored_resume(
+                        job_title=job_title,
+                        company=company,
+                        description=description,
+                        tailor=True,
+                        explicit_key=api_key,
+                    )
+                    resume_md = (
+                        (tailored or {}).get("resume_markdown")
+                        or profile_data.get("master_resume_text")
+                        or generate_offline_template("tailored_resume", job_data, profile_data, matched_skills, tone)
+                    )
+                    extras = await generate_hadoku_application_extras(
+                        job_title=job_title,
+                        company=company,
+                        description=description,
+                        resume_markdown=resume_md,
+                        job_location=job_data.get("location"),
+                        workplace_type=job_data.get("workplace_type"),
+                        explicit_key=api_key,
+                    )
+                    if extras:
+                        if doc_type == "pitch":
+                            pitch_md = (
+                                f"### Recruiter Intro Email\n{extras.get('intro_email', '')}\n\n"
+                                f"### LinkedIn Connection Note (<300 chars)\n{extras.get('linkedin_note', '')}\n\n"
+                                f"### Why {company} Hook\n{extras.get('why_hook', '')}"
+                            )
+                            return pitch_md.strip(), "hadoku-resume"
+                        elif doc_type == "resume_bullets":
+                            tp = "\n".join(f"- {pt}" for pt in (extras.get("talking_points") or []))
+                            bullets_md = (
+                                f"### Recruiter Phone Screen Talking Points\n{tp}\n\n"
+                                f"### Why {company} Hook\n{extras.get('why_hook', '')}"
+                            )
+                            return bullets_md.strip(), "hadoku-resume"
+                        else:
+                            qa_lines = "\n".join(
+                                f"- **{item.get('q')}**\n  {item.get('a')}"
+                                for item in (extras.get("screening_answers") or [])
+                            )
+                            tp_lines = "\n".join(f"- {pt}" for pt in (extras.get("talking_points") or []))
+                            kit_md = (
+                                f"# Hadoku Application Kit: {job_title} at {company}\n\n"
+                                f"## Why {company} Hook\n{extras.get('why_hook', '')}\n\n"
+                                f"## Recruiter Outreach Email\n{extras.get('intro_email', '')}\n\n"
+                                f"## LinkedIn Connection Note\n`{extras.get('linkedin_note', '')}`\n\n"
+                                f"## Expected Compensation Line\n{extras.get('salary_line', '')}\n\n"
+                                f"## Recruiter Screen Talking Points\n{tp_lines}\n\n"
+                                f"## Pre-Drafted Screening Answers\n{qa_lines}\n\n"
+                                f"## Cover Letter\n{extras.get('cover_letter_markdown', '')}"
+                            )
+                            return kit_md.strip(), "hadoku-resume"
+            except Exception as e:
+                logger.warning(f"Hadoku resume service error ({doc_type}): {e}. Falling back to local generator.")
 
     # 1. Fallback / default to fast local template
     if provider == "template" or not provider:

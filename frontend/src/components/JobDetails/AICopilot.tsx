@@ -21,7 +21,7 @@ interface AICopilotProps {
 
 export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [activeTab, setActiveTab] = useState<'match' | 'generate' | 'autofill'>('match');
-  const [docType, setDocType] = useState<'cover_letter' | 'resume_bullets' | 'pitch'>('cover_letter');
+  const [docType, setDocType] = useState<'tailored_resume' | 'cover_letter' | 'application_kit' | 'resume_bullets' | 'pitch'>('tailored_resume');
   const [tone, setTone] = useState<'professional' | 'confident' | 'concise'>('professional');
   const [customInstructions, setCustomInstructions] = useState('');
   
@@ -29,11 +29,25 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [generatedContent, setGeneratedContent] = useState<string>('');
   const [providerUsed, setProviderUsed] = useState<string>('');
 
+  const [mintingPacket, setMintingPacket] = useState(false);
+  const [mintedPacket, setMintedPacket] = useState<{ slug: string; url: string; pdf_url: string } | null>(null);
+  const [packetError, setPacketError] = useState<string | null>(null);
+
   const [analyzingMatch, setAnalyzingMatch] = useState(false);
   const [matchData, setMatchData] = useState<FitBreakdown | undefined>(job.fit_breakdown);
 
   const [autofillData, setAutofillData] = useState<AutofillPayload | null>(null);
   const [loadingAutofill, setLoadingAutofill] = useState(false);
+  const [loadingKit, setLoadingKit] = useState(false);
+  const [appKit, setAppKit] = useState<{
+    provider_used: string;
+    why_hook: string;
+    intro_email: string;
+    linkedin_note: string;
+    salary_line: string;
+    talking_points: string[];
+    screening_answers: { q: string; a: string }[];
+  } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [launchingBrowser, setLaunchingBrowser] = useState(false);
@@ -69,7 +83,8 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
         job.id,
         docType,
         tone,
-        customInstructions || undefined
+        customInstructions || undefined,
+        'hadoku'
       );
       setGeneratedContent(res.content);
       setProviderUsed(res.provider_used);
@@ -79,6 +94,22 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
       console.error('Generation failed:', err);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // Mint Shareable Hadoku Resume Packet
+  const handleMintPacket = async () => {
+    setMintingPacket(true);
+    setPacketError(null);
+    try {
+      const packet = await api.mintResumePacket(job.id);
+      setMintedPacket(packet);
+      const updatedJob = await api.getJob(job.id);
+      onJobUpdated(updatedJob);
+    } catch (err: any) {
+      setPacketError(err.message || 'Failed to mint shareable packet.');
+    } finally {
+      setMintingPacket(false);
     }
   };
 
@@ -92,6 +123,19 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
       console.error('Autofill load failed:', err);
     } finally {
       setLoadingAutofill(false);
+    }
+  };
+
+  // Load Hadoku Screening Answers & Application Kit
+  const handleLoadApplicationKit = async () => {
+    setLoadingKit(true);
+    try {
+      const kit = await api.generateApplicationKit(job.id);
+      setAppKit(kit);
+    } catch (err) {
+      console.error('Application kit load failed:', err);
+    } finally {
+      setLoadingKit(false);
     }
   };
 
@@ -246,10 +290,12 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
         {activeTab === 'generate' && (
           <div className="space-y-4">
             {/* Document Controls */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {[
+                { id: 'tailored_resume', label: 'Tailored Resume' },
                 { id: 'cover_letter', label: 'Cover Letter' },
-                { id: 'resume_bullets', label: 'Resume Bullets' },
+                { id: 'application_kit', label: 'Full Apply Kit' },
+                { id: 'resume_bullets', label: 'Talking Points' },
                 { id: 'pitch', label: 'Intro Pitch' },
               ].map((item) => (
                 <button
@@ -298,15 +344,70 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
               />
             </div>
 
-            {/* Generate Trigger */}
-            <button
-              onClick={handleGenerateDocument}
-              disabled={generating}
-              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 transition disabled:opacity-50"
-            >
-              <Sparkles className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
-              <span>{generating ? 'Drafting Tailored Document...' : 'Generate with 1-Click'}</span>
-            </button>
+            {/* Generate Trigger + Mint Hadoku Shareable Packet */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={handleGenerateDocument}
+                disabled={generating}
+                className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} />
+                <span>{generating ? 'Drafting via Hadoku...' : 'Generate Document'}</span>
+              </button>
+
+              <button
+                onClick={handleMintPacket}
+                disabled={mintingPacket}
+                className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+                title="Mints a shareable packet link (hadoku.me/resume?v=...) and downloadable PDF"
+              >
+                <Send className={`w-3.5 h-3.5 ${mintingPacket ? 'animate-pulse' : ''}`} />
+                <span>{mintingPacket ? 'Minting Packet...' : 'Mint Packet + PDF Link'}</span>
+              </button>
+            </div>
+
+            {packetError && (
+              <div className="text-xs p-2.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300">
+                {packetError}
+              </div>
+            )}
+
+            {mintedPacket && (
+              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-700/60 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-300">
+                    Minted Hadoku Packet (`{mintedPacket.slug}`)
+                  </span>
+                  <button
+                    onClick={() => copyToClipboard(mintedPacket.url, 'packet_url')}
+                    className="text-emerald-400 hover:text-emerald-200 flex items-center space-x-1 font-semibold"
+                  >
+                    {copiedKey === 'packet_url' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'packet_url' ? 'Copied' : 'Copy Link'}</span>
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <a
+                    href={mintedPacket.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center space-x-1 text-emerald-300 hover:underline font-medium"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Web Packet</span>
+                  </a>
+                  <a
+                    href={mintedPacket.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center space-x-1 text-emerald-300 hover:underline font-medium"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Download Server PDF</span>
+                  </a>
+                </div>
+              </div>
+            )}
 
             {/* Generated Output */}
             {generatedContent && (
@@ -349,14 +450,25 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 </div>
               </div>
 
-              <button
-                onClick={handleLaunchBrowser}
-                disabled={launchingBrowser || !job.url}
-                className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>{launchingBrowser ? 'Launching Playwright Session...' : 'Open Application with Auto-Fill'}</span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={handleLaunchBrowser}
+                  disabled={launchingBrowser || !job.url}
+                  className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>{launchingBrowser ? 'Launching Session...' : 'Open with Auto-Fill'}</span>
+                </button>
+
+                <button
+                  onClick={handleLoadApplicationKit}
+                  disabled={loadingKit}
+                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${loadingKit ? 'animate-spin' : ''}`} />
+                  <span>{loadingKit ? 'Drafting Answers...' : 'Draft Screening Answers'}</span>
+                </button>
+              </div>
 
               {browserMessage && (
                 <div className="text-xs p-2 rounded bg-slate-900 text-slate-300 border border-slate-700">
@@ -364,6 +476,61 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 </div>
               )}
             </div>
+
+            {/* Hadoku Drafted Screening Answers & Hooks */}
+            {appKit && (
+              <div className="space-y-2.5 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    Tailored Screening Answers ({appKit.provider_used})
+                  </span>
+                  <span className="text-[11px] text-slate-500">Click any card to copy</span>
+                </div>
+
+                {[
+                  { label: `Why ${job.company}? Hook`, val: appKit.why_hook, key: 'kit_why' },
+                  { label: 'LinkedIn Note (≤300 chars)', val: appKit.linkedin_note, key: 'kit_li' },
+                  { label: 'Expected Compensation Line', val: appKit.salary_line, key: 'kit_sal' },
+                  { label: 'Recruiter Intro Email', val: appKit.intro_email, key: 'kit_email' },
+                ]
+                  .filter((item) => item.val)
+                  .map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => copyToClipboard(item.val, item.key)}
+                      className="w-full text-left p-2.5 bg-slate-900 hover:bg-slate-800/90 rounded-xl border border-slate-800 hover:border-emerald-500/50 transition flex items-start justify-between gap-2"
+                    >
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] uppercase font-bold text-emerald-400 block">
+                          {item.label}
+                        </span>
+                        <span className="text-xs text-slate-200 leading-relaxed block">
+                          {item.val}
+                        </span>
+                      </div>
+                      <span className="shrink-0 text-slate-400 mt-1">
+                        {copiedKey === item.key ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </span>
+                    </button>
+                  ))}
+
+                {appKit.screening_answers?.map((qa, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => copyToClipboard(qa.a, `qa_${idx}`)}
+                    className="w-full text-left p-2.5 bg-slate-900 hover:bg-slate-800/90 rounded-xl border border-slate-800 hover:border-emerald-500/50 transition flex items-start justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] font-bold text-slate-400 block">{qa.q}</span>
+                      <span className="text-xs text-slate-200 leading-relaxed block">{qa.a}</span>
+                    </div>
+                    <span className="shrink-0 text-slate-400 mt-1">
+                      {copiedKey === `qa_${idx}` ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Quick-Copy Clipboard Palette */}
             <div className="space-y-2">

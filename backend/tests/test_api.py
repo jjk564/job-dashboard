@@ -202,4 +202,13 @@ async def test_search_profiles_directives_and_ingest():
         assert scored_job["role_track"] == "ic"
         assert scored_job["role_level"] == "senior"
 
+        # 6. Verify chunked resume blocks endpoint (/api/profile/resume-blocks)
+        blocks_res = await ac.get("/api/profile/resume-blocks")
+        assert blocks_res.status_code == 200
+        blocks_data = blocks_res.json()
+        assert blocks_data["count"] >= 2
+        assert any(b["type"] == "header" for b in blocks_data["blocks"])
+        assert any(b["type"] == "skills" for b in blocks_data["blocks"])
+
+
 

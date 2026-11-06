@@ -114,3 +114,30 @@ async def delete_skill(skill_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(skill)
     await db.commit()
     return {"success": True, "message": "Skill removed"}
+
+
+@router.get("/resume-blocks")
+async def get_chunked_resume_blocks(db: AsyncSession = Depends(get_db)):
+    """
+    Chunks the candidate's master resume and skills into hadoku-resume-bot
+    `ResumeBlock[]` format (`{ id, type, tags, title, content, priority }`).
+    """
+    from ..services.hadoku_client import chunk_resume_into_blocks
+    profile = await get_or_create_profile(db)
+    s_res = await db.execute(select(Skill).order_by(Skill.category, Skill.name))
+    skills = [s.name for s in s_res.scalars().all()]
+
+    blocks = chunk_resume_into_blocks(
+        master_resume_text=profile.master_resume_text or "",
+        full_name=profile.full_name or "Candidate",
+        title=profile.title or "Software Engineer",
+        summary=profile.summary or "",
+        email=profile.email or "",
+        phone=profile.phone or "",
+        location=profile.location or "",
+        linkedin_url=profile.linkedin_url or "",
+        github_url=profile.github_url or "",
+        skills=skills,
+    )
+    return {"blocks": blocks, "count": len(blocks)}
+

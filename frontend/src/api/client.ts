@@ -236,6 +236,97 @@ export const api = {
     return res.json();
   },
 
+  async generateApplicationKit(jobId: number): Promise<{
+    provider_used: string;
+    why_hook: string;
+    intro_email: string;
+    linkedin_note: string;
+    salary_line: string;
+    talking_points: string[];
+    screening_answers: { q: string; a: string }[];
+    cover_letter_markdown: string;
+  }> {
+    const res = await fetch(`${API_BASE}/assistant/${jobId}/application-kit`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to generate application kit');
+    return res.json();
+  },
+
+  async mintResumePacket(jobId: number): Promise<{
+    slug: string;
+    label: string;
+    url: string;
+    pdf_url: string;
+  }> {
+    const res = await fetch(`${API_BASE}/assistant/${jobId}/mint-packet`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to mint packet' }));
+      throw new Error(err.detail || 'Failed to mint packet');
+    }
+    return res.json();
+  },
+
+  async getResumeBlocks(): Promise<{
+    count: number;
+    blocks: { id: string; type: string; tags: string[]; title: string; content: string; priority: number }[];
+  }> {
+    const res = await fetch(`${API_BASE}/profile/resume-blocks`);
+    if (!res.ok) throw new Error('Failed to chunk resume blocks');
+    return res.json();
+  },
+
+  // Hadoku Scraper Worker & Corpus Sync
+  async getScraperStatus(): Promise<{
+    vault_key_configured: boolean;
+    vault_key_source: string;
+    resume_api: { online: boolean; status: number | null };
+    jobplatform_api: { online: boolean; status: number | null };
+    scraper_api: { online: boolean; active_targets: number };
+  }> {
+    const res = await fetch(`${API_BASE}/scraper/status`);
+    if (!res.ok) throw new Error('Failed to fetch scraper status');
+    return res.json();
+  },
+
+  async matchScraperCompanies(names: string[]): Promise<{
+    results: {
+      query: string;
+      matched: boolean;
+      ats: string | null;
+      slug: string | null;
+      company_name: string | null;
+      n_jobs: number;
+      sample_titles: string[];
+      domain: string | null;
+    }[];
+  }> {
+    const res = await fetch(`${API_BASE}/scraper/match-companies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    if (!res.ok) throw new Error('Failed to match companies on scraper');
+    return res.json();
+  },
+
+  async triggerScraperRun(): Promise<{ triggered: boolean; status_code?: number; error?: string }> {
+    const res = await fetch(`${API_BASE}/scraper/trigger`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to trigger scraper');
+    return res.json();
+  },
+
+  async syncScraperCorpus(limit: number = 40, minScore: number = 65): Promise<{
+    fetched: number;
+    inserted: number;
+    skipped: number;
+    profile_used: string;
+  }> {
+    const res = await fetch(`${API_BASE}/scraper/sync-corpus?limit=${limit}&min_score=${minScore}`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to sync scraper corpus');
+    return res.json();
+  },
+
   // Analytics
   async getMetrics(): Promise<Metrics> {
     const res = await fetch(`${API_BASE}/analytics/metrics`);
