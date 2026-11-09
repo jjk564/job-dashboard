@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Navbar } from './components/Navbar';
 import { KanbanBoard } from './components/Kanban/KanbanBoard';
-import { JobDiscovery } from './components/Discovery/JobDiscovery';
-import { ProfileManager } from './components/Profile/ProfileManager';
-import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
-import { JobDetailDrawer } from './components/JobDetails/JobDetailDrawer';
-import { ImportJobModal } from './components/Common/ImportJobModal';
-import { AddJobModal } from './components/Common/AddJobModal';
-import { SettingsModal } from './components/Settings/SettingsModal';
+
+// Everything but the board loads on first use: hadoku.me budgets an app's
+// first-load JS (60 kB gzip), and Discovery alone is most of this bundle.
+const JobDiscovery = lazy(() => import('./components/Discovery/JobDiscovery').then(m => ({ default: m.JobDiscovery })));
+const ProfileManager = lazy(() => import('./components/Profile/ProfileManager').then(m => ({ default: m.ProfileManager })));
+const AnalyticsDashboard = lazy(() => import('./components/Analytics/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
+const JobDetailDrawer = lazy(() => import('./components/JobDetails/JobDetailDrawer').then(m => ({ default: m.JobDetailDrawer })));
+const ImportJobModal = lazy(() => import('./components/Common/ImportJobModal').then(m => ({ default: m.ImportJobModal })));
+const AddJobModal = lazy(() => import('./components/Common/AddJobModal').then(m => ({ default: m.AddJobModal })));
+const SettingsModal = lazy(() => import('./components/Settings/SettingsModal').then(m => ({ default: m.SettingsModal })));
 import { Job, JobStatus } from './types';
 import { api } from './api/client';
 import type { JobPlatformProps } from './entry';
@@ -29,7 +32,16 @@ function getInitialTab(): AppTab {
   return 'pipeline';
 }
 
-export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
+/** True from the first time `open` is true: lazily loaded views stay mounted after. */
+function useOpenedOnce(open: boolean): boolean {
+  const [opened, setOpened] = useState(open);
+  useEffect(() => {
+    if (open) setOpened(true);
+  }, [open]);
+  return opened || open;
+}
+
+export const App: React.FC<JobPlatformProps> = ({ appName, theme, embedded }) => {
   const [activeTab, setActiveTabState] = useState<AppTab>(getInitialTab);
 
   const setActiveTab = (tab: AppTab) => {
@@ -76,6 +88,11 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   const [isAddJobOpen, setIsAddJobOpen] = useState(false);
   const [isImportUrlOpen, setIsImportUrlOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const discoveryOpened = useOpenedOnce(activeTab === 'discovery');
+  const drawerOpened = useOpenedOnce(selectedJob !== null);
+  const importOpened = useOpenedOnce(isImportUrlOpen);
+  const addOpened = useOpenedOnce(isAddJobOpen);
+  const settingsOpened = useOpenedOnce(isSettingsOpen);
   const [settingsTab, setSettingsTab] = useState<'ai' | 'hidden'>('ai');
   const [liveUpdateToast, setLiveUpdateToast] = useState(false);
   const bootIdRef = useRef<string | null>(null);
@@ -220,10 +237,11 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   return (
     <div
       data-theme={theme}
-      className="job-platform-container h-screen max-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden"
+      className={`job-platform-container ${embedded ? 'flex-1 min-h-0' : 'h-screen max-h-screen'} bg-slate-900 text-slate-100 flex flex-col font-sans overflow-hidden`}
     >
       <Navbar
         appName={appName}
+        embedded={embedded}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddJob={() => setIsAddJobOpen(true)}
@@ -253,7 +271,9 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
               />
             )}
 
+            {discoveryOpened && (
             <div className={activeTab === 'discovery' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>
+              <Suspense fallback={null}>
               <JobDiscovery
                 pipelineJobs={jobs}
                 onJobAdded={handleJobAdded}
@@ -262,49 +282,65 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
                   setIsSettingsOpen(true);
                 }}
               />
+              </Suspense>
             </div>
+            )}
 
             {activeTab === 'profile' && (
               <div className="flex-1 overflow-y-auto">
-                <ProfileManager onJobsScored={handleJobsRefreshed} />
+                <Suspense fallback={null}>
+                  <ProfileManager onJobsScored={handleJobsRefreshed} />
+                </Suspense>
               </div>
             )}
 
             {activeTab === 'analytics' && (
               <div className="flex-1 overflow-y-auto">
-                <AnalyticsDashboard />
+                <Suspense fallback={null}>
+                  <AnalyticsDashboard />
+                </Suspense>
               </div>
             )}
           </>
         )}
       </main>
 
-      {/* Side Drawer for Selected Job */}
-      <JobDetailDrawer
-        job={selectedJob}
-        onClose={() => setSelectedJob(null)}
-        onJobUpdated={handleJobUpdated}
-        onDeleteJob={handleDeleteJob}
-      />
+      {/* Loaded on first use (see the lazy imports above); mounted from then on
+          so each keeps its close animation and state as before. */}
+      <Suspense fallback={null}>
+        {(selectedJob || drawerOpened) && (
+          <JobDetailDrawer
+            job={selectedJob}
+            onClose={() => setSelectedJob(null)}
+            onJobUpdated={handleJobUpdated}
+            onDeleteJob={handleDeleteJob}
+          />
+        )}
 
-      {/* Modals */}
-      <ImportJobModal
-        isOpen={isImportUrlOpen}
-        onClose={() => setIsImportUrlOpen(false)}
-        onJobAdded={handleJobAdded}
-      />
+        {(isImportUrlOpen || importOpened) && (
+          <ImportJobModal
+            isOpen={isImportUrlOpen}
+            onClose={() => setIsImportUrlOpen(false)}
+            onJobAdded={handleJobAdded}
+          />
+        )}
 
-      <AddJobModal
-        isOpen={isAddJobOpen}
-        onClose={() => setIsAddJobOpen(false)}
-        onJobAdded={handleJobAdded}
-      />
+        {(isAddJobOpen || addOpened) && (
+          <AddJobModal
+            isOpen={isAddJobOpen}
+            onClose={() => setIsAddJobOpen(false)}
+            onJobAdded={handleJobAdded}
+          />
+        )}
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        initialTab={settingsTab}
-      />
+        {(isSettingsOpen || settingsOpened) && (
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            initialTab={settingsTab}
+          />
+        )}
+      </Suspense>
 
       {liveUpdateToast && (
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-950/90 border border-emerald-500/40 text-emerald-200 text-xs font-medium shadow-lg backdrop-blur-sm">

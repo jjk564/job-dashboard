@@ -17,7 +17,8 @@
     "dev": "vite",
     "build": "node scripts/check-theme-tokens.mjs && tsc && vite build",
     "lint:css": "node scripts/check-theme-tokens.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:lib": "node scripts/check-theme-tokens.mjs && tsc && vite build -c vite.lib.config.ts"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
@@ -28,9 +29,13 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "@wolffm/logger": "npm:@hadoku/logger@^1.4.3",
+    "@wolffm/task-ui-components": "npm:@hadoku/task-ui-components@^4.23.3",
+    "@wolffm/themes": "npm:@hadoku/themes@^5.13.16",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.3",
+    "tailwindcss-scoped-preflight": "^3.5.9",
     "typescript": "^5.2.2",
     "vite": "^7.3.1"
   }

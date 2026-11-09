@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
+import './standalone.css'
 
 /**
  * Dev-only sign-in: `?apiKey=<your hadoku key>` once, and the dev server's proxy

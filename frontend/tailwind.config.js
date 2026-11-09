@@ -6,8 +6,22 @@
 const withThemeAlpha = (cssVar) =>
   `color-mix(in srgb, var(${cssVar}) calc(<alpha-value> * 100%), transparent)`;
 
+import { scopedPreflightStyles, isolateInsideOfContainer } from 'tailwindcss-scoped-preflight';
+
+/**
+ * Everything is scoped to the app root, because on hadoku.me this app shares
+ * the page with the site's header and its own Tailwind build:
+ * - preflight (Tailwind's reset) applies only inside .job-platform-container,
+ *   so the host page keeps its styles;
+ * - `important` prefixes every utility with the root, so ours win inside the
+ *   app and never apply outside it.
+ */
+const ROOT = '.job-platform-container';
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  important: ROOT,
+  corePlugins: { preflight: false },
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -132,5 +146,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [scopedPreflightStyles({ isolationStrategy: isolateInsideOfContainer(ROOT) })],
 };

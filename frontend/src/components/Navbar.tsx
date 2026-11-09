@@ -11,6 +11,8 @@ import {
 
 interface NavbarProps {
   appName?: string;
+  /** Inside hadoku.me the platform header carries the name, so the brand hides. */
+  embedded?: boolean;
   activeTab: 'pipeline' | 'discovery' | 'profile' | 'analytics';
   setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
@@ -21,6 +23,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({
   appName,
+  embedded,
   activeTab,
   setActiveTab,
   onOpenAddJob,
@@ -33,7 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="w-full px-4 sm:px-5 lg:px-6">
         <div className="flex items-center justify-between h-16">
           {/* Brand */}
-          <div className="flex items-center space-x-3">
+          <div className={`flex items-center space-x-3 ${embedded ? 'hidden' : ''}`}>
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <Briefcase className="w-5 h-5 text-white" />
             </div>
