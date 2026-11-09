@@ -68,8 +68,8 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   }, []);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updatingJobIds, setUpdatingJobIds] = useState<Set<number>>(new Set());
-  const updateSeqRef = useRef<Map<number, number>>(new Map());
+  const [updatingJobIds, setUpdatingJobIds] = useState<Set<string>>(new Set());
+  const updateSeqRef = useRef<Map<string, number>>(new Map());
 
   // Modals & Drawers
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -135,7 +135,7 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   };
 
   // Status Change handler with race-condition and stale-response protection
-  const handleUpdateJobStatus = async (id: number, newStatus: JobStatus) => {
+  const handleUpdateJobStatus = async (id: string, newStatus: JobStatus) => {
     const nowIso = new Date().toISOString();
     const seq = (updateSeqRef.current.get(id) || 0) + 1;
     updateSeqRef.current.set(id, seq);
@@ -177,7 +177,7 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
   };
 
   // Delete handler
-  const handleDeleteJob = async (id: number) => {
+  const handleDeleteJob = async (id: string) => {
     try {
       await api.deleteJob(id);
       setJobs((prev) => prev.filter((j) => j.id !== id));

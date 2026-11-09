@@ -960,7 +960,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
   const allPipelineJobs = useMemo(() => {
     const combined = [...(pipelineJobs || []), ...internalPipelineJobs];
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     return combined.filter((j) => {
       if (seen.has(j.id)) return false;
       seen.add(j.id);

@@ -1,3 +1,6 @@
+/** hadoku's posting id: `<ats>_<board id>` (greenhouse_123), or manual_<hash> for one typed in. */
+export type JobId = string;
+
 export type JobStatus = 
   | 'TO_APPLY' 
   | 'APPLIED' 
@@ -36,7 +39,7 @@ export interface SearchProfile {
 
 export interface Activity {
   id: number;
-  job_id: number;
+  job_id: JobId;
   activity_type: string;
   title: string;
   details?: string;
@@ -45,7 +48,7 @@ export interface Activity {
 
 export interface TailoredDocument {
   id: number;
-  job_id: number;
+  job_id: JobId;
   doc_type: string;
   content: string;
   created_at?: string;
@@ -68,7 +71,7 @@ export interface FitBreakdown {
 }
 
 export interface Job {
-  id: number;
+  id: JobId;
   title: string;
   company: string;
   location?: string;

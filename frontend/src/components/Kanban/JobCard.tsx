@@ -18,7 +18,7 @@ interface JobCardProps {
   job: Job;
   onSelect: (job: Job) => void;
   onMoveStatus: (job: Job, direction: 'prev' | 'next') => void;
-  onDelete: (id: number) => void;
+  onDelete: (id: string) => void;
   onArchive?: (job: Job) => void;
   isUpdating?: boolean;
   onDragStart?: (e: React.DragEvent, job: Job) => void;

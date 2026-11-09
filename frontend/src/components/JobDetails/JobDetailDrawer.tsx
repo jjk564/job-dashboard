@@ -22,7 +22,7 @@ interface JobDetailDrawerProps {
   job: Job | null;
   onClose: () => void;
   onJobUpdated: (updated: Job) => void;
-  onDeleteJob: (id: number) => void;
+  onDeleteJob: (id: string) => void;
 }
 
 const STATUS_OPTIONS: { id: JobStatus; label: string }[] = [

@@ -23,10 +23,10 @@ import { api } from '../../api/client';
 interface KanbanBoardProps {
   jobs: Job[];
   onSelectJob: (job: Job) => void;
-  onUpdateJobStatus: (id: number, newStatus: JobStatus) => void;
-  onDeleteJob: (id: number) => void;
+  onUpdateJobStatus: (id: string, newStatus: JobStatus) => void;
+  onDeleteJob: (id: string) => void;
   onJobsRefreshed?: (jobs: Job[]) => void;
-  updatingJobIds?: Set<number>;
+  updatingJobIds?: Set<string>;
 }
 
 interface ColumnConfig {
@@ -445,7 +445,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
                 const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
                 if (timeB !== timeA) return timeB - timeA;
-                return b.id - a.id;
+                return b.id.localeCompare(a.id);
               });
 
             const columnExpiredCount = columnJobs.filter((j) => j.is_expired).length;
