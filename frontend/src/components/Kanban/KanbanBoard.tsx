@@ -93,7 +93,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [searchProfiles, setSearchProfiles] = useState<SearchProfile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<number | 'all'>('all');
+  const [activeProfileId, setActiveProfileId] = useState<string | 'all'>('all');
 
   useEffect(() => {
     api.getSearchProfiles()
@@ -108,7 +108,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       setWorkplaceFilter('all');
       return;
     }
-    const id = Number(val);
+    const id = val;
     setActiveProfileId(id);
     const prof = searchProfiles.find((p) => p.id === id);
     if (prof) {

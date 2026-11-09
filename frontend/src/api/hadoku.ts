@@ -126,7 +126,7 @@ export interface PipelineItem {
   workplace_type: string;
   salary_min: number | null;
   salary_max: number | null;
-  url: string;
+  url: string | null;
   posted_date: string | null;
   state: HadokuState;
   updated_at: string;
@@ -135,6 +135,10 @@ export interface PipelineItem {
   application_status: string | null;
   applied_at: string | null;
   last_event_at: string | null;
+  /** When the nightly scrape last saw it on its board (null: never scraped). */
+  last_seen_at?: string | null;
+  /** The board no longer lists it. */
+  closed?: boolean;
 }
 
 /** A posting as GET /jobs and GET /jobs/:id return it (JobSummary / JobDetail). */
@@ -147,7 +151,8 @@ export interface HadokuJob {
   salary_min: number | null;
   salary_max: number | null;
   source_site: string;
-  url: string;
+  /** null for a posting typed in by hand without one. */
+  url: string | null;
   application_url: string | null;
   posted_date: string | null;
   scraped_at: string;
@@ -161,6 +166,8 @@ export interface HadokuJob {
   description?: string;
   state_updated_at?: string | null;
   tracking?: Tracking | null;
+  last_seen_at?: string | null;
+  closed?: boolean;
 }
 
 export interface JobEvent {
@@ -215,7 +222,7 @@ export function jobFromPipeline(p: PipelineItem): Job {
     company: p.company,
     location: p.location,
     workplace_type: p.workplace_type,
-    url: p.url,
+    url: p.url ?? undefined,
     salary_min: p.salary_min ?? undefined,
     salary_max: p.salary_max ?? undefined,
     status: statusOf(p.state),
@@ -225,6 +232,10 @@ export function jobFromPipeline(p: PipelineItem): Job {
     contact_person: p.tracking.contact_name ?? undefined,
     contact_email: p.tracking.contact_email ?? undefined,
     applied_at: p.applied_at ?? undefined,
+    is_expired: p.closed ?? false,
+    expired_at: p.closed ? (p.last_seen_at ?? null) : null,
+    expired_reason: p.closed ? 'No longer listed on its board' : null,
+    last_seen_at: p.last_seen_at ?? null,
     created_at: p.posted_date ?? undefined,
     updated_at: p.updated_at,
   };
@@ -238,7 +249,7 @@ export function jobFromDetail(j: HadokuJob, events: JobEvent[] = []): Job {
     company: j.company,
     location: j.location,
     workplace_type: j.workplace_type,
-    url: j.application_url ?? j.url,
+    url: j.application_url ?? j.url ?? undefined,
     salary_min: j.salary_min ?? undefined,
     salary_max: j.salary_max ?? undefined,
     description: j.description,
@@ -252,6 +263,10 @@ export function jobFromDetail(j: HadokuJob, events: JobEvent[] = []): Job {
     deadline: t?.follow_up_at ?? null,
     contact_person: t?.contact_name ?? undefined,
     contact_email: t?.contact_email ?? undefined,
+    is_expired: j.closed ?? false,
+    expired_at: j.closed ? (j.last_seen_at ?? null) : null,
+    expired_reason: j.closed ? 'No longer listed on its board' : null,
+    last_seen_at: j.last_seen_at ?? null,
     created_at: j.posted_date ?? j.scraped_at,
     updated_at: j.state_updated_at ?? undefined,
     activities: events.map(activityOf),

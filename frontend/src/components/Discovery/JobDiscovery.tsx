@@ -270,24 +270,15 @@ const FILTER_GROUPS: FilterGroupConfig[] = [
 
 const ALL_FILTER_OPTIONS: FilterOption[] = FILTER_GROUPS.flatMap((g) => g.options);
 
+// hadoku's corpus: the ATS boards its scraper reads nightly (every profile's
+// target companies), plus the remote-job feeds it pulls by keyword.
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
-  { id: 'hadoku', label: 'Hadoku Scraper (200+ ATS Boards)' },
-  { id: 'bigtech', label: 'Big Tech (Google, MSFT, AMZN...)' },
-  { id: 'company_boards', label: 'Top Tech ATS (OpenAI, Stripe...)' },
-  { id: 'simplify', label: 'SimplifyJobs (Entry-Level)' },
-  { id: 'linkedin', label: 'LinkedIn' },
-  { id: 'glassdoor', label: 'Glassdoor' },
-  { id: 'indeed', label: 'Indeed' },
-  { id: 'ziprecruiter', label: 'ZipRecruiter' },
-  { id: 'themuse', label: 'The Muse' },
-  { id: 'arbeitnow', label: 'Arbeitnow' },
-  { id: 'jobicy', label: 'Jobicy' },
-  { id: 'weworkremotely', label: 'We Work Remotely' },
-  { id: 'himalayas', label: 'Himalayas' },
-  { id: 'hackernews', label: 'HN "Who is Hiring?"' },
+  { id: 'greenhouse', label: 'Greenhouse' },
+  { id: 'ashby', label: 'Ashby' },
+  { id: 'lever', label: 'Lever' },
   { id: 'remoteok', label: 'RemoteOK' },
-  { id: 'adzuna', label: 'Adzuna API' },
+  { id: 'remotive', label: 'Remotive' },
 ];
 
 // Helper to detect explicit entry-level / junior job titles
@@ -980,7 +971,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     }
   });
   const [selectedSource, setSelectedSource] = useState<string>(() => {
-    return localStorage.getItem('job_pulse_discover_source') || 'all';
+    // A source remembered from before (LinkedIn, Indeed, …) is not in hadoku's
+    // corpus; searching it would show nothing, so it reads as All.
+    const saved = localStorage.getItem('job_pulse_discover_source') || 'all';
+    return SOURCE_FILTERS.some((f) => f.id === saved) ? saved : 'all';
   });
   const [activeTrack, setActiveTrack] = useState<'all' | 'software' | 'it_admin'>(() => {
     const saved = localStorage.getItem('job_pulse_discover_track');
@@ -1183,25 +1177,19 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       setLoading(true);
     }
     try {
-      const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
-      const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
-      const requiresFallback = ['indeed', 'glassdoor', 'ziprecruiter'].includes(source.toLowerCase());
-      const effectiveQuery = searchQuery.trim() || (requiresFallback ? (activeTrack === 'it_admin' ? 'it support' : 'developer') : '');
-      const effectiveRad = rad > 0 ? rad : undefined;
-      const effectiveLoc = loc.trim() ? loc.trim() : undefined;
-      const results = await api.searchDiscoveredJobs(
-        effectiveQuery,
+      // forceRefresh only reruns the search: hadoku's corpus is current as of
+      // its nightly scrape, so there is no upstream cache to bypass.
+      void forceRefresh;
+      const results = await api.searchDiscoveredJobs({
+        query: searchQuery.trim(),
         source,
-        adzunaId,
-        adzunaKey,
-        isUsOnly,
-        effectiveLoc,
-        effectiveRad,
-        incRemote,
-        minSal > 0 ? minSal : undefined,
-        incUnlisted,
-        forceRefresh
-      );
+        location: loc.trim() || undefined,
+        radius: rad > 0 ? rad : undefined,
+        includeRemote: incRemote,
+        minSalary: minSal > 0 ? minSal : undefined,
+        includeUndisclosedSalary: incUnlisted,
+        usOnly: isUsOnly,
+      });
       if (currentFetchId === fetchSequenceRef.current) {
         setJobs(results);
         try {
@@ -1634,6 +1622,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setAddingUrl(job.url);
     try {
       const created = await api.createJob({
+        id: job.id,
         title: job.title,
         company: job.company,
         location: job.location || 'Remote',
@@ -1658,37 +1647,15 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
 
   const getSourceBadge = (source: string) => {
     switch (source.toLowerCase()) {
-      case 'hadoku':
+      case 'greenhouse':
         return 'bg-emerald-950/70 text-emerald-300 border-emerald-500/60';
-      case 'bigtech':
-        return 'bg-amber-950/70 text-amber-300 border-amber-700/60';
-      case 'company_boards':
-        return 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-700/60';
-      case 'simplify':
-        return 'bg-cyan-950/70 text-cyan-300 border-cyan-700/60';
-      case 'linkedin':
-        return 'bg-sky-950/70 text-sky-300 border-sky-700/60';
-      case 'glassdoor':
-        return 'bg-lime-950/70 text-lime-300 border-lime-700/60';
-      case 'themuse':
+      case 'ashby':
         return 'bg-violet-950/70 text-violet-300 border-violet-700/60';
-      case 'indeed':
-        return 'bg-blue-950/60 text-blue-300 border-blue-800/50';
-      case 'ziprecruiter':
-        return 'bg-green-950/60 text-green-300 border-green-800/50';
-      case 'weworkremotely':
-        return 'bg-red-950/60 text-red-300 border-red-800/50';
-      case 'himalayas':
-        return 'bg-indigo-950/60 text-indigo-300 border-indigo-800/50';
-      case 'hackernews':
-        return 'bg-orange-950/60 text-orange-300 border-orange-800/50';
-      case 'adzuna':
-        return 'bg-emerald-950/60 text-emerald-300 border-emerald-800/50';
+      case 'lever':
+        return 'bg-sky-950/70 text-sky-300 border-sky-700/60';
       case 'remoteok':
         return 'bg-purple-950/60 text-purple-300 border-purple-800/50';
-      case 'arbeitnow':
-        return 'bg-sky-950/60 text-sky-300 border-sky-800/50';
-      case 'jobicy':
+      case 'remotive':
         return 'bg-teal-950/60 text-teal-300 border-teal-800/50';
       default:
         return 'bg-slate-900/80 text-slate-400 border-slate-700/50';
@@ -2214,13 +2181,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           <div className="max-w-3xl space-y-3">
             <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-xs tracking-wide uppercase">
               <Compass className="w-4 h-4" />
-              <span>Multi-Board Live Job Aggregator</span>
+              <span>hadoku Job Corpus</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               Discover Active Tech Opportunities
             </h1>
             <p className="text-slate-400 text-sm">
-              Searches directly across <span className="text-slate-200 font-medium">Big Tech Careers (Google, Microsoft, Amazon, Apple, NVIDIA, Netflix, Salesforce)</span>, <span className="text-slate-200 font-medium">25+ Top Tech ATS Boards (OpenAI, Anthropic, Stripe, Cloudflare, Databricks...)</span>, <span className="text-slate-200 font-medium">SimplifyJobs (Entry-Level &amp; New Grad)</span>, <span className="text-slate-200 font-medium">LinkedIn</span>, <span className="text-slate-200 font-medium">Glassdoor</span>, <span className="text-slate-200 font-medium">Indeed</span>, <span className="text-slate-200 font-medium">ZipRecruiter</span>, <span className="text-slate-200 font-medium">The Muse</span>, <span className="text-slate-200 font-medium">We Work Remotely</span>, <span className="text-slate-200 font-medium">Himalayas</span>, <span className="text-slate-200 font-medium">Hacker News</span>, and <span className="text-slate-200 font-medium">RemoteOK</span>.
+              Searches <span className="text-slate-200 font-medium">hadoku's job corpus</span>: the Greenhouse, Ashby and Lever boards of every company on anyone's search profile, scraped nightly, plus <span className="text-slate-200 font-medium">RemoteOK</span> and <span className="text-slate-200 font-medium">Remotive</span>. Add a company to a search profile and its board joins the next scrape.
             </p>
 
             {/* Quick Career Track Presets */}

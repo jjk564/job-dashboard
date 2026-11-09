@@ -44,7 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="flex items-center space-x-2">
                 <span className="font-bold text-lg text-white tracking-tight">{appName || 'JobPulse'}</span>
                 <span className="text-xs bg-emerald-500/10 text-emerald-400 font-medium px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  Local Copilot
+                  on hadoku
                 </span>
               </div>
               <p className="text-xs text-slate-400">Autonomous Job Pipeline & ATS Assistant</p>

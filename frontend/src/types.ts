@@ -19,7 +19,8 @@ export type RoleLevel = IcLevel | ManagerLevel;
 export type RoleDiscipline = 'eng' | 'adjacent' | 'unknown';
 
 export interface SearchProfile {
-  id: number;
+  /** hadoku's profile id (a UUID, or 'default'). */
+  id: string;
   user_id?: string;
   name: string;
   is_default: boolean;
@@ -93,7 +94,9 @@ export interface Job {
   notes?: string;
   applied_at?: string;
   deadline?: string | null;
+  /** hadoku's nightly scrape stopped seeing it on its board. */
   is_expired?: boolean;
+  last_seen_at?: string | null;
   expired_at?: string | null;
   expired_reason?: string | null;
   contact_person?: string;
@@ -130,6 +133,11 @@ export interface Skill {
 }
 
 export interface DiscoveredJob {
+  /** hadoku's id for the posting: adding it to the pipeline tracks this posting. */
+  id?: JobId;
+  /** 0–100 against the search profile, when one was searched with. */
+  fit_score?: number;
+  posted_date?: string;
   title: string;
   company: string;
   location?: string;
