@@ -3,9 +3,6 @@ import {
   X, 
   Settings, 
   Sparkles, 
-  Check, 
-  Key, 
-  Shield, 
   EyeOff, 
   Eye, 
   RotateCcw, 
@@ -15,6 +12,7 @@ import {
   Building2, 
   ExternalLink 
 } from 'lucide-react';
+import { api } from '../../api/client';
 import { DiscoveredJob } from '../../types';
 
 interface SettingsModalProps {
@@ -23,21 +21,18 @@ interface SettingsModalProps {
   initialTab?: 'ai' | 'hidden';
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({
+/** Closed renders nothing; the check sits outside the body because hooks may not follow a return. */
+export const SettingsModal: React.FC<SettingsModalProps> = (props) =>
+  props.isOpen ? <SettingsBody {...props} /> : null;
+
+const SettingsBody: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   initialTab = 'ai',
 }) => {
-  if (!isOpen) return null;
 
   const [activeTab, setActiveTab] = useState<'ai' | 'hidden'>(initialTab);
 
-  // Tab 1: AI & Search API settings
-  const [aiProvider, setAiProvider] = useState<string>('template');
-  const [apiKey, setApiKey] = useState<string>('');
-  const [adzunaAppId, setAdzunaAppId] = useState<string>('');
-  const [adzunaAppKey, setAdzunaAppKey] = useState<string>('');
-  const [savedBanner, setSavedBanner] = useState(false);
 
   // Tab 2: Hidden Listings & Blacklists
   const [hiddenJobsMap, setHiddenJobsMap] = useState<Record<string, DiscoveredJob & { hiddenAt?: string }>>({});
@@ -50,16 +45,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     setActiveTab(initialTab);
 
-    // AI & API settings
-    const savedProvider = localStorage.getItem('job_pulse_ai_provider') || 'template';
-    const savedKey = localStorage.getItem('job_pulse_api_key') || '';
-    const savedAdzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || '';
-    const savedAdzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || '';
-    setAiProvider(savedProvider);
-    setApiKey(savedKey);
-    setAdzunaAppId(savedAdzunaId);
-    setAdzunaAppKey(savedAdzunaKey);
-
     // Hidden jobs & blocked companies
     loadHiddenData();
   }, [isOpen, initialTab]);
@@ -68,30 +53,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const rawHidden = localStorage.getItem('job_pulse_hidden_jobs');
       setHiddenJobsMap(rawHidden ? JSON.parse(rawHidden) : {});
-      const rawBlocked = localStorage.getItem('job_pulse_blocked_companies');
-      setBlockedCompanies(rawBlocked ? JSON.parse(rawBlocked) : []);
     } catch (err) {
-      console.error('Failed to parse hidden or blacklist data from storage:', err);
+      console.error('Failed to parse hidden listings from storage:', err);
     }
+    // Hidden companies are hadoku's, per person: the feed drops them on the server.
+    api
+      .getBlockedCompanies()
+      .then(setBlockedCompanies)
+      .catch((err) => console.error('Failed to load hidden companies:', err));
   };
 
   const notifyStorageUpdate = () => {
     window.dispatchEvent(new Event('job_pulse_storage_updated'));
-  };
-
-  // AI & Search Settings Save
-  const handleSaveAISettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    localStorage.setItem('job_pulse_ai_provider', aiProvider);
-    localStorage.setItem('job_pulse_api_key', apiKey);
-    localStorage.setItem('job_pulse_adzuna_app_id', adzunaAppId);
-    localStorage.setItem('job_pulse_adzuna_app_key', adzunaAppKey);
-    notifyStorageUpdate();
-    setSavedBanner(true);
-    setTimeout(() => {
-      setSavedBanner(false);
-      onClose();
-    }, 1000);
   };
 
   // Hidden Listings Actions
@@ -149,25 +122,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   // Blocked Companies Actions
-  const handleAddBlockedCompany = (e: React.FormEvent) => {
+  const handleAddBlockedCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newBlockedCompany.trim();
     if (!trimmed) return;
-
-    if (!blockedCompanies.some((b) => b.toLowerCase() === trimmed.toLowerCase())) {
-      const updated = [...blockedCompanies, trimmed];
-      setBlockedCompanies(updated);
-      localStorage.setItem('job_pulse_blocked_companies', JSON.stringify(updated));
+    try {
+      await api.blockCompany(trimmed);
+      setBlockedCompanies(await api.getBlockedCompanies());
       notifyStorageUpdate();
+      setNewBlockedCompany('');
+    } catch (err) {
+      console.error('Failed to hide company:', err);
     }
-    setNewBlockedCompany('');
   };
 
-  const handleRemoveBlockedCompany = (company: string) => {
-    const updated = blockedCompanies.filter((b) => b.toLowerCase() !== company.toLowerCase());
-    setBlockedCompanies(updated);
-    localStorage.setItem('job_pulse_blocked_companies', JSON.stringify(updated));
-    notifyStorageUpdate();
+  const handleRemoveBlockedCompany = async (company: string) => {
+    try {
+      await api.unblockCompany(company);
+      setBlockedCompanies(await api.getBlockedCompanies());
+      notifyStorageUpdate();
+    } catch (err) {
+      console.error('Failed to unhide company:', err);
+    }
   };
 
   return (
@@ -181,7 +157,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-slate-100 text-base">Dashboard Settings</h3>
-              <p className="text-xs text-slate-400">Configure AI tailoring, discovery APIs, and hidden job blacklists</p>
+              <p className="text-xs text-slate-400">Documents, hidden listings and hidden companies</p>
             </div>
           </div>
 
@@ -205,7 +181,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>AI & Search APIs</span>
+            <span>Documents</span>
           </button>
 
           <button
@@ -229,138 +205,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Content Body */}
         {activeTab === 'ai' ? (
-          <form onSubmit={handleSaveAISettings} className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* AI Engine Selection */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Document Tailoring & AI Engine
-              </label>
-              <p className="text-xs text-slate-400">
-                Choose how cover letters and targeted resume bullets are generated:
-              </p>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                {[
-                  { id: 'template', label: 'Offline Templates', desc: '100% Local, instant, no key required' },
-                  { id: 'ollama', label: 'Local Ollama', desc: 'Runs via localhost:11434 (Llama 3)' },
-                  { id: 'gemini', label: 'Google Gemini', desc: 'Gemini 1.5 Flash via API key' },
-                  { id: 'openai', label: 'OpenAI GPT-4o', desc: 'OpenAI API key' },
-                ].map((p) => (
-                  <button
-                    type="button"
-                    key={p.id}
-                    onClick={() => setAiProvider(p.id)}
-                    className={`p-3 rounded-xl border text-left transition ${
-                      aiProvider === p.id
-                        ? 'bg-emerald-950/40 border-emerald-500/60 text-emerald-300'
-                        : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <span className="font-bold text-xs block text-slate-200">{p.label}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{p.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* API Key */}
-            {(aiProvider === 'gemini' || aiProvider === 'openai') && (
-              <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                <label className="text-xs font-semibold text-slate-300 flex items-center space-x-1">
-                  <Key className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>API Key ({aiProvider === 'gemini' ? 'Google Gemini' : 'OpenAI'}):</span>
-                </label>
-                <input
-                  type="password"
-                  placeholder="sk-..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                />
-                <p className="text-[11px] text-slate-500">
-                  Stored securely in your local browser storage and never transmitted to third parties.
-                </p>
-              </div>
-            )}
-
-            {/* Adzuna API */}
-            <div className="space-y-2 pt-2 border-t border-slate-800">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Adzuna API (Live Search Aggregator)
-                </label>
-                <a
-                  href="https://developer.adzuna.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-emerald-400 hover:underline"
-                >
-                  Get Free API Key →
-                </a>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Enables additional live searches across millions of indexed jobs.
-              </p>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <div>
-                  <label className="text-[11px] text-slate-400 block mb-0.5">App ID:</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 52c9..."
-                    value={adzunaAppId}
-                    onChange={(e) => setAdzunaAppId(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] text-slate-400 block mb-0.5">App Key:</label>
-                  <input
-                    type="password"
-                    placeholder="e.g. 841b..."
-                    value={adzunaAppKey}
-                    onChange={(e) => setAdzunaAppKey(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Local Security Badge */}
-            <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs text-slate-400 flex items-center space-x-2.5">
-              <Shield className="w-5 h-5 text-emerald-400 shrink-0" />
-              <span>
-                All applications, contacts, and personal information are stored exclusively in your local SQLite database (<code className="text-slate-300">jobs.db</code>).
-              </span>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="pt-2 flex justify-between items-center">
-              {savedBanner ? (
-                <span className="text-xs text-emerald-400 font-semibold flex items-center space-x-1">
-                  <Check className="w-4 h-4" />
-                  <span>Settings saved!</span>
-                </span>
-              ) : <div />}
-
-              <div className="flex space-x-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-md"
-                >
-                  Save Settings
-                </button>
-              </div>
-            </div>
-          </form>
+          <div className="flex-1 overflow-y-auto p-6 space-y-3 text-sm text-slate-300">
+            <p className="font-bold text-slate-100">Documents come from hadoku</p>
+            <p className="text-xs text-slate-400">
+              Tailored résumés, cover letters, screening answers and packets are written by hadoku's résumé service,
+              signed in as you on hadoku.me. There is no provider or API key to set here, and Discover searches hadoku's
+              corpus, so no job-board keys either.
+            </p>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {/* Section 1: Hidden Job Listings */}

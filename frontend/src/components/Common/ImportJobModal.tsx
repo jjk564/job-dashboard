@@ -3,7 +3,6 @@ import {
   X, 
   Link2, 
   Sparkles, 
-  Building2, 
   Check, 
   DollarSign, 
   MapPin, 
@@ -19,12 +18,13 @@ interface ImportJobModalProps {
   onJobAdded: (job: Job) => void;
 }
 
-export const ImportJobModal: React.FC<ImportJobModalProps> = ({
-  isOpen,
+/** Closed renders nothing; the check sits outside the body because hooks may not follow a return. */
+export const ImportJobModal: React.FC<ImportJobModalProps> = (props) => (props.isOpen ? <ImportJobModalBody {...props} /> : null);
+
+const ImportJobModalBody: React.FC<ImportJobModalProps> = ({
   onClose,
   onJobAdded,
 }) => {
-  if (!isOpen) return null;
 
   const [url, setUrl] = useState('');
   const [scraping, setScraping] = useState(false);

@@ -9,7 +9,6 @@ import {
   RefreshCw, 
   ExternalLink,
   Bot,
-  HelpCircle
 } from 'lucide-react';
 import { Job, FitBreakdown, AutofillPayload } from '../../types';
 import { api } from '../../api/client';
@@ -160,7 +159,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
           }`}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>ATS Match ({job.fit_score || 0}%)</span>
+          <span>ATS Match ({matchData ? matchData.score : (job.fit_score ?? 0)}%)</span>
         </button>
 
         <button

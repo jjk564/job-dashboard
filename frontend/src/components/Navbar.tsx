@@ -4,6 +4,7 @@ import {
   Compass, 
   UserCheck, 
   BarChart3, 
+  Send,
   Plus, 
   Link2, 
   Settings 
@@ -13,8 +14,8 @@ interface NavbarProps {
   appName?: string;
   /** Inside hadoku.me the platform header carries the name, so the brand hides. */
   embedded?: boolean;
-  activeTab: 'pipeline' | 'discovery' | 'profile' | 'analytics';
-  setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
+  activeTab: 'pipeline' | 'discovery' | 'applications' | 'profile' | 'analytics';
+  setActiveTab: (tab: 'pipeline' | 'discovery' | 'applications' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
   onOpenImportUrl: () => void;
   onOpenSettings: (tab?: 'ai' | 'hidden') => void;
@@ -80,6 +81,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Compass className="w-4 h-4" />
               <span>Discover Jobs</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('applications')}
+              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'applications'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Send className="w-4 h-4" />
+              <span>Applications</span>
             </button>
 
             <button

@@ -6,6 +6,7 @@ import { KanbanBoard } from './components/Kanban/KanbanBoard';
 // first-load JS (60 kB gzip), and Discovery alone is most of this bundle.
 const JobDiscovery = lazy(() => import('./components/Discovery/JobDiscovery').then(m => ({ default: m.JobDiscovery })));
 const ProfileManager = lazy(() => import('./components/Profile/ProfileManager').then(m => ({ default: m.ProfileManager })));
+const ApplicationsTab = lazy(() => import('./components/Applications/ApplicationsTab').then(m => ({ default: m.ApplicationsTab })));
 const AnalyticsDashboard = lazy(() => import('./components/Analytics/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
 const JobDetailDrawer = lazy(() => import('./components/JobDetails/JobDetailDrawer').then(m => ({ default: m.JobDetailDrawer })));
 const ImportJobModal = lazy(() => import('./components/Common/ImportJobModal').then(m => ({ default: m.ImportJobModal })));
@@ -15,8 +16,8 @@ import { Job, JobStatus } from './types';
 import { api } from './api/client';
 import type { JobPlatformProps } from './entry';
 
-type AppTab = 'pipeline' | 'discovery' | 'profile' | 'analytics';
-const VALID_TABS: AppTab[] = ['pipeline', 'discovery', 'profile', 'analytics'];
+type AppTab = 'pipeline' | 'discovery' | 'applications' | 'profile' | 'analytics';
+const VALID_TABS: AppTab[] = ['pipeline', 'discovery', 'applications', 'profile', 'analytics'];
 
 function getInitialTab(): AppTab {
   if (typeof window !== 'undefined') {
@@ -247,6 +248,14 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme, embedded }) =>
               />
               </Suspense>
             </div>
+            )}
+
+            {activeTab === 'applications' && (
+              <div className="flex-1 overflow-y-auto">
+                <Suspense fallback={null}>
+                  <ApplicationsTab />
+                </Suspense>
+              </div>
             )}
 
             {activeTab === 'profile' && (

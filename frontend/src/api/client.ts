@@ -116,6 +116,48 @@ interface ApplicationExtras {
   cached: boolean;
 }
 
+export type ApplicationStatus = 'queued' | 'filled' | 'approved' | 'submitted' | 'needs_manual' | 'failed' | 'job_closed';
+
+/** One posting handed to hadoku's form runner (GET /applications). */
+export interface ApplicationEntry {
+  id: string;
+  job_id: JobId;
+  variant_slug: string;
+  mode: 'review' | 'auto';
+  status: ApplicationStatus;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  company: string;
+  location: string;
+  form_url: string;
+  still_unanswered?: string[];
+}
+
+/** A tailored résumé + cover letter page minted for a posting (GET /jobs/packets). */
+export interface PacketEntry {
+  job_id: JobId;
+  title: string;
+  company: string;
+  location: string;
+  state: string;
+  variant_slug: string;
+  updated_at: string;
+}
+
+/** A form question the runner met and could not answer (GET /unanswered-questions). */
+export interface UnansweredQuestion {
+  question_key: string;
+  question: string;
+  companies: string[];
+  applications: number;
+  blocking: number;
+  /** The form's choices; empty for free text. An answer must match one verbatim. */
+  options: string[];
+  multi: boolean;
+}
+
 // ── mappings ─────────────────────────────────────────────────────────────────
 
 const PIPELINE_STATES: HadokuState[] = ['saved', 'interested', 'applied', 'interviewing', 'offered', 'rejected'];
@@ -640,6 +682,67 @@ export const api = {
   // Company matching for search profiles (the scraper's /match, read-only).
   async matchScraperCompanies(names: string[]): Promise<{ results: CompanyMatch[] }> {
     return hadoku<{ results: CompanyMatch[] }>('/companies/match', json('POST', { names }));
+  },
+
+  // The application runner: hadoku fills a posting's form for you, you
+  // approve the filled form, and only then is it submitted.
+  /**
+   * Hand a posting to the runner. It needs a packet (tailored résumé + cover
+   * letter page) to fill from, so one is minted first if this posting has none.
+   */
+  async queueApplication(jobId: JobId): Promise<ApplicationEntry> {
+    const packets = await hadoku<{ packets: PacketEntry[] }>('/jobs/packets');
+    if (!packets.packets.some(p => p.job_id === jobId)) await this.mintResumePacket(jobId);
+    const res = await hadoku<{ application: ApplicationEntry }>(`${jobPath(jobId)}/apply`, json('POST', { mode: 'review' }));
+    return res.application;
+  },
+
+  async getApplications(): Promise<ApplicationEntry[]> {
+    return (await hadoku<{ applications: ApplicationEntry[] }>('/applications')).applications;
+  },
+
+  async approveApplication(id: string): Promise<ApplicationEntry> {
+    const res = await hadoku<{ application: ApplicationEntry }>(
+      `/applications/${encodeURIComponent(id)}/approve`,
+      { method: 'POST' },
+    );
+    return res.application;
+  },
+
+  async getPackets(): Promise<PacketEntry[]> {
+    return (await hadoku<{ packets: PacketEntry[] }>('/jobs/packets')).packets;
+  },
+
+  async getUnansweredQuestions(): Promise<UnansweredQuestion[]> {
+    return (await hadoku<{ questions: UnansweredQuestion[] }>('/unanswered-questions')).questions;
+  },
+
+  /** A standing answer: the runner uses it on every form that asks this question. */
+  async saveAnswer(question: string, answer: string): Promise<void> {
+    await hadoku('/application-answers', json('PUT', { question, answer }));
+  },
+
+  /** Up/down vote a posting, which steers what the feed ranks for you; null clears it. */
+  async voteJob(jobId: JobId, vote: 1 | -1 | null): Promise<void> {
+    if (vote === null) {
+      await hadoku(`${jobPath(jobId)}/feedback`, { method: 'DELETE' });
+    } else {
+      await hadoku(`${jobPath(jobId)}/feedback`, json('PUT', { vote, reasons: [] }));
+    }
+  },
+
+  /** Employers hidden from your Discover feed (matched on the company name). */
+  async getBlockedCompanies(): Promise<string[]> {
+    const data = await hadoku<{ companies: { company: string }[] }>('/blocked-companies');
+    return data.companies.map(c => c.company);
+  },
+
+  async blockCompany(company: string): Promise<void> {
+    await hadoku('/blocked-companies', json('PUT', { company }));
+  },
+
+  async unblockCompany(company: string): Promise<void> {
+    await hadoku(`/blocked-companies?company=${encodeURIComponent(company)}`, { method: 'DELETE' });
   },
 
   // Analytics: hadoku's insights over this person's own pipeline.

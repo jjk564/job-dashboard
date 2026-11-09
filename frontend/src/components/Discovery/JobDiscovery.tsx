@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, 
-  Sparkles, 
   Building2, 
   MapPin, 
   DollarSign, 
@@ -1065,15 +1064,13 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     }
   });
 
-  // Blocked Companies & Recruiters (persisted in localStorage)
-  const [blockedCompanies, setBlockedCompanies] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem('job_pulse_blocked_companies');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Hidden companies are hadoku's, per person (Settings and the drawer edit
+  // them). hadoku's feed already drops exact matches on the server; this list
+  // also hides near-matches ("Acme" hides "Acme Corp") on the client.
+  const [blockedCompanies, setBlockedCompanies] = useState<string[]>([]);
+  useEffect(() => {
+    api.getBlockedCompanies().then(setBlockedCompanies).catch(() => {});
+  }, []);
 
   const [showHiddenOnly, setShowHiddenOnly] = useState(false);
   const [isManageHiddenOpen, setIsManageHiddenOpen] = useState(false);
@@ -1109,8 +1106,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       try {
         const rawHidden = localStorage.getItem('job_pulse_hidden_jobs');
         setHiddenJobsMap(rawHidden ? JSON.parse(rawHidden) : {});
-        const rawBlocked = localStorage.getItem('job_pulse_blocked_companies');
-        setBlockedCompanies(rawBlocked ? JSON.parse(rawBlocked) : []);
+        api.getBlockedCompanies().then(setBlockedCompanies).catch(() => {});
       } catch (err) {
         console.error('Failed to sync storage:', err);
       }
