@@ -52,3 +52,10 @@
   flex-direction: column;
   height: 100dvh;
 }
+
+/* The platform header gets its spacing from the page container in other apps;
+   JobPulse runs full-width, so the header carries its own. */
+.jobpulse-host__header {
+  flex-shrink: 0;
+  padding: var(--hdk-space-md) var(--hdk-space-lg) 0;
+}

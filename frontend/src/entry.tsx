@@ -46,7 +46,9 @@ function Shell(props: JobPlatformProps & { containerRef: React.RefObject<HTMLEle
       data-theme={theme}
       data-dark-theme={isDarkTheme ? 'true' : 'false'}
     >
-      <AppHeader title={props.appName ?? 'JobPulse'} />
+      <div className="jobpulse-host__header">
+        <AppHeader title={props.appName ?? 'JobPulse'} />
+      </div>
       <App {...props} theme={theme} embedded />
     </main>
   );
