@@ -2558,15 +2558,16 @@ async def fetch_hadoku_scraper_jobs(
             if not get_hadoku_user_key():
                 return []
             
-            # Fetch multiple pages in parallel: recent date-sorted + remote postings
+            # Fetch multiple pages in parallel: junior/early-career profile + recent date + remote postings
+            HADOKU_JUNIOR_PROFILE_ID = "c97441d2-f543-4991-b0ff-056f4469ee70"
             fetch_tasks = [
+                fetch_hadoku_jobplatform_jobs(limit=100, page=1, profile_id=HADOKU_JUNIOR_PROFILE_ID, sort="score"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=2, profile_id=HADOKU_JUNIOR_PROFILE_ID, sort="score"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=3, profile_id=HADOKU_JUNIOR_PROFILE_ID, sort="score"),
                 fetch_hadoku_jobplatform_jobs(limit=100, page=1, sort="date"),
                 fetch_hadoku_jobplatform_jobs(limit=100, page=2, sort="date"),
-                fetch_hadoku_jobplatform_jobs(limit=100, page=3, sort="date"),
-                fetch_hadoku_jobplatform_jobs(limit=100, page=4, sort="date"),
                 fetch_hadoku_jobplatform_jobs(limit=100, page=1, workplace="remote", sort="date"),
                 fetch_hadoku_jobplatform_jobs(limit=100, page=2, workplace="remote", sort="date"),
-                fetch_hadoku_jobplatform_jobs(limit=100, page=3, workplace="remote", sort="date"),
             ]
             pages_result = await asyncio.gather(*fetch_tasks, return_exceptions=True)
             

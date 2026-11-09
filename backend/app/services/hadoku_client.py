@@ -582,11 +582,13 @@ async def fetch_hadoku_jobplatform_jobs(
     workplace: Optional[str] = None,
     min_salary: Optional[int] = None,
     sort: str = "date",
+    profile_id: Optional[str] = None,
     explicit_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetches scraped postings from https://hadoku.me/jobplatform/api/jobs (populated by hadoku-scrape
     across 200+ Greenhouse, Ashby, Lever, RemoteOK, Remotive, and Muse targets).
+    Supports profile_id filtering/scoring (e.g., Early Career & Junior Tech profile).
     """
     headers = _auth_headers(explicit_key)
     params: Dict[str, Any] = {
@@ -594,6 +596,8 @@ async def fetch_hadoku_jobplatform_jobs(
         "page": max(1, page),
         "sort": sort,
     }
+    if profile_id:
+        params["profile_id"] = profile_id
     if workplace in ("remote", "hybrid", "onsite"):
         params["workplace"] = workplace
     if min_salary and min_salary > 0:
