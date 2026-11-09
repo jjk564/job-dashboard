@@ -5,8 +5,6 @@ import {
   Plus, 
   Trash2, 
   Check, 
-  Sparkles, 
-  Link2, 
   FileText 
 } from 'lucide-react';
 import { Profile, Skill, Job } from '../../types';
@@ -32,11 +30,6 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({ onJobsScored }) 
 
   useEffect(() => {
     loadData();
-    const onReload = () => {
-      loadData(true);
-    };
-    window.addEventListener('jobpulse:backend-reloaded', onReload);
-    return () => window.removeEventListener('jobpulse:backend-reloaded', onReload);
   }, []);
 
   const loadData = async (silent: boolean = false) => {

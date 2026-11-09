@@ -47,11 +47,6 @@ export default defineConfig({
       // request carries the hadoku_session cookie, exactly as on hadoku.me.
       '/jobplatform/api': hadoku,
       '/session': hadoku,
-      // The local FastAPI backend, until each call has moved (docs/HADOKU_MERGE.md).
-      '/api': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
     },
   },
 })
