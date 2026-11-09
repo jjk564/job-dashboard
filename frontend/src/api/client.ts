@@ -277,15 +277,10 @@ const percent = (rate: number | null) => (rate === null ? 0 : Math.round(rate * 
 export const api = {
   // Jobs: the pipeline. A posting is in a person's pipeline exactly when they
   // have a state for it; ARCHIVED is hadoku's 'dismissed', which GET /pipeline
-  // leaves out and the feed's state= filter returns.
+  // includes on request (include_dismissed).
   async getJobs(status?: string, priority?: string): Promise<Job[]> {
-    const [inPlay, archived] = await Promise.all([
-      hadoku<{ items: PipelineItem[] }>('/pipeline'),
-      status && status !== 'ARCHIVED'
-        ? Promise.resolve({ jobs: [] as HadokuJob[] })
-        : hadoku<FeedPage>('/jobs?state=dismissed&limit=100&sort=date'),
-    ]);
-    const jobs = [...inPlay.items.map(jobFromPipeline), ...archived.jobs.map(j => jobFromDetail(j))];
+    const { items } = await hadoku<{ items: PipelineItem[] }>('/pipeline?include_dismissed=true');
+    const jobs = items.map(jobFromPipeline);
     return jobs.filter(j => (!status || j.status === status) && (!priority || j.priority === priority));
   },
 
@@ -390,7 +385,6 @@ export const api = {
     includeRemote?: boolean;
     minSalary?: number;
     includeUndisclosedSalary?: boolean;
-    usOnly?: boolean;
     track?: string;
     profileId?: string;
     pages?: number;
@@ -404,7 +398,6 @@ export const api = {
       params.set('include_remote', String(opts.includeRemote ?? true));
     }
     if (opts.minSalary && opts.minSalary > 0) params.set('min_salary', String(opts.minSalary));
-    if (opts.usOnly) params.set('us_only', 'true');
     if (opts.track === 'ic' || opts.track === 'manager') params.set('track', opts.track);
     if (opts.profileId) {
       params.set('profile_id', opts.profileId);

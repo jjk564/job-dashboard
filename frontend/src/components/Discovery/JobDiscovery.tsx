@@ -979,10 +979,6 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const saved = localStorage.getItem('job_pulse_discover_track');
     return saved === 'software' || saved === 'it_admin' ? saved : 'all';
   });
-  const [usOnly, setUsOnly] = useState<boolean>(() => {
-    const saved = localStorage.getItem('job_pulse_discover_us_only');
-    return saved !== null ? saved === 'true' : true;
-  });
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
   const [jobs, setJobs] = useState<DiscoveredJob[]>(() => {
@@ -1002,11 +998,10 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       localStorage.setItem('job_pulse_discover_filters', JSON.stringify(selectedFilters));
       localStorage.setItem('job_pulse_discover_source', selectedSource);
       localStorage.setItem('job_pulse_discover_track', activeTrack);
-      localStorage.setItem('job_pulse_discover_us_only', String(usOnly));
     } catch {
       // Ignore storage errors
     }
-  }, [query, selectedFilters, selectedSource, activeTrack, usOnly]);
+  }, [query, selectedFilters, selectedSource, activeTrack]);
 
   // Location & Radius Filtering State (persisted in localStorage)
   const [searchLocation, setSearchLocation] = useState<string>(() => {
@@ -1159,7 +1154,6 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   const fetchJobs = async (
     searchQuery: string = query,
     source: string = selectedSource,
-    isUsOnly: boolean = usOnly,
     loc: string = searchLocation,
     rad: number = searchRadius,
     incRemote: boolean = includeRemote,
@@ -1184,7 +1178,6 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
         includeRemote: incRemote,
         minSalary: minSal > 0 ? minSal : undefined,
         includeUndisclosedSalary: incUnlisted,
-        usOnly: isUsOnly,
       });
       if (currentFetchId === fetchSequenceRef.current) {
         setJobs(results);
@@ -1213,7 +1206,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     const incRemoteBool = savedIncRemote !== null ? savedIncRemote === 'true' : true;
     const initialEffectiveQuery = getEffectiveSearchQuery(query, selectedFilters, activeTrack);
 
-    fetchJobs(initialEffectiveQuery, selectedSource, usOnly, savedLoc, radNum, incRemoteBool, minSalary, includeUnlistedSalary);
+    fetchJobs(initialEffectiveQuery, selectedSource, savedLoc, radNum, incRemoteBool, minSalary, includeUnlistedSalary);
 
     // Load profile location & compensation for quick suggestions
     api.getProfile().then((prof) => {
@@ -1242,7 +1235,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     localStorage.setItem('job_pulse_search_radius', String(newRad));
     if (searchLocation.trim()) {
       const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, newRad, includeRemote);
+      fetchJobs(effectiveQuery, selectedSource, searchLocation, newRad, includeRemote);
     }
   };
 
@@ -1251,14 +1244,14 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setIncludeRemote(nextVal);
     localStorage.setItem('job_pulse_include_remote', String(nextVal));
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, nextVal);
+    fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, nextVal);
   };
 
   const handleClearLocation = () => {
     setSearchLocation('');
     localStorage.removeItem('job_pulse_search_location');
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, selectedSource, usOnly, '', searchRadius, includeRemote);
+    fetchJobs(effectiveQuery, selectedSource, '', searchRadius, includeRemote);
   };
 
   const handleDetectLocation = () => {
@@ -1288,7 +1281,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
             setSearchLocation(locStr);
             localStorage.setItem('job_pulse_search_location', locStr);
             const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-            fetchJobs(effectiveQuery, selectedSource, usOnly, locStr, searchRadius, includeRemote);
+            fetchJobs(effectiveQuery, selectedSource, locStr, searchRadius, includeRemote);
           }
         } catch (err) {
           console.error('Failed to reverse geocode:', err);
@@ -1314,7 +1307,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     // Debounce live fetch when user pauses typing
     queryDebounceRef.current = setTimeout(() => {
       const effective = getEffectiveSearchQuery(trimmed, selectedFilters);
-      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+      fetchJobs(effective, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
     }, 550);
   };
 
@@ -1330,7 +1323,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (queryDebounceRef.current) clearTimeout(queryDebounceRef.current);
       const effectiveQuery = getEffectiveSearchQuery(trimmedQuery, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+      fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       return;
     }
 
@@ -1341,7 +1334,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       }
       debounceTimerRef.current = setTimeout(() => {
         const effectiveQuery = getEffectiveSearchQuery('', nextFilters);
-        fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+        fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       }, 450);
     }
   };
@@ -1358,7 +1351,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (queryDebounceRef.current) clearTimeout(queryDebounceRef.current);
       const effectiveQuery = getEffectiveSearchQuery(trimmedQuery, nextFilters);
-      fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+      fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       return;
     }
 
@@ -1368,7 +1361,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       }
       debounceTimerRef.current = setTimeout(() => {
         const effectiveQuery = getEffectiveSearchQuery('', nextFilters);
-        fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
+        fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary);
       }, 450);
     }
   };
@@ -1382,7 +1375,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(queryDebounceRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
+    fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
   };
 
   const handleSourceSelect = (sourceId: string) => {
@@ -1392,7 +1385,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-    fetchJobs(effectiveQuery, nextSource, usOnly, searchLocation, searchRadius, includeRemote);
+    fetchJobs(effectiveQuery, nextSource, searchLocation, searchRadius, includeRemote);
   };
 
   const handleSelectTrack = (track: 'all' | 'software' | 'it_admin') => {
@@ -1415,7 +1408,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       clearTimeout(debounceTimerRef.current);
     }
     const effectiveQuery = getEffectiveSearchQuery(newQuery, newFilters, track);
-    fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+    fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote);
   };
 
   const handleSalaryRateTypeChange = (type: 'annual' | 'hourly') => {
@@ -1453,7 +1446,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     setActiveTrack('all');
     setMinSalary(0);
     localStorage.removeItem('job_pulse_min_salary');
-    fetchJobs('developer', 'all', usOnly, searchLocation, searchRadius, includeRemote, 0, includeUnlistedSalary);
+    fetchJobs('developer', 'all', searchLocation, searchRadius, includeRemote, 0, includeUnlistedSalary);
   };
 
   // Compound client-side filtering:
@@ -1581,7 +1574,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
   // Reset pagination to page 1 whenever search, filters, source, location, compensation, or view mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, selectedFilters, selectedSource, usOnly, showHiddenOnly, hidePipelineJobs, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary]);
+  }, [query, selectedFilters, selectedSource, showHiddenOnly, hidePipelineJobs, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary]);
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -1711,27 +1704,9 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           )}
         </div>
 
-        {/* US Jobs Only Toggle */}
-        <button
-          type="button"
-          onClick={() => {
-            const newVal = !usOnly;
-            setUsOnly(newVal);
-            fetchJobs(query.trim(), selectedSource, newVal);
-          }}
-          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition ${
-            usOnly
-              ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 shadow-xs'
-              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-white hover:bg-slate-800'
-          }`}
-          title="Toggle US-Only jobs filter"
-        >
-          <div className="flex items-center space-x-2">
-            <span className="text-sm">🇺🇸</span>
-            <span>US Jobs Only</span>
-          </div>
-          <span className={`w-2.5 h-2.5 rounded-full ${usOnly ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-        </button>
+        {/* US-only is not offered: hadoku cannot tell yet whether a posting is in
+            the US (its place codes collide: IN is Indiana and India), and a
+            switch that filters nothing would be worse than none. */}
 
         {/* Hidden Listings Toggle */}
         <div className="flex items-center space-x-2">
@@ -1820,7 +1795,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-                  fetchJobs(effectiveQuery, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+                  fetchJobs(effectiveQuery, selectedSource, searchLocation, searchRadius, includeRemote);
                 }
               }}
               className="w-full pl-8 pr-10 py-1.5 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
@@ -1845,7 +1820,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
               onClick={() => {
                 handleLocationChange(profileLocation);
                 const effectiveQuery = getEffectiveSearchQuery(query, selectedFilters);
-                fetchJobs(effectiveQuery, selectedSource, usOnly, profileLocation, searchRadius, includeRemote);
+                fetchJobs(effectiveQuery, selectedSource, profileLocation, searchRadius, includeRemote);
               }}
               className="text-[11px] text-emerald-400 hover:text-emerald-300 transition flex items-center space-x-1"
             >
@@ -2245,7 +2220,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                     onClick={() => {
                       setQuery('');
                       const effective = getEffectiveSearchQuery('', selectedFilters);
-                      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+                      fetchJobs(effective, selectedSource, searchLocation, searchRadius, includeRemote);
                     }}
                     className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-100 transition"
                     title="Clear search query"
@@ -2317,7 +2292,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
           </div>
         </div>
           {/* Active Filter Indicators Bar */}
-        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || usOnly || searchLocation.trim() || minSalary > 0 || !includeUnlistedSalary) && (
+        {(query.trim() || selectedFilters.length > 0 || selectedSource !== 'all' || searchLocation.trim() || minSalary > 0 || !includeUnlistedSalary) && (
           <div className="flex flex-wrap items-center gap-2 p-2.5 bg-slate-800/50 border border-slate-700/50 rounded-xl text-xs">
             <span className="text-slate-400 flex items-center gap-1.5 font-medium">
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
@@ -2386,7 +2361,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                   onClick={() => {
                     setQuery('');
                     const effective = getEffectiveSearchQuery('', selectedFilters);
-                    fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote);
+                    fetchJobs(effective, selectedSource, searchLocation, searchRadius, includeRemote);
                   }}
                   className="hover:text-white transition p-0.5 rounded-full hover:bg-emerald-800/50"
                   title="Remove search query"
@@ -2443,12 +2418,6 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
               </span>
             )}
 
-            {/* US Only Pill */}
-            {usOnly && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800/80 text-emerald-400 border border-emerald-900/40 font-medium">
-                <span>🇺🇸 US Jobs Only</span>
-              </span>
-            )}
 
             {/* Hide In Pipeline Pill */}
             {hidePipelineJobs && inPipelineCount > 0 && (
@@ -2604,7 +2573,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                     type="button"
                     onClick={() => {
                       const effective = getEffectiveSearchQuery(query, selectedFilters);
-                      fetchJobs(effective, selectedSource, usOnly, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
+                      fetchJobs(effective, selectedSource, searchLocation, searchRadius, includeRemote, minSalary, includeUnlistedSalary, true);
                     }}
                     className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-md"
                   >
