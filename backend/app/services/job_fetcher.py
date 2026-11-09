@@ -2547,6 +2547,8 @@ async def fetch_hadoku_scraper_jobs(
     Pulls scraped postings from the Hadoku JobPlatform D1 corpus (populated nightly
     and on-demand by hadoku-scrape across 200+ Greenhouse, Ashby, Lever, RemoteOK,
     Remotive, and Muse targets).
+    Fetches both general date-sorted and remote-specific postings in parallel,
+    cleans synthetic test entries, and normalizes them for discovery.
     """
     from .hadoku_client import fetch_hadoku_jobplatform_jobs, get_hadoku_user_key
 
@@ -2555,16 +2557,28 @@ async def fetch_hadoku_scraper_jobs(
         if now - _HADOKU_CORPUS_CACHE["timestamp"] > 300 or not _HADOKU_CORPUS_CACHE["jobs"]:
             if not get_hadoku_user_key():
                 return []
-            page1, page2 = await asyncio.gather(
+            
+            # Fetch multiple pages in parallel: recent date-sorted + remote postings
+            fetch_tasks = [
                 fetch_hadoku_jobplatform_jobs(limit=100, page=1, sort="date"),
                 fetch_hadoku_jobplatform_jobs(limit=100, page=2, sort="date"),
-                return_exceptions=True,
-            )
+                fetch_hadoku_jobplatform_jobs(limit=100, page=3, sort="date"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=4, sort="date"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=1, workplace="remote", sort="date"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=2, workplace="remote", sort="date"),
+                fetch_hadoku_jobplatform_jobs(limit=100, page=3, workplace="remote", sort="date"),
+            ]
+            pages_result = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            
             raw_list = []
-            if isinstance(page1, list):
-                raw_list.extend(page1)
-            if isinstance(page2, list):
-                raw_list.extend(page2)
+            seen_raw_keys = set()
+            for batch in pages_result:
+                if isinstance(batch, list):
+                    for item in batch:
+                        key = (item.get("url") or (item.get("title"), item.get("company")))
+                        if key not in seen_raw_keys:
+                            seen_raw_keys.add(key)
+                            raw_list.append(item)
 
             normalized = []
             for item in raw_list:
@@ -2573,9 +2587,18 @@ async def fetch_hadoku_scraper_jobs(
                 apply_url = (item.get("url") or item.get("application_url") or "").strip()
                 if not title or not company or not apply_url:
                     continue
+
+                # Filter out synthetic test jobs (e.g. bug bash testing or synthetic deauth tests)
+                title_lower = title.lower()
+                company_lower = company.lower()
+                if company_lower == "linkedin" and any(
+                    k in title_lower for k in ["bug bash", "deauth test", "sj_test", "rf_test", "test_job", "test job", "anirban", "sgupta", "bo prim"]
+                ):
+                    continue
+
                 loc = (item.get("location") or "United States").strip()
                 wp_raw = (item.get("workplace_type") or "").lower().strip()
-                is_rem = wp_raw == "remote" or "remote" in loc.lower() or "remote" in title.lower()
+                is_rem = wp_raw == "remote" or "remote" in loc.lower() or "remote" in title_lower
                 wp = "remote" if is_rem else ("onsite" if wp_raw in ("onsite", "on_site") else "hybrid")
                 ats_tag = (item.get("ats") or item.get("source_site") or "hadoku").lower()
                 slug_tag = (item.get("slug") or "").lower()
@@ -2616,7 +2639,7 @@ async def fetch_hadoku_scraper_jobs(
             ):
                 continue
             results.append(j)
-            if len(results) >= 150:
+            if len(results) >= 400:
                 break
         return results
     except Exception as e:

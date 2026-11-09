@@ -920,7 +920,7 @@ const getEffectiveSearchQuery = (
     parts.push(FILTER_SEARCH_TERMS[wpFilters[0]] || wpFilters[0]);
   }
 
-  const fallback = track === 'it_admin' ? 'it support' : 'developer';
+  const fallback = track === 'it_admin' ? 'it support' : (track === 'software' ? 'developer' : '');
   return parts.join(' ').trim() || fallback;
 };
 
@@ -1185,7 +1185,8 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
     try {
       const adzunaId = localStorage.getItem('job_pulse_adzuna_app_id') || undefined;
       const adzunaKey = localStorage.getItem('job_pulse_adzuna_app_key') || undefined;
-      const effectiveQuery = searchQuery.trim() || 'developer';
+      const requiresFallback = ['indeed', 'glassdoor', 'ziprecruiter'].includes(source.toLowerCase());
+      const effectiveQuery = searchQuery.trim() || (requiresFallback ? (activeTrack === 'it_admin' ? 'it support' : 'developer') : '');
       const effectiveRad = rad > 0 ? rad : undefined;
       const effectiveLoc = loc.trim() ? loc.trim() : undefined;
       const results = await api.searchDiscoveredJobs(
