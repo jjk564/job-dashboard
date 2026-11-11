@@ -11,6 +11,7 @@
  * `{ success: false, error, message }`. The message is written for a person.
  */
 import type { Activity, Job, JobStatus, Priority } from '../types';
+import { trackedFetch } from '../telemetry';
 
 export const HADOKU_API = '/jobplatform/api';
 
@@ -35,7 +36,7 @@ export async function hadoku<T>(path: string, init: RequestInit = {}): Promise<T
   if (init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${HADOKU_API}${path}`, { ...init, headers, credentials: 'include' });
+  const res = await trackedFetch(`${HADOKU_API}${path}`, { ...init, headers, credentials: 'include' });
   let body: Wrapped<T> | null = null;
   try {
     body = (await res.json()) as Wrapped<T>;

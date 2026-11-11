@@ -463,6 +463,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   onDragOver={(e) => handleDragOverColumn(e, col.id)}
                   onDragLeave={(e) => handleDragLeaveColumn(e, col.id)}
                   onDrop={(e) => handleDropOnColumn(e, col.id)}
+                  data-telemetry="Archive column"
                   onClick={toggleArchive}
                   className={`w-14 shrink-0 flex flex-col items-center py-4 rounded-2xl border transition-all duration-200 select-none cursor-pointer group ${
                     isTargetColumn && canDropHere

@@ -27,6 +27,7 @@ import {
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
 import { checkJobLocationMatchesRange } from '../../utils/locationMatcher';
+import { trackedFetch } from '../../telemetry';
 
 export interface JobDiscoveryProps {
   pipelineJobs?: Job[];
@@ -1264,7 +1265,7 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
-          const res = await fetch(
+          const res = await trackedFetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`
           );
           let locStr = '';

@@ -8,6 +8,8 @@ import '@wolffm/themes/style.css';
 import '@wolffm/task-ui-components/theme-picker.css';
 import '@wolffm/task-ui-components/app-header.css';
 import App from './App';
+import { CrashBoundary } from './components/CrashBoundary';
+import { startTelemetry } from './telemetry';
 import './index.css';
 
 /**
@@ -49,23 +51,30 @@ function Shell(props: JobPlatformProps & { containerRef: React.RefObject<HTMLEle
       <div className="jobpulse-host__header">
         <AppHeader title={props.appName ?? 'JobPulse'} />
       </div>
-      <App {...props} theme={theme} embedded />
+      <CrashBoundary>
+        <App {...props} theme={theme} embedded />
+      </CrashBoundary>
     </main>
   );
 }
 
 interface JobPlatformElement extends HTMLElement {
   __root?: Root;
+  __stopTelemetry?: () => void;
 }
 
 export function mount(el: HTMLElement, props: JobPlatformProps = {}) {
   const root = createRoot(el);
   root.render(<Hosted {...props} />);
   (el as JobPlatformElement).__root = root;
+  // Every control and every failed call, to hadoku's service_events via the
+  // jobplatform worker's relay (see src/telemetry.ts).
+  (el as JobPlatformElement).__stopTelemetry = startTelemetry(el, { app: 'jobpulse' });
   logger.info('[jobpulse] mounted', { theme: props.theme });
 }
 
 export function unmount(el: HTMLElement) {
+  (el as JobPlatformElement).__stopTelemetry?.();
   (el as JobPlatformElement).__root?.unmount();
   logger.info('[jobpulse] unmounted');
 }
