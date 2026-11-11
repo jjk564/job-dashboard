@@ -1,3 +1,6 @@
+/** hadoku's posting id: `<ats>_<board id>` (greenhouse_123), or manual_<hash> for one typed in. */
+export type JobId = string;
+
 export type JobStatus = 
   | 'TO_APPLY' 
   | 'APPLIED' 
@@ -16,7 +19,8 @@ export type RoleLevel = IcLevel | ManagerLevel;
 export type RoleDiscipline = 'eng' | 'adjacent' | 'unknown';
 
 export interface SearchProfile {
-  id: number;
+  /** hadoku's profile id (a UUID, or 'default'). */
+  id: string;
   user_id?: string;
   name: string;
   is_default: boolean;
@@ -36,7 +40,7 @@ export interface SearchProfile {
 
 export interface Activity {
   id: number;
-  job_id: number;
+  job_id: JobId;
   activity_type: string;
   title: string;
   details?: string;
@@ -45,7 +49,7 @@ export interface Activity {
 
 export interface TailoredDocument {
   id: number;
-  job_id: number;
+  job_id: JobId;
   doc_type: string;
   content: string;
   created_at?: string;
@@ -68,7 +72,7 @@ export interface FitBreakdown {
 }
 
 export interface Job {
-  id: number;
+  id: JobId;
   title: string;
   company: string;
   location?: string;
@@ -90,7 +94,9 @@ export interface Job {
   notes?: string;
   applied_at?: string;
   deadline?: string | null;
+  /** hadoku's nightly scrape stopped seeing it on its board. */
   is_expired?: boolean;
+  last_seen_at?: string | null;
   expired_at?: string | null;
   expired_reason?: string | null;
   contact_person?: string;
@@ -127,6 +133,11 @@ export interface Skill {
 }
 
 export interface DiscoveredJob {
+  /** hadoku's id for the posting: adding it to the pipeline tracks this posting. */
+  id?: JobId;
+  /** 0–100 against the search profile, when one was searched with. */
+  fit_score?: number;
+  posted_date?: string;
   title: string;
   company: string;
   location?: string;

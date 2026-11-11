@@ -2,19 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  html, body, #root {
-    height: 100%;
-    overflow: hidden;
-  }
-  body {
-    background-color: var(--color-bg);
-    color: var(--color-text);
-    font-family: var(--font-family);
-  }
-  code, pre {
-    font-family: 'JetBrains Mono', monospace;
-  }
+/*
+ * Nothing here may style the host page: on hadoku.me this app is mounted inside
+ * the site's layout. Page-level rules (html/body) live in standalone.css, which
+ * only the standalone dev entry (main.tsx) loads.
+ */
+.job-platform-container code,
+.job-platform-container pre {
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .job-platform-container,
@@ -32,17 +27,55 @@
 }
 
 /* Custom scrollbars powered by @wolffm/themes variables */
-::-webkit-scrollbar {
+.job-platform-container ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-::-webkit-scrollbar-track {
+.job-platform-container ::-webkit-scrollbar-track {
   background: var(--color-bg);
 }
-::-webkit-scrollbar-thumb {
+.job-platform-container ::-webkit-scrollbar-thumb {
   background: var(--color-border-light);
   border-radius: var(--hdk-radius-sm);
 }
-::-webkit-scrollbar-thumb:hover {
+.job-platform-container ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border);
+}
+
+/*
+ * Mounted on hadoku.me (entry.tsx): the platform header, then the app filling
+ * the rest of the viewport, so the board's columns scroll inside themselves as
+ * they do standalone.
+ */
+.jobpulse-host {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+/* The platform header gets its spacing from the page container in other apps;
+   JobPulse runs full-width, so the header carries its own. */
+.jobpulse-host__header {
+  flex-shrink: 0;
+  padding: var(--hdk-space-md) var(--hdk-space-lg) 0;
+}
+
+/* CrashBoundary's message, shown in place of the app when it fails to render. */
+.jobpulse-crash {
+  margin: var(--hdk-space-lg);
+  padding: var(--hdk-space-md) var(--hdk-space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-danger-bg);
+  color: var(--color-on-danger-bg);
+}
+
+.jobpulse-crash button {
+  margin-top: var(--hdk-space-sm);
+  padding: var(--hdk-space-xs) var(--hdk-space-md);
+  border: none;
+  border-radius: 6px;
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+  cursor: pointer;
 }

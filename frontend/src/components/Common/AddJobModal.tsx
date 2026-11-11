@@ -9,12 +9,13 @@ interface AddJobModalProps {
   onJobAdded: (job: Job) => void;
 }
 
-export const AddJobModal: React.FC<AddJobModalProps> = ({
-  isOpen,
+/** Closed renders nothing; the check sits outside the body because hooks may not follow a return. */
+export const AddJobModal: React.FC<AddJobModalProps> = (props) => (props.isOpen ? <AddJobModalBody {...props} /> : null);
+
+const AddJobModalBody: React.FC<AddJobModalProps> = ({
   onClose,
   onJobAdded,
 }) => {
-  if (!isOpen) return null;
 
   const [title, setTitle] = useState('');
   const [company, setCompany] = useState('');

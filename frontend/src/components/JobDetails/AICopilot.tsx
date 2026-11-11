@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Sparkles, 
   Copy, 
@@ -9,7 +9,6 @@ import {
   RefreshCw, 
   ExternalLink,
   Bot,
-  HelpCircle
 } from 'lucide-react';
 import { Job, FitBreakdown, AutofillPayload } from '../../types';
 import { api } from '../../api/client';
@@ -22,8 +21,8 @@ interface AICopilotProps {
 export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [activeTab, setActiveTab] = useState<'match' | 'generate' | 'autofill'>('match');
   const [docType, setDocType] = useState<'tailored_resume' | 'cover_letter' | 'application_kit' | 'resume_bullets' | 'pitch'>('tailored_resume');
-  const [tone, setTone] = useState<'professional' | 'confident' | 'concise'>('professional');
-  const [customInstructions, setCustomInstructions] = useState('');
+  /** hadoku's cover letter takes a tone; the other documents take none. */
+  const [tone, setTone] = useState<'formal' | 'conversational'>('formal');
   
   const [generating, setGenerating] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<string>('');
@@ -50,7 +49,6 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const [launchingBrowser, setLaunchingBrowser] = useState(false);
   const [browserMessage, setBrowserMessage] = useState<string | null>(null);
 
   // Copy helper
@@ -60,14 +58,12 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // Re-run match analysis
-  const handleAnalyzeMatch = async () => {
+  // hadoku computes the match on request (the posting's skills against your
+  // skills list), so it is asked for whenever a posting opens; nothing stores it.
+  const loadMatch = async (id: Job['id']) => {
     setAnalyzingMatch(true);
     try {
-      const result = await api.analyzeJobMatch(job.id);
-      setMatchData(result);
-      const updatedJob = await api.getJob(job.id);
-      onJobUpdated(updatedJob);
+      setMatchData(await api.analyzeJobMatch(id));
     } catch (err) {
       console.error('Match analysis failed:', err);
     } finally {
@@ -75,17 +71,18 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
     }
   };
 
+  useEffect(() => {
+    void loadMatch(job.id);
+  }, [job.id]);
+
+  // Re-run match analysis (after the skills list changed, say)
+  const handleAnalyzeMatch = () => loadMatch(job.id);
+
   // Generate Document
   const handleGenerateDocument = async () => {
     setGenerating(true);
     try {
-      const res = await api.generateDocument(
-        job.id,
-        docType,
-        tone,
-        customInstructions || undefined,
-        'hadoku'
-      );
+      const res = await api.generateDocument(job.id, docType, tone);
       setGeneratedContent(res.content);
       setProviderUsed(res.provider_used);
       const updatedJob = await api.getJob(job.id);
@@ -139,18 +136,14 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
     }
   };
 
-  // Launch Assisted Browser
-  const handleLaunchBrowser = async () => {
-    setLaunchingBrowser(true);
-    setBrowserMessage(null);
-    try {
-      const res = await api.launchBrowserAssistant(job.id);
-      setBrowserMessage(res.message);
-    } catch (err: any) {
-      setBrowserMessage(err.message || 'Failed to start browser assistant.');
-    } finally {
-      setLaunchingBrowser(false);
-    }
+  // Open the posting in this browser, where the hadoku Fill extension fills
+  // the form from this profile (it replaced the local Playwright session).
+  const handleLaunchBrowser = () => {
+    if (!job.url) return;
+    window.open(job.url, '_blank', 'noopener,noreferrer');
+    setBrowserMessage(
+      'Opened in a new tab. With the hadoku Fill extension installed, its button fills the form from your profile; you review and submit.'
+    );
   };
 
   return (
@@ -166,7 +159,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
           }`}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>ATS Match ({job.fit_score || 0}%)</span>
+          <span>ATS Match ({matchData ? matchData.score : (job.fit_score ?? 0)}%)</span>
         </button>
 
         <button
@@ -312,10 +305,11 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
               ))}
             </div>
 
-            {/* Tone Selector */}
+            {/* Tone Selector (the cover letter is the one document that takes a tone) */}
+            {docType === 'cover_letter' && (
             <div className="flex items-center space-x-2 text-xs">
               <span className="text-slate-400 font-medium">Tone:</span>
-              {(['professional', 'confident', 'concise'] as const).map((t) => (
+              {(['formal', 'conversational'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTone(t)}
@@ -329,20 +323,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 </button>
               ))}
             </div>
-
-            {/* Custom Instructions */}
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">
-                Custom Instructions or Focus (Optional):
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Highlight Python performance tuning and AWS migration..."
-                value={customInstructions}
-                onChange={(e) => setCustomInstructions(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
+            )}
 
             {/* Generate Trigger + Mint Hadoku Shareable Packet */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -442,10 +423,10 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 <div>
                   <h4 className="font-bold text-sm text-emerald-400 flex items-center space-x-1.5">
                     <Globe className="w-4 h-4" />
-                    <span>Assisted Browser Pre-Fill</span>
+                    <span>Fill the Application</span>
                   </h4>
                   <p className="text-xs text-slate-400 mt-1">
-                    Opens a browser session to automatically fill standard fields on Greenhouse, Lever, or Ashby.
+                    Opens the posting here. The hadoku Fill extension fills Greenhouse, Lever and Ashby forms from your profile; you submit.
                   </p>
                 </div>
               </div>
@@ -453,11 +434,11 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   onClick={handleLaunchBrowser}
-                  disabled={launchingBrowser || !job.url}
+                  disabled={!job.url}
                   className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>{launchingBrowser ? 'Launching Session...' : 'Open with Auto-Fill'}</span>
+                  <span>Open Posting</span>
                 </button>
 
                 <button

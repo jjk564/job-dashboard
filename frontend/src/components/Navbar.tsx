@@ -4,6 +4,7 @@ import {
   Compass, 
   UserCheck, 
   BarChart3, 
+  Send,
   Plus, 
   Link2, 
   Settings 
@@ -11,8 +12,10 @@ import {
 
 interface NavbarProps {
   appName?: string;
-  activeTab: 'pipeline' | 'discovery' | 'profile' | 'analytics';
-  setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
+  /** Inside hadoku.me the platform header carries the name, so the brand hides. */
+  embedded?: boolean;
+  activeTab: 'pipeline' | 'discovery' | 'applications' | 'profile' | 'analytics';
+  setActiveTab: (tab: 'pipeline' | 'discovery' | 'applications' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
   onOpenImportUrl: () => void;
   onOpenSettings: (tab?: 'ai' | 'hidden') => void;
@@ -21,6 +24,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({
   appName,
+  embedded,
   activeTab,
   setActiveTab,
   onOpenAddJob,
@@ -33,7 +37,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="w-full px-4 sm:px-5 lg:px-6">
         <div className="flex items-center justify-between h-16">
           {/* Brand */}
-          <div className="flex items-center space-x-3">
+          <div className={`flex items-center space-x-3 ${embedded ? 'hidden' : ''}`}>
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <Briefcase className="w-5 h-5 text-white" />
             </div>
@@ -41,7 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="flex items-center space-x-2">
                 <span className="font-bold text-lg text-white tracking-tight">{appName || 'JobPulse'}</span>
                 <span className="text-xs bg-emerald-500/10 text-emerald-400 font-medium px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  Local Copilot
+                  on hadoku
                 </span>
               </div>
               <p className="text-xs text-slate-400">Autonomous Job Pipeline & ATS Assistant</p>
@@ -77,6 +81,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Compass className="w-4 h-4" />
               <span>Discover Jobs</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('applications')}
+              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'applications'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Send className="w-4 h-4" />
+              <span>Applications</span>
             </button>
 
             <button

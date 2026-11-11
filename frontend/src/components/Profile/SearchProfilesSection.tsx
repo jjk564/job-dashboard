@@ -42,7 +42,7 @@ export const SearchProfilesSection: React.FC<SearchProfilesSectionProps> = ({ on
   const [loading, setLoading] = useState(true);
   const [editingProfile, setEditingProfile] = useState<Partial<SearchProfile> | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [scoringProfileId, setScoringProfileId] = useState<number | null>(null);
+  const [scoringProfileId, setScoringProfileId] = useState<string | null>(null);
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
 
   // Chip inputs inside modal/editor
@@ -50,15 +50,6 @@ export const SearchProfilesSection: React.FC<SearchProfilesSectionProps> = ({ on
   const [companyInput, setCompanyInput] = useState('');
 
   // Hadoku Scraper & Ecosystem state
-  const [scraperStatus, setScraperStatus] = useState<{
-    vault_key_configured: boolean;
-    vault_key_source: string;
-    resume_api: { online: boolean };
-    jobplatform_api: { online: boolean };
-    scraper_api: { online: boolean; active_targets: number };
-  } | null>(null);
-  const [syncingCorpus, setSyncingCorpus] = useState(false);
-  const [triggeringScrape, setTriggeringScrape] = useState(false);
   const [matchingCompany, setMatchingCompany] = useState(false);
   const [companyMatches, setCompanyMatches] = useState<
     {
@@ -74,45 +65,8 @@ export const SearchProfilesSection: React.FC<SearchProfilesSectionProps> = ({ on
 
   useEffect(() => {
     loadProfiles();
-    api
-      .getScraperStatus()
-      .then((st) => setScraperStatus(st))
-      .catch(() => {});
   }, []);
 
-  const handleSyncCorpus = async () => {
-    setSyncingCorpus(true);
-    try {
-      const res = await api.syncScraperCorpus(50, 65);
-      showStatus(
-        `Synced Hadoku Corpus: ${res.inserted} new high-fit jobs added (${res.fetched} scanned)`
-      );
-      if (res.inserted > 0 && onJobsScored) {
-        const allJobs = await api.getJobs();
-        onJobsScored(allJobs);
-      }
-    } catch (err) {
-      console.error('Failed to sync Hadoku corpus:', err);
-    } finally {
-      setSyncingCorpus(false);
-    }
-  };
-
-  const handleTriggerScrape = async () => {
-    setTriggeringScrape(true);
-    try {
-      const res = await api.triggerScraperRun();
-      if (res.triggered) {
-        showStatus('Triggered live scrape run across active ATS targets on scraper.hadoku.me');
-      } else {
-        showStatus(res.error || 'Could not trigger remote scraper');
-      }
-    } catch (err) {
-      console.error('Failed to trigger scraper:', err);
-    } finally {
-      setTriggeringScrape(false);
-    }
-  };
 
   const handleVerifyCompaniesOnScraper = async () => {
     if (!companyInput.trim()) return;
@@ -337,59 +291,10 @@ export const SearchProfilesSection: React.FC<SearchProfilesSectionProps> = ({ on
         </div>
       </div>
 
-      {/* Hadoku Scraper & Resume Service Live Status Bar */}
-      {scraperStatus && (
-        <div className="rounded-xl p-3.5 bg-slate-900/80 border border-slate-700/80 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center space-x-1.5 font-semibold text-slate-200">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  scraperStatus.vault_key_configured ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                }`}
-              />
-              <span>
-                Hadoku Vault: {scraperStatus.vault_key_configured ? `Active (${scraperStatus.vault_key_source})` : 'Not Linked'}
-              </span>
-            </span>
-            <span className="text-slate-400">
-              Resume API:{' '}
-              <strong className={scraperStatus.resume_api?.online ? 'text-emerald-400' : 'text-rose-400'}>
-                {scraperStatus.resume_api?.online ? 'Online' : 'Offline'}
-              </strong>
-            </span>
-            <span className="text-slate-400">
-              Scraper Workers:{' '}
-              <strong className={scraperStatus.scraper_api?.online ? 'text-emerald-400' : 'text-rose-400'}>
-                {scraperStatus.scraper_api?.online
-                  ? `${scraperStatus.scraper_api.active_targets} Active ATS Boards`
-                  : 'Offline'}
-              </strong>
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <button
-              type="button"
-              onClick={handleSyncCorpus}
-              disabled={syncingCorpus}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 font-semibold flex items-center space-x-1.5 transition disabled:opacity-50"
-              title="Pull recent scraped postings from hadoku.me/jobplatform/api/jobs and score against default profile"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncingCorpus ? 'animate-spin' : ''}`} />
-              <span>{syncingCorpus ? 'Syncing Corpus...' : 'Sync Hadoku Corpus'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleTriggerScrape}
-              disabled={triggeringScrape || !scraperStatus.vault_key_configured}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold transition disabled:opacity-50"
-              title="Trigger a live scrape across all active ATS targets on scraper.hadoku.me"
-            >
-              {triggeringScrape ? 'Triggering...' : 'Trigger Live Scrape'}
-            </button>
-          </div>
-        </div>
-      )}
+      <p className="text-xs text-slate-400">
+        hadoku's scraper reads every profile's target companies each night; their postings
+        land in Discover and are scored against your profiles.
+      </p>
 
       {loading ? (
         <div className="py-6 text-center text-slate-400 text-xs">Loading search profiles...</div>

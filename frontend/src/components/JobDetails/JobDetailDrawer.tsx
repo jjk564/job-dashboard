@@ -7,12 +7,14 @@ import {
   ExternalLink, 
   Calendar, 
   MessageSquare, 
-  Plus, 
   Trash2,
-  Briefcase,
   AlertTriangle,
   RefreshCw,
-  Archive
+  Archive,
+  Send,
+  ThumbsUp,
+  ThumbsDown,
+  EyeOff,
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { AICopilot } from './AICopilot';
@@ -22,7 +24,7 @@ interface JobDetailDrawerProps {
   job: Job | null;
   onClose: () => void;
   onJobUpdated: (updated: Job) => void;
-  onDeleteJob: (id: number) => void;
+  onDeleteJob: (id: string) => void;
 }
 
 const STATUS_OPTIONS: { id: JobStatus; label: string }[] = [
@@ -33,13 +35,21 @@ const STATUS_OPTIONS: { id: JobStatus; label: string }[] = [
   { id: 'REJECTED', label: 'Rejected / Archived' },
 ];
 
-export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
+/**
+ * The drawer renders nothing without a job. That check lives here, outside
+ * DrawerBody, because a component may not return before its hooks: closing the
+ * drawer used to change the hook count between renders. Keyed by the job, so
+ * per-posting state (notes, the action buttons) starts fresh for each one.
+ */
+export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({ job, ...rest }) =>
+  job ? <DrawerBody key={job.id} job={job} {...rest} /> : null;
+
+const DrawerBody: React.FC<JobDetailDrawerProps & { job: Job }> = ({
   job,
   onClose,
   onJobUpdated,
   onDeleteJob,
 }) => {
-  if (!job) return null;
 
   const [notes, setNotes] = useState(job.notes || '');
   const [savingNotes, setSavingNotes] = useState(false);
@@ -61,17 +71,44 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
     }
   };
 
-  // Toggle Manual Expiration
-  const handleToggleManualExpired = async () => {
+  // hadoku: queue for the form runner, vote, hide the employer
+  const [queueing, setQueueing] = useState(false);
+  const [queued, setQueued] = useState(false);
+  const [vote, setVote] = useState<1 | -1 | null>(null);
+  const [hidCompany, setHidCompany] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const handleQueueApply = async () => {
+    setQueueing(true);
+    setActionError(null);
     try {
-      const nextVal = !job.is_expired;
-      const updated = await api.updateJob(job.id, {
-        is_expired: nextVal,
-        expired_reason: nextVal ? 'Manually marked as expired' : null,
-      });
-      onJobUpdated(updated);
+      await api.queueApplication(job.id);
+      setQueued(true);
     } catch (err) {
-      console.error('Failed to update expired status:', err);
+      setActionError(err instanceof Error ? err.message : 'Could not queue it');
+    } finally {
+      setQueueing(false);
+    }
+  };
+
+  const handleVote = async (v: 1 | -1) => {
+    const next = vote === v ? null : v;
+    setActionError(null);
+    try {
+      await api.voteJob(job.id, next);
+      setVote(next);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not save the vote');
+    }
+  };
+
+  const handleHideCompany = async () => {
+    setActionError(null);
+    try {
+      await api.blockCompany(job.company);
+      setHidCompany(true);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not hide it');
     }
   };
 
@@ -208,7 +245,7 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
                     </p>
                     {job.expired_at && (
                       <span className="text-[10px] text-rose-300/60 block mt-1">
-                        Flagged on {new Date(job.expired_at).toLocaleDateString()}
+                        Last seen on its board {new Date(job.expired_at).toLocaleDateString()}
                       </span>
                     )}
                   </div>
@@ -223,13 +260,6 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
                     <RefreshCw className={`w-3 h-3 text-slate-400 ${checkingExpiration ? 'animate-spin' : ''}`} />
                     <span>{checkingExpiration ? 'Checking...' : 'Re-verify'}</span>
                   </button>
-                  <button
-                    onClick={handleToggleManualExpired}
-                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition"
-                    title="Clear expired flag"
-                  >
-                    Mark Active
-                  </button>
                   {job.status !== 'REJECTED' && (
                     <button
                       onClick={() => handleStatusChange('REJECTED')}
@@ -243,7 +273,12 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
               </div>
             ) : job.url ? (
               <div className="flex items-center justify-between bg-slate-800/40 border border-slate-800 rounded-xl px-3 py-2 text-xs">
-                <span className="text-slate-400">Job Posting Status: <span className="text-emerald-400 font-medium">Active</span></span>
+                <span className="text-slate-400">
+                  Job Posting Status: <span className="text-emerald-400 font-medium">Active</span>
+                  {job.last_seen_at && (
+                    <span className="text-slate-500"> · last seen on its board {new Date(job.last_seen_at).toLocaleDateString()}</span>
+                  )}
+                </span>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={handleCheckExpiration}
@@ -251,17 +286,52 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition flex items-center space-x-1 disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3 h-3 text-emerald-400 ${checkingExpiration ? 'animate-spin' : ''}`} />
-                    <span>{checkingExpiration ? 'Checking...' : 'Verify Link'}</span>
-                  </button>
-                  <button
-                    onClick={handleToggleManualExpired}
-                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-300 border border-slate-700 font-medium transition"
-                  >
-                    Mark Expired
+                    <span>{checkingExpiration ? 'Checking...' : 'Refresh'}</span>
                   </button>
                 </div>
               </div>
             ) : null}
+
+            {/* hadoku actions: the form runner, the feed's taste signal, hiding an employer */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button
+                onClick={handleQueueApply}
+                disabled={queueing || queued || job.is_expired}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center space-x-1.5 transition disabled:opacity-50"
+                title={
+                  job.is_expired
+                    ? 'Its board no longer lists this posting'
+                    : "hadoku's runner fills the form from your packet; you approve it on the Applications tab before it is sent"
+                }
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{queued ? 'Queued' : queueing ? 'Queueing…' : 'Queue for Auto-Apply'}</span>
+              </button>
+              <button
+                onClick={() => handleVote(1)}
+                className={`p-1.5 rounded-lg border transition ${vote === 1 ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
+                title="More like this"
+              >
+                <ThumbsUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleVote(-1)}
+                className={`p-1.5 rounded-lg border transition ${vote === -1 ? 'bg-rose-900/40 border-rose-700/60 text-rose-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
+                title="Less like this"
+              >
+                <ThumbsDown className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleHideCompany}
+                disabled={hidCompany}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition disabled:opacity-50 flex items-center space-x-1"
+                title="Hide every posting from this employer in Discover"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>{hidCompany ? `${job.company} hidden` : `Hide ${job.company}`}</span>
+              </button>
+              {actionError && <span className="text-rose-300">{actionError}</span>}
+            </div>
 
             {/* Meta badges */}
             <div className="flex flex-wrap items-center gap-2 text-xs">

@@ -1,166 +1,105 @@
 # JobPulse 💼
-> **A Privacy-First, Local Job Search & Application Copilot**
+> **A job search and application copilot, running on hadoku**
 
-JobPulse is an autonomous, local-first dashboard designed to accelerate and automate your job search and application pipeline. Everything runs locally on your machine with a private SQLite database (`jobs.db`) — keeping your applications, resumes, notes, and credentials 100% private.
+JobPulse is the job-search app at **[hadoku.me/jobpulse](https://hadoku.me/jobpulse/)**.
+Sign in to hadoku.me and everything is yours: your pipeline, search profiles,
+documents and applications live in hadoku's database under your account, on
+every device.
 
----
+This repo is its UI. The data and the work behind it come from hadoku:
 
-## 🌟 Core Features
+| Piece | Where it lives |
+|---|---|
+| This UI (`frontend/`) | this repo |
+| The API, the database, scoring | [hadoku-jobplatform](https://github.com/WolffM/hadoku-jobplatform)'s worker, at `hadoku.me/jobplatform/api` |
+| Job discovery | hadoku's scraper: the Greenhouse, Ashby and Lever boards of every company on anyone's search profile, nightly, plus RemoteOK and Remotive |
+| Tailored résumés, cover letters, packets | hadoku's résumé service |
+| Filling application forms | hadoku's form runner (you approve before anything is sent), or the hadoku Fill extension in your own browser |
 
-1. **Kanban Application Pipeline**
-   - Track listings visually across stages: `To Apply`, `Applied`, `Interviewing`, `Offers`, and `Archive`.
-   - Filter by workplace type (Remote, Hybrid, Onsite), priority, and calculated ATS fit score.
-   - Quick stage advancement buttons and deep inspection drawers.
-
-2. **Live Multi-Board Job Aggregator & Explorer**
-   - Searches across 15+ top developer, Big Tech, and startup sources:
-     - **Big Tech Direct Career Portals**: **Google**, **Microsoft**, **Amazon**, **Apple**, **NVIDIA**, **Netflix**, and **Salesforce**.
-     - **25+ Top Tech Company ATS Boards (Greenhouse, Ashby & Lever)**: **OpenAI**, **Anthropic**, **Stripe**, **Cloudflare**, **Databricks**, **Vercel**, **Coinbase**, **Discord**, **Reddit**, **Robinhood**, **Airbnb**, **Figma**, **GitLab**, **Ramp**, **Linear**, **Notion**, **Plaid**, **Supabase**, **Palantir**, **Scale AI**, **Duolingo**, **Twilio**, and more.
-     - **SimplifyJobs Curated Feeds**: Daily updated **Entry-Level / New Grad Tech** and **Software Engineering Internship** feeds.
-     - **Major Job Boards & Tech Aggregators**: **LinkedIn**, **Glassdoor**, **Indeed**, **ZipRecruiter**, **The Muse**, **We Work Remotely**, **Himalayas**, **Hacker News "Who is Hiring?"**, **Adzuna**, **RemoteOK**, **Arbeitnow**, and **Jobicy**.
-   - Filter by specific platform or search across all boards simultaneously with location & mile-radius filtering.
-   - One-click import directly into your Kanban pipeline with automated ATS match scoring.
-
-3. **Smart Job URL Scraper**
-   - Paste any job posting link (Greenhouse, Lever, Ashby, or general web pages).
-   - Automatically extracts job title, company name, location, salary range, and requirements.
-
-4. **ATS Fit Scoring Engine**
-   - Automatically parses job descriptions against your candidate skills inventory.
-   - Displays real-time fit percentage, matched skills, and highlighted missing requirements.
-
-5. **AI & Template Document Generator**
-   - **Offline Template Engine**: Instant generation of tailored cover letters, targeted resume highlights, and elevator pitches with zero external API calls.
-   - **Optional LLM Integration**: Connect local Ollama (Llama 3), Google Gemini, or OpenAI with your API key for personalized deep tailoring.
-
-6. **Application Autofill Copilot**
-   - **1-Click Clipboard Palette**: Instant copy buttons for standard ATS fields (Full Name, LinkedIn, GitHub, Portfolio, Work Auth, Desired Salary, Notice Period).
-   - **Assisted Browser Session**: Launches a visible browser session using Playwright to pre-fill standard application forms on Greenhouse, Lever, and Ashby.
-
-7. **Analytics & Skills Intelligence**
-   - Application funnel conversion rates (Response rate, Interview rate).
-   - Real-time frequency analysis of top in-demand skills across all jobs in your pipeline.
+How the UI moved onto hadoku, call by call: [docs/HADOKU_MERGE.md](docs/HADOKU_MERGE.md).
 
 ---
 
-## 🚀 Quick Start
+## 🌟 Features
 
-### 1. Requirements
-- Python 3.10+
-- Node.js 18+
+1. **Kanban pipeline**: To Apply, Applied, Interviewing, Offers and Archive,
+   with priority, notes, a follow-up date, a contact and an activity timeline
+   per posting. Postings their board no longer lists are flagged from the
+   nightly scrape.
+2. **Discover**: keyword search over hadoku's corpus with location + radius,
+   minimum pay, US-only, track and source filters. Add to Pipeline tracks the
+   posting itself.
+3. **Import a URL**, or add a posting by hand (shown only to people tracking it).
+4. **ATS match**: the skills a posting names against your skills list:
+   matched, missing, a score.
+5. **Documents**: a tailored résumé, a cover letter (formal or conversational),
+   screening answers, intro email and talking points, and a shareable packet
+   page + PDF.
+6. **Applications**: queue a posting for hadoku's form runner, approve each
+   filled form before it is submitted, and answer the questions forms asked
+   once (reused on every later form).
+7. **Search profiles**: keywords, IC/manager track and levels, workplace,
+   location and radius, pay floor, and target companies, whose boards
+   hadoku scrapes nightly.
+8. **Analytics**: your funnel, response and interview rates, the skills your
+   pipeline asks for, and its workplace mix.
 
-### 2. Launching JobPulse
-Simply double-click:
-```bat
-start.bat
-```
-Or run with Python:
+---
+
+## 🛠 Development
+
+Requires Node 22+.
+
 ```bash
-python start.py
+cd frontend
+npm ci
+npm run dev        # http://localhost:5173
 ```
-This automatically boots the FastAPI backend (`http://127.0.0.1:8000`) and the Vite React frontend (`http://localhost:5173`) and opens the dashboard in your default browser.
 
-### 3. Hadoku vault (secrets without `.env` files)
+The dev server proxies `/jobplatform/api` and `/session` to hadoku.me, so it
+runs against the real API. Sign the dev page in once with your own hadoku key:
+`http://localhost:5173/?apiKey=<your key>`. It is exchanged for the same
+session cookie hadoku.me uses and leaves the URL straight away.
 
-Secrets come from the hadoku vault at run time and live only in the process
-they are handed to. You need a hadoku.me account at friend tier with a service
-grant; you have grants for `jobplatform-service-key` and `resume-bot-service-key`.
+Use **your own** key here. The credential `npx @hadoku/dev-vault login`
+gives this repo authenticates as the shared `jobplatform-service-key`
+identity, not as you, so the dev page would show that identity's (empty)
+pipeline. That credential is for scripts; see
+[hadoku.me/docs/contributing](https://hadoku.me/docs/contributing/).
 
-**Get your credential** (once a week), from the repo root:
 ```bash
-npx @hadoku/dev-vault@latest login
+npm run build      # standalone build (dist/)
+npm run build:lib  # the bundle hadoku.me mounts (dist-lib/)
+npm run lint:css   # every color must be a @wolffm/themes token
 ```
-1. It prints a code and a `hadoku.me/account/device` link, valid for 24 hours.
-   Leave the command running and open the link, signed in to hadoku.me.
-2. The first time, set up your authenticator: **Set up** asks for your passkey,
-   then shows a QR code. Scan it into an authenticator app (Google
-   Authenticator, 1Password, …) and confirm with the 6-digit code it shows.
-3. Pick `jobplatform-service-key`, enter a fresh code from the app and press
-   **Approve** (your passkey again). The command finishes on its own.
 
-The command writes `.devvault.local.json` (your key, mode 600) in the checkout;
-it is gitignored and must stay that way. The credential lasts 7 days; run
-`login` again when it expires.
+### How it reaches hadoku.me
 
-**Use it.** `.devvault.json` maps env var names to vault item names (names
-only, never values). Add an entry only when the code reads that variable, then
-run the command through dev-vault from the repo root:
-```bash
-npx @hadoku/dev-vault@latest -- python start.py
-npx @hadoku/dev-vault@latest --check   # diagnoses the mapping, broker and access
-```
-`--check` also warns about "ACL drift": items the identity may read that
-`.devvault.json` does not map. That is expected and needs nothing from you.
-Nothing is mapped today: the code's only env reads are `ADZUNA_APP_ID`,
-`ADZUNA_APP_KEY`, `SCRAPER_PROXY_POOL` and `SCRAPER_PROXY_URL`, and none of
-them are in the vault. To add one, ask the operator to store it and grant it to
-`jobplatform-service-key`.
+`npm run build:lib` builds `src/entry.tsx` (`mount` / `unmount`) with React,
+`@wolffm/themes`, `@wolffm/task-ui-components` and the logger left to
+hadoku.me's import map. Nothing in it styles the host page: Tailwind's reset
+and every utility are scoped to `.job-platform-container`.
 
-**Calling hadoku.me directly.** The credential authenticates as
-`jobplatform-service-key` (service tier) when sent as the `X-User-Key` header to
-`https://hadoku.me/...`, e.g. the jobplatform API at
-`https://hadoku.me/jobplatform/api/*`:
-```bash
-K=$(node -p "require('./.devvault.local.json').key")
-curl -H "X-User-Key: $K" "https://hadoku.me/jobplatform/api/jobs?limit=5"
-```
-It acts as that service identity, **not as you**: its profiles and job states
-are the identity's own, not yours. Your own jobs, profiles and statuses come
-through your signed-in browser session, which is what the dashboard uses. Use
-the credential for scripts and server-side calls. Treat it like a password:
-never commit it, log it, or paste it anywhere.
-
-Never map the `CLOUDFLARE_*` items for local dev: they deploy workers and push
-every worker's secrets. `@wolffm/*` packages need no token outside the fleet;
-install them from the public npm mirror by alias, e.g.
-`"@wolffm/themes": "npm:@hadoku/themes@<version>"`.
+hadoku-jobplatform publishes it as `@wolffm/jobpulse` from the exact commit in
+its `jobpulse/source.json`, building it on a GitHub-hosted runner with no
+secrets. Moving that pin is what deploys a change here to hadoku.me; ask
+there when `main` has something to ship.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-Job Dashboard/
-├── backend/
-│   ├── app/
-│   │   ├── database.py             # Async SQLite engine
-│   │   ├── models.py               # Job, Profile, Skill, Activity tables
-│   │   ├── schemas.py              # Pydantic schemas
-│   │   ├── main.py                 # FastAPI application & lifespan
-│   │   ├── services/
-│   │   │   ├── job_fetcher.py      # Public boards aggregator (RemoteOK, Arbeitnow, Jobicy)
-│   │   │   ├── job_extractor.py    # URL scraper (Greenhouse, Lever, generic)
-│   │   │   ├── matcher.py          # ATS keyword match scoring algorithm
-│   │   │   ├── ai_generator.py     # Tailored cover letters & resume highlights
-│   │   │   └── browser_assistant.py# Playwright assisted form autofill
-│   │   └── routers/                # REST endpoints
-│   ├── tests/                      # Pytest unit & integration test suite
-│   ├── requirements.txt            # Python dependencies
-│   └── run.py                      # Backend launch script
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Kanban/             # Pipeline board & cards
-│   │   │   ├── JobDetails/         # Details drawer & AI Copilot
-│   │   │   ├── Discovery/          # Live remote job search
-│   │   │   ├── Profile/            # Profile & skills manager
-│   │   │   ├── Analytics/          # Funnel & skills demand charts
-│   │   │   └── Common/             # URL import & Add job modals
-│   │   ├── api/                    # Typed API client
-│   │   ├── App.tsx                 # Main application
-│   │   └── types.ts                # TypeScript interfaces
-│   ├── package.json
-│   └── vite.config.ts
-├── start.bat                       # 1-click Windows launcher
-├── start.py                        # Cross-platform runner
-└── AGENTS.md / GEMINI.md           # Workspace rules
-```
-
----
-
-## 🧪 Running Tests
-
-To run the full backend test suite:
-```bash
-python -m pytest
+frontend/
+├── src/
+│   ├── api/
+│   │   ├── hadoku.ts      # transport + shape mappings for the hadoku API
+│   │   └── client.ts      # the calls the components use
+│   ├── components/        # Kanban, Discovery, Applications, Profile, Analytics, drawer
+│   ├── entry.tsx          # mount/unmount: what hadoku.me loads
+│   └── main.tsx           # the standalone dev page (and ?apiKey= sign-in)
+├── vite.config.ts         # dev server + hadoku.me proxy
+├── vite.lib.config.ts     # the hadoku.me bundle
+└── tailwind.config.js     # theme tokens; everything scoped to the app root
+docs/HADOKU_MERGE.md       # how each old backend call maps onto hadoku
 ```

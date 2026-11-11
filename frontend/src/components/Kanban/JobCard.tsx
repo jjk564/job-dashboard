@@ -18,7 +18,7 @@ interface JobCardProps {
   job: Job;
   onSelect: (job: Job) => void;
   onMoveStatus: (job: Job, direction: 'prev' | 'next') => void;
-  onDelete: (id: number) => void;
+  onDelete: (id: string) => void;
   onArchive?: (job: Job) => void;
   isUpdating?: boolean;
   onDragStart?: (e: React.DragEvent, job: Job) => void;
@@ -81,6 +81,7 @@ export const JobCard: React.FC<JobCardProps> = ({
             ? 'bg-slate-900/90 hover:bg-slate-900 border border-rose-500/40 hover:border-rose-500/70 opacity-90 hover:opacity-100 ring-1 ring-rose-500/20'
             : 'bg-slate-800/90 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50'
       }`}
+      data-telemetry={`Open job: ${job.company}, ${job.title}`}
       onClick={() => onSelect(job)}
     >
       {/* Header: Company & Badges */}
