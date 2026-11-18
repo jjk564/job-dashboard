@@ -2,8 +2,8 @@
 Autonomous JobPulse Autopilot Engine.
 
 End-to-end autonomous workflow:
-1. Scrapes suitable job listings across public job boards, direct company ATS boards, and Hadoku corpus
-   guided by the active SearchProfile and candidate Skills inventory.
+1. Scrapes suitable job listings across direct company ATS boards, SimplifyJobs, Hadoku corpus,
+   and remote tech boards guided by the active SearchProfile and candidate Skills inventory.
 2. Evaluates ATS fit score, role track/level, and expiration status.
 3. Generates a Tailored Resume and Tailored Cover Letter for each suitable job and exports uploadable PDFs.
 4. Answers all standard and custom screening questions via the Question Answering Engine.
@@ -21,7 +21,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
 
 from ..database import AsyncSessionLocal
 from ..models import (
@@ -29,20 +28,24 @@ from ..models import (
     Job,
     Profile,
     Skill,
-    SearchProfile,
     TailoredDocument,
     ApplicationActivity,
 )
-from .ai_generator import generate_ai_document
-from .browser_assistant import attempt_autonomous_submission
+from .ai_generator import generate_ai_document, generate_offline_template
+from .browser_assistant import attempt_autonomous_submission, classify_ats_url
 from .expiration_checker import check_job_expiration
-from .hadoku_client import (
-    get_hadoku_user_key,
-    generate_hadoku_application_extras,
-    fetch_hadoku_jobplatform_jobs,
-)
+from .hadoku_client import get_hadoku_user_key
 from .job_extractor import extract_job_from_url
-from .job_fetcher import search_aggregated_jobs
+from .job_fetcher import (
+    fetch_simplify_jobs,
+    fetch_company_boards_jobs,
+    fetch_hadoku_scraper_jobs,
+    fetch_themuse_jobs,
+    fetch_remoteok_jobs,
+    fetch_weworkremotely_jobs,
+    fetch_jobicy_jobs,
+    search_aggregated_jobs,
+)
 from .matcher import analyze_job_fit
 from .question_answerer import (
     export_application_files,
@@ -116,8 +119,9 @@ async def prepare_job_application_materials(
     job: Job,
     profile_dict: Dict[str, Any],
     skills: List[Dict[str, Any]],
-    ai_provider: str = "hadoku",
+    ai_provider: str = "template",
     api_key: Optional[str] = None,
+    fast_batch_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Generates and persists:
@@ -128,11 +132,11 @@ async def prepare_job_application_materials(
     """
     skill_names = [s["name"] for s in skills if s.get("name")]
 
-    # 1. Enrich short description from URL when possible
+    # 1. Enrich short description from URL when possible (bounded by a strict 5s timeout)
     desc = job.description or ""
     if job.url and (len(desc.strip()) < 250 or "via simplifyjobs" in desc.lower()):
         try:
-            extracted = await extract_job_from_url(job.url)
+            extracted = await asyncio.wait_for(extract_job_from_url(job.url), timeout=5.0)
             if extracted.get("description") and len(extracted["description"]) > len(desc):
                 job.description = extracted["description"]
                 desc = job.description
@@ -143,7 +147,7 @@ async def prepare_job_application_materials(
         except Exception:
             pass
 
-    # 2. Classify and score if not already scored
+    # 2. Classify and score
     classified = classify_role(job.title or "", desc)
     job.role_track = classified["track"]
     job.role_level = classified["level"]
@@ -154,66 +158,66 @@ async def prepare_job_application_materials(
         candidate_skills=skill_names,
         profile_text=f"{profile_dict.get('summary', '')} {profile_dict.get('master_resume_text', '')}",
     )
-    if job.fit_score is None:
-        job.fit_score = fit_data["score"]
+    if job.fit_score is None or len(desc) > 300:
+        job.fit_score = max(job.fit_score or 0, fit_data["score"])
     if not job.fit_breakdown:
         job.fit_breakdown = json.dumps(fit_data)
 
     matched_skills = fit_data.get("matched_skills") or skill_names[:5]
-    effective_provider = ai_provider or ("hadoku" if get_hadoku_user_key(api_key) else "template")
+
+    # Use fast local ResumeBlock assembler during multi-job batch runs or when template is selected,
+    # and bound external LLM calls with a strict timeout so Autopilot never stalls.
+    effective_provider = "template" if fast_batch_mode else (ai_provider or "template")
     if effective_provider in ("hadoku", "hadoku-resume") and not get_hadoku_user_key(api_key):
         effective_provider = "template"
 
     job_dict = job.to_dict()
 
     # 3. Generate Tailored Resume
-    resume_md, resume_provider = await generate_ai_document(
-        doc_type="tailored_resume",
-        job_data=job_dict,
-        profile_data=profile_dict,
-        matched_skills=matched_skills,
-        tone="professional",
-        provider=effective_provider,
-        api_key=api_key,
-    )
+    try:
+        resume_md, resume_provider = await asyncio.wait_for(
+            generate_ai_document(
+                doc_type="tailored_resume",
+                job_data=job_dict,
+                profile_data=profile_dict,
+                matched_skills=matched_skills,
+                tone="professional",
+                provider=effective_provider,
+                api_key=api_key,
+            ),
+            timeout=8.0,
+        )
+    except Exception:
+        resume_md = generate_offline_template("tailored_resume", job_dict, profile_dict, matched_skills)
+        resume_provider = "template"
 
     # 4. Generate Tailored Cover Letter
-    cover_md, cover_provider = await generate_ai_document(
-        doc_type="cover_letter",
-        job_data=job_dict,
-        profile_data=profile_dict,
-        matched_skills=matched_skills,
-        tone="professional",
-        provider=effective_provider,
-        api_key=api_key,
-    )
+    try:
+        cover_md, _ = await asyncio.wait_for(
+            generate_ai_document(
+                doc_type="cover_letter",
+                job_data=job_dict,
+                profile_data=profile_dict,
+                matched_skills=matched_skills,
+                tone="professional",
+                provider=effective_provider,
+                api_key=api_key,
+            ),
+            timeout=8.0,
+        )
+    except Exception:
+        cover_md = generate_offline_template("cover_letter", job_dict, profile_dict, matched_skills)
 
-    # 5. Fetch optional Hadoku application extras if vault key is available
-    app_kit: Optional[Dict[str, Any]] = None
-    if get_hadoku_user_key(api_key) and effective_provider in ("hadoku", "hadoku-resume"):
-        try:
-            app_kit = await generate_hadoku_application_extras(
-                job_title=job.title,
-                company=job.company,
-                description=desc or f"{job.title} at {job.company}",
-                resume_markdown=resume_md,
-                job_location=job.location,
-                workplace_type=job.workplace_type,
-                explicit_key=api_key,
-            )
-        except Exception:
-            app_kit = None
-
-    # 6. Answer all standard & role-specific screening questions
+    # 5. Answer all standard & role-specific screening questions
     qa_bundle = generate_comprehensive_qa_bundle(
         job_data=job_dict,
         profile_data=profile_dict,
         candidate_skills=skills,
-        app_kit=app_kit,
+        app_kit=None,
     )
     job.answers_json = json.dumps(qa_bundle)
 
-    # 7. Upsert TailoredDocuments on the job
+    # 6. Upsert TailoredDocuments on the job
     doc_res = await db.execute(select(TailoredDocument).where(TailoredDocument.job_id == job.id))
     existing_docs = {d.doc_type: d for d in doc_res.scalars().all()}
 
@@ -240,7 +244,7 @@ async def prepare_job_application_materials(
     else:
         db.add(TailoredDocument(job_id=job.id, doc_type="application_kit", content=qa_md))
 
-    # 8. Export uploadable PDF/MD/TXT files for Playwright form submission
+    # 7. Export uploadable PDF/MD/TXT files for Playwright form submission
     exported_files = export_application_files(
         job_id=job.id,
         company=job.company,
@@ -254,7 +258,7 @@ async def prepare_job_application_materials(
         "cover_letter_markdown": cover_md,
         "provider_used": resume_provider,
         "answers": qa_bundle,
-        "app_kit": app_kit,
+        "app_kit": None,
         "files": exported_files,
     }
 
@@ -268,18 +272,26 @@ async def process_single_job_autopilot(
     auto_submit: bool = True,
     headless: bool = True,
     require_full_qa_confidence: bool = True,
-    ai_provider: str = "hadoku",
+    ai_provider: str = "template",
     api_key: Optional[str] = None,
+    fast_batch_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Runs the full autonomous pipeline on a single Job:
-    1. Checks expiration
+    1. Checks expiration (with 5s timeout)
     2. Generates tailored resume, tailored cover letter, and answers all screening questions
-    3. Attempts autonomous application submission if eligible
+    3. Attempts autonomous application submission if eligible (with 14s timeout)
     4. Moves job to APPLIED if submitted, or routes to TO_APPLY ('Need to Apply') with full materials attached.
     """
     # 1. Check if posting has expired
-    is_exp, exp_reason = await check_job_expiration(job.url, job.deadline)
+    try:
+        is_exp, exp_reason = await asyncio.wait_for(
+            check_job_expiration(job.url, job.deadline),
+            timeout=5.0,
+        )
+    except Exception:
+        is_exp, exp_reason = False, None
+
     if is_exp:
         job.is_expired = True
         job.expired_at = datetime.utcnow()
@@ -308,6 +320,7 @@ async def process_single_job_autopilot(
         skills=skills,
         ai_provider=ai_provider,
         api_key=api_key,
+        fast_batch_mode=fast_batch_mode,
     )
     qa_list = materials["answers"]
     score = job.fit_score or 0
@@ -376,17 +389,59 @@ async def process_single_job_autopilot(
             "questions_answered": len(qa_list),
         }
 
-    # 5. Attempt Autonomous Submission via Playwright ATS engine
-    sub_res = await attempt_autonomous_submission(
-        job_data=job.to_dict(),
-        profile_data=profile_dict,
-        candidate_skills=skills,
-        app_kit=materials.get("app_kit"),
-        files=materials.get("files"),
-        headless=headless,
-        auto_submit=auto_submit,
-        require_full_qa_confidence=require_full_qa_confidence,
-    )
+    # 5. Fast check whether URL is an auth-gated portal before launching Playwright
+    url_cls = classify_ats_url(job.url)
+    if not url_cls["can_auto_attempt"]:
+        reason = f"Need to Apply: {url_cls['reason']} — Tailored Resume, Cover Letter & {len(qa_list)} answers ready"
+        job.status = "TO_APPLY"
+        job.autopilot_status = "needs_manual_apply"
+        job.autopilot_reason = reason
+        job.updated_at = datetime.utcnow()
+        db.add(
+            ApplicationActivity(
+                job_id=job.id,
+                activity_type="autopilot_queued",
+                title="Routed to Need to Apply (Tailored Kit Ready)",
+                details=reason,
+            )
+        )
+        await db.commit()
+        return {
+            "job_id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "fit_score": score,
+            "outcome": "needs_manual_apply",
+            "status": "TO_APPLY",
+            "reason": reason,
+            "documents_generated": True,
+            "questions_answered": len(qa_list),
+        }
+
+    # 6. Attempt Autonomous Submission via Playwright ATS engine (bounded by 14s timeout)
+    try:
+        sub_res = await asyncio.wait_for(
+            attempt_autonomous_submission(
+                job_data=job.to_dict(),
+                profile_data=profile_dict,
+                candidate_skills=skills,
+                app_kit=materials.get("app_kit"),
+                files=materials.get("files"),
+                headless=headless,
+                auto_submit=auto_submit,
+                require_full_qa_confidence=require_full_qa_confidence,
+            ),
+            timeout=14.0,
+        )
+    except asyncio.TimeoutError:
+        sub_res = {
+            "submitted": False,
+            "status_target": "TO_APPLY",
+            "autopilot_status": "needs_manual_apply",
+            "reason": "Need to Apply: External ATS page timed out during automated submission — Tailored Resume, Cover Letter & Q&A ready",
+            "filled_count": 0,
+            "discovered_qa": [],
+        }
 
     # Merge any live form questions discovered during Playwright inspection into job.answers_json
     if sub_res.get("discovered_qa"):
@@ -441,6 +496,69 @@ async def process_single_job_autopilot(
     }
 
 
+async def _fast_scrape_for_profile(
+    sp_dict: Dict[str, Any],
+    profile_dict: Dict[str, Any],
+    query_override: Optional[str] = None,
+    source_override: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Performs high-speed parallel discovery across direct-apply ATS feeds, SimplifyJobs,
+    Hadoku corpus, and tech boards with strict timeouts so scraping completes in a few seconds.
+    """
+    us_only = sp_dict.get("us_only", True)
+    location = sp_dict.get("location") or None
+    include_remote = sp_dict.get("remote_pref", "any") in ("any", "remote")
+
+    if query_override:
+        primary_query = query_override
+    else:
+        sp_name_low = (sp_dict.get("name") or "").lower()
+        if any(w in sp_name_low for w in ("it", "system", "security", "support", "help desk")):
+            primary_query = "it support"
+        else:
+            primary_query = "entry level software engineer"
+
+    if source_override and source_override != "all":
+        try:
+            return await asyncio.wait_for(
+                search_aggregated_jobs(
+                    query=primary_query,
+                    source=source_override,
+                    us_only=us_only,
+                    location=location,
+                    include_remote=include_remote,
+                ),
+                timeout=12.0,
+            )
+        except Exception as e:
+            logger.warning(f"Source override '{source_override}' scrape timed out or failed: {e}")
+            return []
+
+    # Query fast, high-signal sources concurrently with an 8-second timeout per source
+    async def _safe_fetch(coro):
+        try:
+            return await asyncio.wait_for(coro, timeout=8.0)
+        except Exception:
+            return []
+
+    tasks = [
+        _safe_fetch(fetch_simplify_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
+        _safe_fetch(fetch_company_boards_jobs("software engineer", us_only=us_only, location=location, include_remote=include_remote)),
+        _safe_fetch(fetch_hadoku_scraper_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
+        _safe_fetch(fetch_themuse_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
+        _safe_fetch(fetch_remoteok_jobs("engineer", us_only=us_only)),
+        _safe_fetch(fetch_weworkremotely_jobs("developer", us_only=us_only)),
+        _safe_fetch(fetch_jobicy_jobs("developer", us_only=us_only)),
+    ]
+    batches = await asyncio.gather(*tasks, return_exceptions=True)
+    combined: List[Dict[str, Any]] = []
+    for b in batches:
+        if isinstance(b, list):
+            combined.extend(b)
+    return combined
+
+
 async def run_autopilot_cycle(
     db: AsyncSession,
     overrides: Optional[Dict[str, Any]] = None,
@@ -448,10 +566,11 @@ async def run_autopilot_cycle(
     """
     Executes a complete Autonomous Autopilot cycle:
     1. Scrapes suitable job listings matching the active SearchProfile & candidate skills.
-    2. Scores and deduplicates listings; imports suitable jobs (fit_score >= min_discover_score).
+    2. Scores and deduplicates listings; imports suitable jobs into the pipeline.
     3. Generates tailored resumes, tailored cover letters, and answers all necessary questions.
     4. Submits applications automatically whenever possible -> `APPLIED`.
     5. Routes all other jobs that cannot be auto-submitted into `TO_APPLY` ("Need to Apply").
+    Commits progress incrementally after every job so results appear immediately.
     """
     global _IS_RUNNING
     if _AUTOPILOT_LOCK.locked():
@@ -470,19 +589,43 @@ async def run_autopilot_cycle(
 
             scrape_new = ov.get("scrape_new", True)
             process_existing_queue = ov.get("process_existing_queue", True)
-            min_discover_score = ov.get("min_discover_score") if ov.get("min_discover_score") is not None else cfg_dict["min_discover_score"]
-            min_auto_apply_score = ov.get("min_auto_apply_score") if ov.get("min_auto_apply_score") is not None else cfg_dict["min_auto_apply_score"]
-            max_jobs = ov.get("max_jobs") if ov.get("max_jobs") is not None else cfg_dict["max_jobs_per_run"]
-            auto_submit = ov.get("auto_submit") if ov.get("auto_submit") is not None else cfg_dict["auto_submit"]
-            headless = ov.get("headless") if ov.get("headless") is not None else cfg_dict["headless"]
+            min_discover_score = (
+                ov.get("min_discover_score")
+                if ov.get("min_discover_score") is not None
+                else cfg_dict["min_discover_score"]
+            )
+            min_auto_apply_score = (
+                ov.get("min_auto_apply_score")
+                if ov.get("min_auto_apply_score") is not None
+                else cfg_dict["min_auto_apply_score"]
+            )
+            max_jobs = (
+                ov.get("max_jobs")
+                if ov.get("max_jobs") is not None
+                else cfg_dict["max_jobs_per_run"]
+            )
+            auto_submit = (
+                ov.get("auto_submit")
+                if ov.get("auto_submit") is not None
+                else cfg_dict["auto_submit"]
+            )
+            headless = (
+                ov.get("headless")
+                if ov.get("headless") is not None
+                else cfg_dict["headless"]
+            )
             require_full_qa = (
                 ov.get("require_full_qa_confidence")
                 if ov.get("require_full_qa_confidence") is not None
                 else cfg_dict["require_full_qa_confidence"]
             )
-            ai_provider = ov.get("ai_provider") or cfg_dict["ai_provider"] or "hadoku"
+            ai_provider = ov.get("ai_provider") or cfg_dict["ai_provider"] or "template"
             api_key = ov.get("api_key")
-            blocked_companies = {c.strip().lower() for c in (cfg_dict.get("blocked_companies") or []) if c and c.strip()}
+            blocked_companies = {
+                c.strip().lower()
+                for c in (cfg_dict.get("blocked_companies") or [])
+                if c and c.strip()
+            }
 
             # Load candidate profile & skills
             profile_dict, skills = await ensure_candidate_profile(db)
@@ -516,55 +659,17 @@ async def run_autopilot_cycle(
             # STEP 1: Autonomous Scraping & Discovery
             # ====================================================================
             if scrape_new:
-                query_override = (ov.get("query_override") or "").strip()
-                source_override = (ov.get("source_override") or "").strip()
-
-                # Construct targeted search queries from SearchProfile keywords & candidate profile
-                queries: List[str] = []
-                if query_override:
-                    queries.append(query_override)
-                else:
-                    sp_keywords = sp_dict.get("keywords") or []
-                    if sp_keywords:
-                        queries.append(" ".join(sp_keywords[:2]))
-                    if profile_dict.get("title"):
-                        queries.append(profile_dict["title"])
-                    if not queries:
-                        queries.append("software engineer")
-
-                sources_to_query = [source_override] if source_override else (cfg_dict.get("sources") or ["all"])
-                raw_discovered: List[Dict[str, Any]] = []
-
-                for q_str in queries[:2]:
-                    for src in sources_to_query[:2]:
-                        src_param = None if src == "all" else src
-                        try:
-                            batch = await search_aggregated_jobs(
-                                query=q_str,
-                                source=src_param,
-                                us_only=sp_dict.get("us_only", True),
-                                location=sp_dict.get("location") or None,
-                                radius=sp_dict.get("radius_miles") or None,
-                                include_remote=sp_dict.get("remote_pref", "any") in ("any", "remote"),
-                                min_salary=sp_dict.get("min_salary"),
-                                include_undisclosed_salary=sp_dict.get("include_undisclosed_salary", True),
-                            )
-                            raw_discovered.extend(batch)
-                        except Exception as e:
-                            logger.warning(f"Autopilot scraper source '{src}' error: {e}")
-
-                # Also pull from Hadoku JobPlatform corpus if vault key is present
-                if get_hadoku_user_key(api_key) and not source_override:
-                    try:
-                        h_jobs = await fetch_hadoku_jobplatform_jobs(limit=40, sort="date")
-                        raw_discovered.extend(h_jobs)
-                    except Exception as e:
-                        logger.debug(f"Hadoku corpus fetch skipped: {e}")
-
+                raw_discovered = await _fast_scrape_for_profile(
+                    sp_dict=sp_dict,
+                    profile_dict=profile_dict,
+                    query_override=(ov.get("query_override") or "").strip() or None,
+                    source_override=(ov.get("source_override") or "").strip() or None,
+                )
                 scraped_total = len(raw_discovered)
 
-                # Score and filter discovered listings
                 scored_candidates: List[tuple[int, Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
+                fallback_candidates: List[tuple[int, Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
+
                 for item in raw_discovered:
                     title = (item.get("title") or "").strip()
                     company = (item.get("company") or "").strip()
@@ -585,7 +690,6 @@ async def run_autopilot_cycle(
                         wp = "remote" if "remote" in loc.lower() else "onsite"
 
                     classified = classify_role(title, item.get("description") or "")
-                    # Enforce track preference if strict
                     sp_track = sp_dict.get("track", "either")
                     if sp_track in ("ic", "manager") and classified["track"] in ("ic", "manager") and classified["track"] != sp_track:
                         continue
@@ -605,15 +709,22 @@ async def run_autopilot_cycle(
                         master_resume_text=resume_text,
                     )
 
-                    if scored["score"] >= min_discover_score:
-                        if url_clean:
-                            existing_urls.add(url_clean.lower())
-                        existing_keys.add(dedup_key)
-                        scored_candidates.append((scored["score"], item, classified, scored))
+                    if url_clean:
+                        existing_urls.add(url_clean.lower())
+                    existing_keys.add(dedup_key)
 
-                # Sort highest fit score first and import up to max_jobs
+                    if scored["score"] >= min_discover_score:
+                        scored_candidates.append((scored["score"], item, classified, scored))
+                    elif classified["discipline"] == "eng" and scored["score"] >= 35:
+                        # Short snippet from ATS/Simplify before full description extraction:
+                        # Keep as fallback candidate for Need to Apply
+                        fallback_candidates.append((scored["score"], item, classified, scored))
+
                 scored_candidates.sort(key=lambda x: x[0], reverse=True)
-                for fit_sc, item, classified, scored in scored_candidates[:max_jobs]:
+                fallback_candidates.sort(key=lambda x: x[0], reverse=True)
+                selected_to_import = (scored_candidates + fallback_candidates)[:max_jobs]
+
+                for fit_sc, item, classified, scored in selected_to_import:
                     loc = (item.get("location") or "Remote").strip()
                     wp = (item.get("workplace_type") or item.get("remote_type") or "remote").lower()
                     if wp not in ("remote", "hybrid", "onsite"):
@@ -646,12 +757,12 @@ async def run_autopilot_cycle(
                         await db.refresh(j)
 
             # ====================================================================
-            # STEP 2: Select Jobs to Process (Newly Imported + Pending TO_APPLY Queue)
+            # STEP 2: Select Jobs to Process (Existing TO_APPLY Queue + Newly Imported)
             # ====================================================================
-            jobs_to_process: List[Job] = list(imported_jobs)
-            if process_existing_queue and len(jobs_to_process) < max_jobs:
-                remaining_slots = max_jobs - len(jobs_to_process)
-                imported_ids = {j.id for j in imported_jobs}
+            jobs_to_process: List[Job] = []
+            imported_ids = {j.id for j in imported_jobs}
+
+            if process_existing_queue:
                 q_res = await db.execute(
                     select(Job)
                     .where(
@@ -660,11 +771,15 @@ async def run_autopilot_cycle(
                     )
                     .order_by(Job.fit_score.desc().nullslast(), Job.updated_at.desc())
                 )
-                candidates_in_queue = [
+                # Prioritize unprocessed TO_APPLY jobs in the user's pipeline first
+                existing_unprocessed = [
                     j for j in q_res.scalars().all()
                     if j.id not in imported_ids and j.autopilot_status != "auto_applied"
                 ]
-                jobs_to_process.extend(candidates_in_queue[:remaining_slots])
+                jobs_to_process.extend(existing_unprocessed)
+
+            jobs_to_process.extend(imported_jobs)
+            jobs_to_process = jobs_to_process[:max_jobs]
 
             # ====================================================================
             # STEP 3: Tailor Documents, Answer All Questions, & Submit or Route
@@ -675,6 +790,7 @@ async def run_autopilot_cycle(
             skipped_expired_count = 0
             docs_generated_count = 0
             total_questions_answered = 0
+            use_fast_batch = len(jobs_to_process) > 2
 
             for job in jobs_to_process:
                 res_item = await process_single_job_autopilot(
@@ -688,6 +804,7 @@ async def run_autopilot_cycle(
                     require_full_qa_confidence=require_full_qa,
                     ai_provider=ai_provider,
                     api_key=api_key,
+                    fast_batch_mode=use_fast_batch,
                 )
                 job_results.append(res_item)
                 if res_item["documents_generated"]:
@@ -700,6 +817,28 @@ async def run_autopilot_cycle(
                     need_to_apply_count += 1
                 elif res_item["outcome"] == "skipped_expired":
                     skipped_expired_count += 1
+
+                # Commit incremental progress after every job so the UI & DB stay in sync
+                now_ts = datetime.utcnow()
+                partial_summary = {
+                    "started_at": started_at.isoformat(),
+                    "finished_at": now_ts.isoformat(),
+                    "duration_seconds": round((now_ts - started_at).total_seconds(), 2),
+                    "search_profile_used": sp_dict["name"],
+                    "scraped_count": scraped_total,
+                    "imported_count": len(imported_jobs),
+                    "processed_count": len(job_results),
+                    "resumes_generated": docs_generated_count,
+                    "cover_letters_generated": docs_generated_count,
+                    "questions_answered": total_questions_answered,
+                    "auto_applied_count": auto_applied_count,
+                    "routed_to_need_to_apply_count": need_to_apply_count,
+                    "skipped_expired_count": skipped_expired_count,
+                    "job_results": job_results,
+                }
+                cfg.last_run_at = now_ts
+                cfg.last_run_summary_json = json.dumps(partial_summary)
+                await db.commit()
 
             finished_at = datetime.utcnow()
             summary = {

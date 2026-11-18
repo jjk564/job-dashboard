@@ -345,8 +345,11 @@ def answer_single_question(
             "confidence": "high" if has_clearance else "medium",
         }
 
-    # 4. Location / Address / Relocation / Remote
-    if any(k in q for k in ("relocat", "willing to move", "commute to", "work on-site", "work onsite", "hybrid schedule")):
+    # 4. Location / Address / Relocation / Remote / Workplace Arrangement
+    if any(k in q for k in (
+        "relocat", "willing to move", "commute to", "work on-site", "work onsite",
+        "hybrid schedule", "workplace arrangement", "work arrangement", "remote / hybrid"
+    )):
         wp = (job_data.get("workplace_type") or "remote").lower()
         opt = _match_option(options, ["yes", "open", "willing"])
         return {
@@ -629,6 +632,7 @@ def generate_comprehensive_qa_bundle(
     ]
 
     desc_questions = extract_custom_questions_from_description(job_data.get("description") or "")
+    standard_set = {q.strip().lower() for q in standard_questions}
     all_questions: List[str] = []
     seen = set()
 
@@ -648,13 +652,14 @@ def generate_comprehensive_qa_bundle(
 
     bundle: List[Dict[str, Any]] = []
     for q_text in all_questions:
+        is_std = q_text.strip().lower() in standard_set
         ans_item = answer_single_question(
             question_text=q_text,
             job_data=job_data,
-            profile_data=profile_data,
+            profile_data=profile_dict if "profile_dict" in locals() else profile_data,
             candidate_skills=candidate_skills,
             app_kit=app_kit,
-            required=True,
+            required=is_std,
         )
         bundle.append(ans_item)
 

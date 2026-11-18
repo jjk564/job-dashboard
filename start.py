@@ -201,12 +201,13 @@ def main():
         while True:
             time.sleep(3)
 
-            # 1. Verify Backend process & HTTP health
+            # 1. Verify Backend process & TCP listening port health
+            # (Uses OS-level TCP port check so long-running scraping or Playwright tasks never trigger a false kill)
             proc_dead = backend_proc is not None and backend_proc.poll() is not None
-            http_ok = is_http_healthy("http://127.0.0.1:8000/api/health", timeout=2.5)
-            if proc_dead or not http_ok:
+            port_ok = is_port_in_use(8000)
+            if proc_dead or not port_ok:
                 backend_fail_streak += 1
-                if proc_dead or backend_fail_streak >= 3:
+                if proc_dead or backend_fail_streak >= 4:
                     print(f"[!] Watchdog: Backend unhealthy (proc_dead={proc_dead}, streak={backend_fail_streak}). Restarting backend...")
                     kill_proc_tree(backend_proc)
                     free_port(8000)

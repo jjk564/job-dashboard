@@ -43,6 +43,32 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
     loadInitialData();
   }, []);
 
+  // Poll live incremental progress while an Autopilot cycle is running
+  useEffect(() => {
+    if (!runningCycle && !runningQueueOnly) return;
+    let active = true;
+    const timer = setInterval(async () => {
+      if (!active) return;
+      try {
+        const [cfg, updatedJobs] = await Promise.all([
+          api.getAutopilotConfig(),
+          api.getJobs(),
+        ]);
+        if (!active) return;
+        if (cfg.last_run_summary) {
+          setLastSummary(cfg.last_run_summary);
+        }
+        onJobsRefreshed(updatedJobs);
+      } catch {
+        // ignore transient poll errors
+      }
+    }, 2500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [runningCycle, runningQueueOnly]);
+
   const loadInitialData = async () => {
     setLoading(true);
     try {
