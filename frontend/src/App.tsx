@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { KanbanBoard } from './components/Kanban/KanbanBoard';
+import { AutopilotDashboard } from './components/Autopilot/AutopilotDashboard';
 import { JobDiscovery } from './components/Discovery/JobDiscovery';
 import { ProfileManager } from './components/Profile/ProfileManager';
 import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
@@ -12,8 +13,8 @@ import { Job, JobStatus } from './types';
 import { api } from './api/client';
 import type { JobPlatformProps } from './entry';
 
-type AppTab = 'pipeline' | 'discovery' | 'profile' | 'analytics';
-const VALID_TABS: AppTab[] = ['pipeline', 'discovery', 'profile', 'analytics'];
+type AppTab = 'pipeline' | 'autopilot' | 'discovery' | 'profile' | 'analytics';
+const VALID_TABS: AppTab[] = ['pipeline', 'autopilot', 'discovery', 'profile', 'analytics'];
 
 function getInitialTab(): AppTab {
   if (typeof window !== 'undefined') {
@@ -251,6 +252,16 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
                 onJobsRefreshed={handleJobsRefreshed}
                 updatingJobIds={updatingJobIds}
               />
+            )}
+
+            {activeTab === 'autopilot' && (
+              <div className="flex-1 overflow-y-auto">
+                <AutopilotDashboard
+                  jobs={jobs}
+                  onJobsRefreshed={handleJobsRefreshed}
+                  onSelectJob={(job) => setSelectedJob(job)}
+                />
+              </div>
             )}
 
             <div className={activeTab === 'discovery' ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'hidden'}>

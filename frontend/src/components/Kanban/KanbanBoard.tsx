@@ -14,7 +14,8 @@ import {
   Archive,
   ChevronLeft,
   ChevronRight,
-  Layers
+  Layers,
+  Bot
 } from 'lucide-react';
 import { Job, JobStatus, SearchProfile } from '../../types';
 import { JobCard } from './JobCard';
@@ -40,7 +41,7 @@ interface ColumnConfig {
 const COLUMNS: ColumnConfig[] = [
   {
     id: 'TO_APPLY',
-    title: 'To Apply',
+    title: 'Need to Apply',
     icon: <Clock className="w-4 h-4 text-blue-400" />,
     colorClass: 'border-blue-500/30 text-blue-300',
     headerBg: 'bg-blue-950/20',
@@ -91,6 +92,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [minFitScore, setMinFitScore] = useState<number>(0);
   const [hideExpired, setHideExpired] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isRunningAutopilot, setIsRunningAutopilot] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [searchProfiles, setSearchProfiles] = useState<SearchProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<number | 'all'>('all');
@@ -242,6 +244,35 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
   };
 
+  const handleQuickAutopilot = async () => {
+    setIsRunningAutopilot(true);
+    setVerifyMessage('Autopilot running: scraping, tailoring docs, answering Q&A, and applying...');
+    try {
+      const savedProvider = localStorage.getItem('job_pulse_ai_provider') || 'hadoku';
+      const savedApiKey = localStorage.getItem('job_pulse_api_key') || undefined;
+      const res = await api.runAutopilotCycle({
+        scrape_new: true,
+        process_existing_queue: true,
+        search_profile_id: activeProfileId === 'all' ? undefined : activeProfileId,
+        ai_provider: savedProvider,
+        api_key: savedApiKey,
+      });
+      if (onJobsRefreshed && res.jobs) {
+        onJobsRefreshed(res.jobs);
+      }
+      setVerifyMessage(
+        `Autopilot: ${res.summary.auto_applied_count} applied, ${res.summary.routed_to_need_to_apply_count} routed to Need to Apply.`
+      );
+      setTimeout(() => setVerifyMessage(null), 6000);
+    } catch (err) {
+      console.error('Quick Autopilot failed:', err);
+      setVerifyMessage('Autopilot run failed.');
+      setTimeout(() => setVerifyMessage(null), 4000);
+    } finally {
+      setIsRunningAutopilot(false);
+    }
+  };
+
   // Filter jobs based on search term, workplace, fit score, and expired status
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
@@ -303,6 +334,17 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         </div>
 
         <div className="flex items-center space-x-3 text-xs flex-wrap gap-y-2">
+          {/* Quick Run Autopilot Button */}
+          <button
+            onClick={handleQuickAutopilot}
+            disabled={isRunningAutopilot}
+            className="flex items-center space-x-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 font-semibold transition text-xs shadow-xs disabled:opacity-50"
+            title="Scrape suitable jobs, generate tailored resumes & cover letters, answer questions, and auto-submit or route to Need to Apply"
+          >
+            <Bot className={`w-3.5 h-3.5 text-emerald-400 ${isRunningAutopilot ? 'animate-spin' : ''}`} />
+            <span>{isRunningAutopilot ? 'Autopilot Running...' : 'Run Autopilot'}</span>
+          </button>
+
           {/* Verify Postings Button */}
           <button
             onClick={handleVerifyPostings}

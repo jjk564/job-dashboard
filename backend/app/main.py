@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import jobs, discovery, profile, assistant, analytics, search_profiles
+from .routers import jobs, discovery, profile, assistant, analytics, search_profiles, autopilot
+from .services.autopilot import start_autopilot_background_daemon, stop_autopilot_background_daemon
 
 BOOT_ID = str(int(time.time() * 1000))
 
@@ -12,7 +13,9 @@ BOOT_ID = str(int(time.time() * 1000))
 async def lifespan(app: FastAPI):
     # Initialize DB tables on startup
     await init_db()
+    start_autopilot_background_daemon()
     yield
+    stop_autopilot_background_daemon()
 
 app = FastAPI(
     title="Local Job Dashboard API",
@@ -37,6 +40,7 @@ app.include_router(profile.router)
 app.include_router(search_profiles.router)
 app.include_router(assistant.router)
 app.include_router(analytics.router)
+app.include_router(autopilot.router)
 
 @app.get("/api/health")
 async def health_check():

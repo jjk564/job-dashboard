@@ -1,4 +1,17 @@
-import { Job, Profile, Skill, DiscoveredJob, Metrics, AutofillPayload, FitBreakdown, SearchProfile } from '../types';
+import {
+  Job,
+  Profile,
+  Skill,
+  DiscoveredJob,
+  Metrics,
+  AutofillPayload,
+  FitBreakdown,
+  SearchProfile,
+  AutopilotConfig,
+  AutopilotRunSummary,
+  AutopilotJobResult,
+  AnsweredQuestion,
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -331,6 +344,81 @@ export const api = {
   async getMetrics(): Promise<Metrics> {
     const res = await fetch(`${API_BASE}/analytics/metrics`);
     if (!res.ok) throw new Error('Failed to fetch metrics');
+    return res.json();
+  },
+
+  // Autonomous Autopilot Engine
+  async getAutopilotConfig(): Promise<AutopilotConfig> {
+    const res = await fetch(`${API_BASE}/autopilot/config`);
+    if (!res.ok) throw new Error('Failed to fetch autopilot configuration');
+    return res.json();
+  },
+
+  async updateAutopilotConfig(updates: Partial<AutopilotConfig>): Promise<AutopilotConfig> {
+    const res = await fetch(`${API_BASE}/autopilot/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update autopilot configuration');
+    return res.json();
+  },
+
+  async runAutopilotCycle(options?: {
+    scrape_new?: boolean;
+    process_existing_queue?: boolean;
+    search_profile_id?: number | null;
+    query_override?: string;
+    source_override?: string;
+    min_discover_score?: number;
+    min_auto_apply_score?: number;
+    max_jobs?: number;
+    auto_submit?: boolean;
+    headless?: boolean;
+    require_full_qa_confidence?: boolean;
+    ai_provider?: string;
+    api_key?: string;
+  }): Promise<{ summary: AutopilotRunSummary; jobs: Job[] }> {
+    const res = await fetch(`${API_BASE}/autopilot/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options || {}),
+    });
+    if (!res.ok) throw new Error('Failed to run autopilot cycle');
+    return res.json();
+  },
+
+  async runAutopilotForJob(
+    jobId: number,
+    options?: {
+      min_auto_apply_score?: number;
+      auto_submit?: boolean;
+      headless?: boolean;
+      require_full_qa_confidence?: boolean;
+      ai_provider?: string;
+      api_key?: string;
+    }
+  ): Promise<{ result: AutopilotJobResult; job: Job }> {
+    const res = await fetch(`${API_BASE}/autopilot/jobs/${jobId}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options || {}),
+    });
+    if (!res.ok) throw new Error('Failed to run autopilot on job');
+    return res.json();
+  },
+
+  async answerJobQuestion(
+    jobId: number,
+    question: string,
+    options?: string[]
+  ): Promise<{ answer_item: AnsweredQuestion; answers: AnsweredQuestion[] }> {
+    const res = await fetch(`${API_BASE}/autopilot/jobs/${jobId}/answer-question`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, options }),
+    });
+    if (!res.ok) throw new Error('Failed to generate answer for question');
     return res.json();
   },
 

@@ -10,7 +10,9 @@ import {
   Trash2,
   Calendar,
   AlertTriangle,
-  Archive
+  Archive,
+  Bot,
+  FileCheck2
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 
@@ -125,6 +127,30 @@ export const JobCard: React.FC<JobCardProps> = ({
         <div className="mb-2.5 px-2 py-1 rounded-md bg-rose-950/40 border border-rose-900/50 text-[11px] text-rose-300/90 flex items-center space-x-1.5">
           <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
           <span className="truncate" title={job.expired_reason}>{job.expired_reason}</span>
+        </div>
+      )}
+
+      {/* Autopilot Status & Pre-Generated Kit Indicator */}
+      {!job.is_expired && job.autopilot_status === 'auto_applied' && (
+        <div className="mb-2.5 px-2 py-1 rounded-md bg-emerald-950/40 border border-emerald-800/50 text-[11px] text-emerald-300 flex items-center space-x-1.5">
+          <Bot className="w-3 h-3 text-emerald-400 shrink-0" />
+          <span className="truncate" title={job.autopilot_reason || 'Autonomously applied'}>
+            Auto-Applied · Resume & Q&A Submitted
+          </span>
+        </div>
+      )}
+
+      {!job.is_expired && job.autopilot_status === 'needs_manual_apply' && (
+        <div className="mb-2.5 px-2 py-1.5 rounded-md bg-blue-950/40 border border-blue-800/50 text-[11px] text-blue-200 space-y-1">
+          <div className="flex items-center space-x-1.5 font-medium text-blue-300">
+            <FileCheck2 className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span>Resume, Cover Letter & {job.answers?.length || 11} Q&A Ready</span>
+          </div>
+          {job.autopilot_reason && (
+            <div className="text-[10px] text-slate-300/90 truncate" title={job.autopilot_reason}>
+              {job.autopilot_reason}
+            </div>
+          )}
         </div>
       )}
 

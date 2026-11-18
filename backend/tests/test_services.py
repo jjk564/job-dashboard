@@ -411,6 +411,95 @@ async def test_domain_jitter_and_ashby_hydrated_extraction():
     assert "PyTorch" in res["description"]
 
 
+def test_question_answering_and_pdf_export():
+    import os
+    import shutil
+    from app.services.question_answerer import (
+        answer_single_question,
+        generate_comprehensive_qa_bundle,
+        render_text_to_minimal_pdf,
+        export_application_files,
+    )
+    from app.services.browser_assistant import classify_ats_url
+
+    job_data = {
+        "title": "Senior Backend Engineer",
+        "company": "Stripe",
+        "location": "Remote, US",
+        "workplace_type": "remote",
+        "salary_min": 160000,
+        "salary_max": 200000,
+        "description": "Build scalable distributed payment systems with Python, Go, and SQL.\n- How have you scaled distributed transaction pipelines?",
+        "fit_breakdown": {"matched_skills": ["python", "go", "sql"]},
+    }
+    profile_data = {
+        "full_name": "Justin Kilpatrick",
+        "email": "justin@example.com",
+        "phone": "555-123-4567",
+        "location": "Austin, TX",
+        "title": "Backend Software Engineer",
+        "summary": "Experienced backend engineer building reliable APIs.",
+        "linkedin_url": "https://linkedin.com/in/justin",
+        "github_url": "https://github.com/justin",
+        "work_authorization": "Authorized to work in the US without sponsorship",
+        "desired_salary": "$165,000",
+        "notice_period": "2 weeks",
+    }
+    skills = [
+        {"name": "Python", "proficiency": "expert"},
+        {"name": "Go", "proficiency": "intermediate"},
+        {"name": "SQL", "proficiency": "expert"},
+    ]
+
+    # 1. Standard question answering
+    q_auth = answer_single_question("Are you legally authorized to work in the United States?", job_data, profile_data, skills)
+    assert q_auth["answer"] == "Yes"
+    assert q_auth["confidence"] == "high"
+
+    q_spons = answer_single_question("Will you now or in the future require visa sponsorship?", job_data, profile_data, skills)
+    assert q_spons["answer"] == "No"
+    assert q_spons["confidence"] == "high"
+
+    q_sal = answer_single_question("What are your compensation expectations?", job_data, profile_data, skills)
+    assert "$165,000" in q_sal["answer"]
+    assert q_sal["confidence"] == "high"
+
+    q_yrs = answer_single_question("How many years of experience do you have with Python?", job_data, profile_data, skills, field_type="number")
+    assert q_yrs["answer"] == "5"
+    assert q_yrs["confidence"] == "high"
+
+    # 2. Comprehensive Q&A bundle includes both standard and extracted description questions
+    bundle = generate_comprehensive_qa_bundle(job_data, profile_data, skills)
+    assert len(bundle) >= 11
+    assert any("distributed transaction pipelines" in item["question"].lower() for item in bundle)
+
+    # 3. Minimal PDF rendering and file export
+    pdf_bytes = render_text_to_minimal_pdf("Resume", "# Justin Kilpatrick\n**Backend Engineer**\n- Built Python services")
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert b"%%EOF" in pdf_bytes
+
+    exported = export_application_files(
+        job_id=99999,
+        company="Stripe",
+        job_title="Senior Backend Engineer",
+        resume_markdown="# Tailored Resume\nPython & Go",
+        cover_letter_markdown="# Cover Letter\nDear Stripe Hiring Team",
+    )
+    assert os.path.exists(exported["resume_pdf"])
+    assert os.path.exists(exported["cover_letter_pdf"])
+    shutil.rmtree(exported["directory"], ignore_errors=True)
+
+    # 4. ATS URL Classification
+    gh_cls = classify_ats_url("https://boards.greenhouse.io/stripe/jobs/12345")
+    assert gh_cls["can_auto_attempt"] is True
+    assert gh_cls["ats_type"] == "greenhouse"
+
+    wd_cls = classify_ats_url("https://company.wd5.myworkdayjobs.com/en-US/careers/job/123")
+    assert wd_cls["can_auto_attempt"] is False
+    assert wd_cls["ats_type"] == "auth_gated"
+
+
+
 
 
 

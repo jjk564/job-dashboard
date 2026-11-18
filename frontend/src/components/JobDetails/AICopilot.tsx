@@ -53,6 +53,37 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [launchingBrowser, setLaunchingBrowser] = useState(false);
   const [browserMessage, setBrowserMessage] = useState<string | null>(null);
 
+  const [customQuestionInput, setCustomQuestionInput] = useState('');
+  const [answeringQuestion, setAnsweringQuestion] = useState(false);
+
+  // Sync pre-generated documents when job or docType changes
+  React.useEffect(() => {
+    const existingDoc = job.tailored_documents?.find((d) => d.doc_type === docType);
+    if (existingDoc) {
+      setGeneratedContent(existingDoc.content);
+      setProviderUsed('autopilot');
+    } else {
+      setGeneratedContent('');
+    }
+  }, [job.id, docType, job.tailored_documents]);
+
+  // Answer custom application question on demand
+  const handleAnswerCustomQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customQuestionInput.trim()) return;
+    setAnsweringQuestion(true);
+    try {
+      await api.answerJobQuestion(job.id, customQuestionInput.trim());
+      setCustomQuestionInput('');
+      const updated = await api.getJob(job.id);
+      onJobUpdated(updated);
+    } catch (err) {
+      console.error('Failed to answer custom question:', err);
+    } finally {
+      setAnsweringQuestion(false);
+    }
+  };
+
   // Copy helper
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -476,6 +507,82 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 </div>
               )}
             </div>
+
+            {/* Interactive Custom Question Answerer */}
+            <form
+              onSubmit={handleAnswerCustomQuestion}
+              className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2"
+            >
+              <label className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span>Answer Any Application Question</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Paste any application question (e.g. 'How many years of Python experience?')..."
+                  value={customQuestionInput}
+                  onChange={(e) => setCustomQuestionInput(e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={answeringQuestion || !customQuestionInput.trim()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50 shrink-0"
+                >
+                  {answeringQuestion ? 'Answering...' : 'Answer'}
+                </button>
+              </div>
+            </form>
+
+            {/* Autopilot Pre-Answered Screening Questions Bank */}
+            {job.answers && job.answers.length > 0 && (
+              <div className="space-y-2.5 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    Autopilot Answered Questions ({job.answers.length})
+                  </span>
+                  <span className="text-[11px] text-slate-500">Click any answer to copy</span>
+                </div>
+
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {job.answers.map((item, idx) => (
+                    <button
+                      key={`ans_${idx}`}
+                      onClick={() => copyToClipboard(item.answer, `auto_qa_${idx}`)}
+                      className="w-full text-left p-2.5 bg-slate-900 hover:bg-slate-800/90 rounded-xl border border-slate-800 hover:border-emerald-500/50 transition flex items-start justify-between gap-2"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          <span className="text-[11px] font-bold text-slate-300 block">
+                            {item.question}
+                          </span>
+                          <span
+                            className={`text-[9px] px-1.5 py-0.2 rounded-full uppercase font-bold border ${
+                              item.confidence === 'manual_needed'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            }`}
+                          >
+                            {item.confidence === 'manual_needed' ? 'Needs Review' : 'Ready'}
+                          </span>
+                        </div>
+                        <span className="text-xs text-slate-200 leading-relaxed block">
+                          {item.answer}
+                        </span>
+                      </div>
+                      <span className="shrink-0 text-slate-400 mt-1">
+                        {copiedKey === `auto_qa_${idx}` ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Hadoku Drafted Screening Answers & Hooks */}
             {appKit && (

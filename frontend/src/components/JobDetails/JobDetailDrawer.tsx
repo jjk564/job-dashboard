@@ -12,7 +12,9 @@ import {
   Briefcase,
   AlertTriangle,
   RefreshCw,
-  Archive
+  Archive,
+  Bot,
+  CheckCircle2
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { AICopilot } from './AICopilot';
@@ -26,7 +28,7 @@ interface JobDetailDrawerProps {
 }
 
 const STATUS_OPTIONS: { id: JobStatus; label: string }[] = [
-  { id: 'TO_APPLY', label: 'To Apply' },
+  { id: 'TO_APPLY', label: 'Need to Apply' },
   { id: 'APPLIED', label: 'Applied' },
   { id: 'INTERVIEWING', label: 'Interviewing' },
   { id: 'OFFER', label: 'Offer Received' },
@@ -47,6 +49,27 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
   const [newActivityDetails, setNewActivityDetails] = useState('');
   const [addingActivity, setAddingActivity] = useState(false);
   const [checkingExpiration, setCheckingExpiration] = useState(false);
+  const [runningAutopilot, setRunningAutopilot] = useState(false);
+
+  // Run Autopilot on this single job
+  const handleRunJobAutopilot = async () => {
+    setRunningAutopilot(true);
+    try {
+      const savedProvider = localStorage.getItem('job_pulse_ai_provider') || 'hadoku';
+      const savedApiKey = localStorage.getItem('job_pulse_api_key') || undefined;
+      const res = await api.runAutopilotForJob(job.id, {
+        ai_provider: savedProvider,
+        api_key: savedApiKey,
+      });
+      if (res.job) {
+        onJobUpdated(res.job);
+      }
+    } catch (err) {
+      console.error('Failed to run job autopilot:', err);
+    } finally {
+      setRunningAutopilot(false);
+    }
+  };
 
   // Check Expiration
   const handleCheckExpiration = async () => {
@@ -159,6 +182,17 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* 1-Click Job Autopilot Button */}
+            <button
+              onClick={handleRunJobAutopilot}
+              disabled={runningAutopilot}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center space-x-1.5 transition disabled:opacity-50"
+              title="Generate tailored resume, cover letter, answer all questions, and auto-submit or prepare for Need to Apply"
+            >
+              <Bot className={`w-3.5 h-3.5 text-emerald-400 ${runningAutopilot ? 'animate-spin' : ''}`} />
+              <span>{runningAutopilot ? 'Running Autopilot...' : 'Run Autopilot'}</span>
+            </button>
+
             {/* Status Select */}
             <select
               value={job.status}
@@ -262,6 +296,35 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
                 </div>
               </div>
             ) : null}
+
+            {/* Autopilot Status & Routing Banner */}
+            {job.autopilot_status && (
+              <div
+                className={`rounded-xl p-3.5 border text-xs flex items-start justify-between gap-3 ${
+                  job.autopilot_status === 'auto_applied'
+                    ? 'bg-emerald-950/30 border-emerald-700/50 text-emerald-200'
+                    : 'bg-blue-950/30 border-blue-700/50 text-blue-200'
+                }`}
+              >
+                <div className="flex items-start space-x-2.5">
+                  {job.autopilot_status === 'auto_applied' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Bot className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-slate-100">
+                      {job.autopilot_status === 'auto_applied'
+                        ? 'Autonomously Applied via JobPulse Autopilot'
+                        : 'Prepared in Need to Apply (Tailored Resume, Cover Letter & Q&A Ready)'}
+                    </div>
+                    {job.autopilot_reason && (
+                      <p className="text-slate-300/90 leading-relaxed">{job.autopilot_reason}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Meta badges */}
             <div className="flex flex-wrap items-center gap-2 text-xs">

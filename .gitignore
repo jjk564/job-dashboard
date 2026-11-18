@@ -70,3 +70,4 @@ playwright/.cache/
 .pytest_cache/
 .coverage
 htmlcov/
+backend/generated_packets/

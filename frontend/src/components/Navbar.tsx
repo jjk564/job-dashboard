@@ -6,13 +6,14 @@ import {
   BarChart3, 
   Plus, 
   Link2, 
-  Settings 
+  Settings,
+  Bot
 } from 'lucide-react';
 
 interface NavbarProps {
   appName?: string;
-  activeTab: 'pipeline' | 'discovery' | 'profile' | 'analytics';
-  setActiveTab: (tab: 'pipeline' | 'discovery' | 'profile' | 'analytics') => void;
+  activeTab: 'pipeline' | 'autopilot' | 'discovery' | 'profile' | 'analytics';
+  setActiveTab: (tab: 'pipeline' | 'autopilot' | 'discovery' | 'profile' | 'analytics') => void;
   onOpenAddJob: () => void;
   onOpenImportUrl: () => void;
   onOpenSettings: (tab?: 'ai' | 'hidden') => void;
@@ -65,6 +66,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}>
                 {jobCount}
               </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('autopilot')}
+              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'autopilot'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <Bot className="w-4 h-4" />
+              <span>Autopilot</span>
             </button>
 
             <button

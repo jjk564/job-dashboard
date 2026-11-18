@@ -67,6 +67,13 @@ export interface FitBreakdown {
   summary: string;
 }
 
+export interface AnsweredQuestion {
+  question: string;
+  answer: string;
+  category: string;
+  confidence: 'high' | 'medium' | 'manual_needed';
+}
+
 export interface Job {
   id: number;
   title: string;
@@ -95,10 +102,62 @@ export interface Job {
   expired_reason?: string | null;
   contact_person?: string;
   contact_email?: string;
+  autopilot_status?: 'pending' | 'processing' | 'auto_applied' | 'needs_manual_apply' | 'skipped' | null;
+  autopilot_reason?: string | null;
+  answers?: AnsweredQuestion[];
   created_at?: string;
   updated_at?: string;
   activities?: Activity[];
   tailored_documents?: TailoredDocument[];
+}
+
+export interface AutopilotJobResult {
+  job_id: number;
+  title: string;
+  company: string;
+  fit_score?: number;
+  outcome: 'auto_applied' | 'needs_manual_apply' | 'skipped_expired';
+  status: JobStatus;
+  reason: string;
+  documents_generated: boolean;
+  questions_answered: number;
+}
+
+export interface AutopilotRunSummary {
+  started_at: string;
+  finished_at: string;
+  duration_seconds: number;
+  search_profile_used: string;
+  scraped_count: number;
+  imported_count: number;
+  processed_count: number;
+  resumes_generated: number;
+  cover_letters_generated: number;
+  questions_answered: number;
+  auto_applied_count: number;
+  routed_to_need_to_apply_count: number;
+  skipped_expired_count: number;
+  job_results: AutopilotJobResult[];
+}
+
+export interface AutopilotConfig {
+  id: number;
+  enabled: boolean;
+  interval_minutes: number;
+  search_profile_id?: number | null;
+  sources: string[];
+  min_discover_score: number;
+  min_auto_apply_score: number;
+  max_jobs_per_run: number;
+  auto_submit: boolean;
+  headless: boolean;
+  require_full_qa_confidence: boolean;
+  ai_provider: string;
+  blocked_companies: string[];
+  last_run_at?: string | null;
+  last_run_summary?: AutopilotRunSummary | null;
+  updated_at?: string | null;
+  is_running?: boolean;
 }
 
 export interface Profile {

@@ -56,5 +56,11 @@ async def init_db():
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN role_level VARCHAR(50)"))
         if "role_discipline" not in existing_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN role_discipline VARCHAR(50)"))
+        if "autopilot_status" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN autopilot_status VARCHAR(50)"))
+        if "autopilot_reason" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN autopilot_reason VARCHAR(500)"))
+        if "answers_json" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN answers_json TEXT"))
         # Migrate any legacy 'WISHLIST' status jobs to 'TO_APPLY'
         await conn.execute(text("UPDATE jobs SET status = 'TO_APPLY' WHERE status = 'WISHLIST'"))

@@ -34,6 +34,9 @@ class Job(Base):
     expired_reason = Column(String(255), nullable=True)
     contact_person = Column(String(255), nullable=True)
     contact_email = Column(String(255), nullable=True)
+    autopilot_status = Column(String(50), nullable=True)  # pending, processing, auto_applied, needs_manual_apply, skipped
+    autopilot_reason = Column(String(500), nullable=True)
+    answers_json = Column(Text, nullable=True)  # JSON list of {"question": str, "answer": str, "category": str, "confidence": str}
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -47,6 +50,15 @@ class Job(Base):
                 breakdown = json.loads(self.fit_breakdown)
             except Exception:
                 breakdown = None
+
+        answers = []
+        if self.answers_json:
+            try:
+                parsed_ans = json.loads(self.answers_json)
+                if isinstance(parsed_ans, list):
+                    answers = parsed_ans
+            except Exception:
+                answers = []
 
         r_track = self.role_track
         r_level = self.role_level
@@ -89,8 +101,13 @@ class Job(Base):
             "expired_reason": self.expired_reason,
             "contact_person": self.contact_person,
             "contact_email": self.contact_email,
+            "autopilot_status": self.autopilot_status,
+            "autopilot_reason": self.autopilot_reason,
+            "answers": answers,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "activities": [a.to_dict() for a in (self.activities or [])] if "activities" in self.__dict__ else [],
+            "tailored_documents": [d.to_dict() for d in (self.tailored_documents or [])] if "tailored_documents" in self.__dict__ else [],
         }
 
 class Profile(Base):
@@ -243,4 +260,57 @@ class SearchProfile(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class AutopilotConfig(Base):
+    """
+    Stores configuration and last-run telemetry for the Autonomous JobPulse Autopilot engine.
+    """
+    __tablename__ = "autopilot_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Boolean, default=False)
+    interval_minutes = Column(Integer, default=60)
+    search_profile_id = Column(Integer, nullable=True)
+    sources_json = Column(Text, default='["all"]')
+    min_discover_score = Column(Integer, default=50)
+    min_auto_apply_score = Column(Integer, default=70)
+    max_jobs_per_run = Column(Integer, default=15)
+    auto_submit = Column(Boolean, default=True)
+    headless = Column(Boolean, default=True)
+    require_full_qa_confidence = Column(Boolean, default=True)
+    ai_provider = Column(String(50), default="hadoku")
+    blocked_companies_json = Column(Text, default="[]")
+    last_run_at = Column(DateTime, nullable=True)
+    last_run_summary_json = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def _parse_json(self, raw: str, default_val):
+        if not raw:
+            return default_val
+        try:
+            return json.loads(raw)
+        except Exception:
+            return default_val
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "enabled": bool(self.enabled),
+            "interval_minutes": self.interval_minutes if self.interval_minutes is not None else 60,
+            "search_profile_id": self.search_profile_id,
+            "sources": self._parse_json(self.sources_json, ["all"]),
+            "min_discover_score": self.min_discover_score if self.min_discover_score is not None else 50,
+            "min_auto_apply_score": self.min_auto_apply_score if self.min_auto_apply_score is not None else 70,
+            "max_jobs_per_run": self.max_jobs_per_run if self.max_jobs_per_run is not None else 15,
+            "auto_submit": bool(self.auto_submit) if self.auto_submit is not None else True,
+            "headless": bool(self.headless) if self.headless is not None else True,
+            "require_full_qa_confidence": bool(self.require_full_qa_confidence) if self.require_full_qa_confidence is not None else True,
+            "ai_provider": self.ai_provider or "hadoku",
+            "blocked_companies": self._parse_json(self.blocked_companies_json, []),
+            "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
+            "last_run_summary": self._parse_json(self.last_run_summary_json, None),
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 

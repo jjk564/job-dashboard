@@ -221,6 +221,11 @@ async def update_job(job_id: int, job_update: JobUpdate, db: AsyncSession = Depe
     if "fit_breakdown" in update_data and update_data["fit_breakdown"] is not None:
         update_data["fit_breakdown"] = json.dumps(update_data["fit_breakdown"])
 
+    if "answers" in update_data:
+        ans_val = update_data.pop("answers")
+        if ans_val is not None:
+            update_data["answers_json"] = json.dumps(ans_val)
+
     for k, v in update_data.items():
         setattr(job, k, v)
 

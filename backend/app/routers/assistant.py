@@ -328,9 +328,22 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
     if not job or not job.url:
         raise HTTPException(status_code=400, detail="Job or job URL not found")
 
-    p_res = await db.execute(select(Profile).limit(1))
-    profile = p_res.scalars().first()
-    profile_dict = profile.to_dict() if profile else {}
+    from ..services.autopilot import ensure_candidate_profile, prepare_job_application_materials
+    profile_dict, skills = await ensure_candidate_profile(db)
+    materials = await prepare_job_application_materials(
+        db=db,
+        job=job,
+        profile_dict=profile_dict,
+        skills=skills,
+    )
+    await db.commit()
 
-    result = await launch_assisted_application(job.url, profile_dict)
+    result = await launch_assisted_application(
+        job_url=job.url,
+        profile_data=profile_dict,
+        job_data=job.to_dict(),
+        candidate_skills=skills,
+        app_kit=materials.get("app_kit"),
+        files=materials.get("files"),
+    )
     return result

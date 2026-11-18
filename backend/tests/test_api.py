@@ -211,4 +211,100 @@ async def test_search_profiles_directives_and_ingest():
         assert any(b["type"] == "skills" for b in blocks_data["blocks"])
 
 
+@pytest.mark.asyncio
+async def test_autopilot_config_and_pipeline_routing():
+    import shutil
+    from app.services.question_answerer import PACKETS_DIR
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Configure candidate profile & skills
+        await ac.put(
+            "/api/profile",
+            json={
+                "full_name": "Justin Kilpatrick",
+                "email": "justin@example.com",
+                "phone": "555-0199",
+                "location": "Austin, TX",
+                "title": "Software Engineer",
+                "summary": "Backend engineer specializing in Python, FastAPI, and SQL.",
+                "work_authorization": "Authorized to work in the US without sponsorship",
+                "desired_salary": "$140,000",
+                "notice_period": "2 weeks",
+            },
+        )
+        await ac.post("/api/profile/skills", json={"name": "Python", "category": "languages", "proficiency": "expert"})
+        await ac.post("/api/profile/skills", json={"name": "FastAPI", "category": "frameworks", "proficiency": "expert"})
+        await ac.post("/api/profile/skills", json={"name": "SQL", "category": "databases", "proficiency": "expert"})
+
+        # 2. Get and update Autopilot config
+        cfg_res = await ac.get("/api/autopilot/config")
+        assert cfg_res.status_code == 200
+        assert cfg_res.json()["min_auto_apply_score"] == 70
+
+        upd_cfg = await ac.put(
+            "/api/autopilot/config",
+            json={"min_discover_score": 45, "min_auto_apply_score": 75, "auto_submit": True},
+        )
+        assert upd_cfg.status_code == 200
+        assert upd_cfg.json()["min_auto_apply_score"] == 75
+
+        # 3. Create a job on an auth-gated portal (Workday) -> should generate tailored resume, cover letter,
+        #    answer all questions, and route to TO_APPLY ("Need to Apply") with reason explaining login wall
+        job_res = await ac.post(
+            "/api/jobs",
+            json={
+                "title": "Backend Python Engineer",
+                "company": "EnterpriseCloud",
+                "location": "Remote, US",
+                "workplace_type": "remote",
+                "url": "https://enterprise.wd5.myworkdayjobs.com/en-US/careers/job/Backend-Python-Engineer_R123",
+                "description": "Seeking a Backend Python Engineer experienced with Python, FastAPI, and SQL.",
+                "status": "TO_APPLY",
+            },
+        )
+        assert job_res.status_code == 200
+        job_id = job_res.json()["id"]
+
+        run_job_res = await ac.post(
+            f"/api/autopilot/jobs/{job_id}/run",
+            json={"ai_provider": "template"},
+        )
+        assert run_job_res.status_code == 200
+        payload = run_job_res.json()
+        assert payload["result"]["outcome"] == "needs_manual_apply"
+        assert payload["result"]["documents_generated"] is True
+        assert payload["result"]["questions_answered"] >= 11
+
+        updated_job = payload["job"]
+        assert updated_job["status"] == "TO_APPLY"
+        assert updated_job["autopilot_status"] == "needs_manual_apply"
+        assert "Need to Apply" in (updated_job["autopilot_reason"] or "")
+        assert len(updated_job["answers"]) >= 11
+        doc_types = {d["doc_type"] for d in updated_job["tailored_documents"]}
+        assert "tailored_resume" in doc_types
+        assert "cover_letter" in doc_types
+        assert "application_kit" in doc_types
+
+        # 4. Answer an on-demand custom question for the job
+        qa_res = await ac.post(
+            f"/api/autopilot/jobs/{job_id}/answer-question",
+            json={"question": "How many years of experience do you have with Python?"},
+        )
+        assert qa_res.status_code == 200
+        assert "5" in qa_res.json()["answer_item"]["answer"]
+
+        # 5. Run batch queue cycle (scrape_new=False, process_existing_queue=True)
+        cycle_res = await ac.post(
+            "/api/autopilot/run",
+            json={"scrape_new": False, "process_existing_queue": True, "ai_provider": "template"},
+        )
+        assert cycle_res.status_code == 200
+        summary = cycle_res.json()["summary"]
+        assert summary["processed_count"] >= 1
+        assert summary["routed_to_need_to_apply_count"] >= 1
+
+        shutil.rmtree(PACKETS_DIR, ignore_errors=True)
+
+
+
 

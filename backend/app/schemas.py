@@ -102,6 +102,9 @@ class JobUpdate(BaseModel):
     expired_reason: Optional[str] = None
     contact_person: Optional[str] = None
     contact_email: Optional[str] = None
+    autopilot_status: Optional[str] = None
+    autopilot_reason: Optional[str] = None
+    answers: Optional[List[Dict[str, Any]]] = None
 
 class JobResponse(BaseModel):
     id: int
@@ -131,6 +134,9 @@ class JobResponse(BaseModel):
     expired_reason: Optional[str] = None
     contact_person: Optional[str] = None
     contact_email: Optional[str] = None
+    autopilot_status: Optional[str] = None
+    autopilot_reason: Optional[str] = None
+    answers: Optional[List[Dict[str, Any]]] = []
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     activities: Optional[List[ActivityResponse]] = []
@@ -290,4 +296,57 @@ class IngestBatchRequest(BaseModel):
     batch_number: Optional[int] = 1
     is_final: Optional[bool] = True
     search_term: Optional[str] = None
+
+
+# Autopilot Schemas
+class AutopilotConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+    search_profile_id: Optional[int] = None
+    sources: Optional[List[str]] = None
+    min_discover_score: Optional[int] = None
+    min_auto_apply_score: Optional[int] = None
+    max_jobs_per_run: Optional[int] = None
+    auto_submit: Optional[bool] = None
+    headless: Optional[bool] = None
+    require_full_qa_confidence: Optional[bool] = None
+    ai_provider: Optional[str] = None
+    blocked_companies: Optional[List[str]] = None
+
+
+class AutopilotConfigResponse(BaseModel):
+    id: int
+    enabled: bool
+    interval_minutes: int
+    search_profile_id: Optional[int] = None
+    sources: List[str] = Field(default_factory=lambda: ["all"])
+    min_discover_score: int = 50
+    min_auto_apply_score: int = 70
+    max_jobs_per_run: int = 15
+    auto_submit: bool = True
+    headless: bool = True
+    require_full_qa_confidence: bool = True
+    ai_provider: str = "hadoku"
+    blocked_companies: List[str] = Field(default_factory=list)
+    last_run_at: Optional[str] = None
+    last_run_summary: Optional[Dict[str, Any]] = None
+    updated_at: Optional[str] = None
+    is_running: Optional[bool] = False
+
+
+class AutopilotRunRequest(BaseModel):
+    scrape_new: Optional[bool] = True
+    process_existing_queue: Optional[bool] = True
+    search_profile_id: Optional[int] = None
+    query_override: Optional[str] = None
+    source_override: Optional[str] = None
+    min_discover_score: Optional[int] = None
+    min_auto_apply_score: Optional[int] = None
+    max_jobs: Optional[int] = None
+    auto_submit: Optional[bool] = None
+    headless: Optional[bool] = None
+    require_full_qa_confidence: Optional[bool] = None
+    ai_provider: Optional[str] = None
+    api_key: Optional[str] = None
+
 
