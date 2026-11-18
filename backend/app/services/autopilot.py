@@ -418,7 +418,7 @@ async def process_single_job_autopilot(
             "questions_answered": len(qa_list),
         }
 
-    # 6. Attempt Autonomous Submission via Playwright ATS engine (bounded by 14s timeout)
+    # 6. Attempt Autonomous Submission via Playwright ATS engine (bounded by 24s timeout)
     try:
         sub_res = await asyncio.wait_for(
             attempt_autonomous_submission(
@@ -431,7 +431,7 @@ async def process_single_job_autopilot(
                 auto_submit=auto_submit,
                 require_full_qa_confidence=require_full_qa_confidence,
             ),
-            timeout=14.0,
+            timeout=24.0,
         )
     except asyncio.TimeoutError:
         sub_res = {

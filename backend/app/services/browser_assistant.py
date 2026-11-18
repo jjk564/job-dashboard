@@ -3,20 +3,6 @@ Playwright ATS Form Automation & Assisted Application Engine for JobPulse.
 
 Uses `sync_playwright` inside `asyncio.to_thread` so browser subprocesses work reliably
 on Windows under any asyncio event loop policy without blocking the FastAPI event loop.
-
-Supports:
-1. Autonomous Application Submission (`attempt_autonomous_submission`):
-   - Navigates to job posting / ATS form (Greenhouse, Lever, Ashby, Workable, Breezy, generic forms,
-     including embedded Greenhouse/Ashby iframes on company career domains)
-   - Detects login walls or CAPTCHA / verification code gates (never attempts to solve or bypass CAPTCHAs;
-     immediately routes gated postings to 'Need to Apply' / TO_APPLY)
-   - Uploads tailored Resume PDF and Cover Letter PDF to file inputs
-   - Inspects and answers all standard and custom form questions via `answer_single_question`
-   - Submits the application when all required fields are confidently satisfied, or routes to
-     'Need to Apply' (TO_APPLY) with a detailed reason and pre-generated answers.
-2. Interactive Assisted Application (`launch_assisted_application`):
-   - Opens a visible Chromium window, pre-fills all standard fields, uploads tailored resume & cover letter,
-     and fills custom questions so the user can review and submit in 1 click.
 """
 import asyncio
 import logging
@@ -137,6 +123,27 @@ def _select_active_form_target(page: Any) -> Any:
     return page
 
 
+def _dismiss_cookie_banners(page: Any) -> None:
+    """Dismisses floating cookie consent banners that might overlay the Submit button."""
+    cookie_selectors = [
+        "button:has-text('Accept all')",
+        "button:has-text('Accept All')",
+        "button:has-text('Accept cookies')",
+        "button:has-text('Decline all')",
+        "button:has-text('Got it')",
+        "button:has-text('I agree')",
+    ]
+    for sel in cookie_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.count() > 0 and btn.is_visible():
+                btn.click(timeout=1200)
+                time.sleep(0.3)
+                break
+        except Exception:
+            pass
+
+
 def _fill_form_sync(
     page: Any,
     job_data: Dict[str, Any],
@@ -155,6 +162,7 @@ def _fill_form_sync(
     resume_uploaded = False
     cover_letter_uploaded = False
 
+    _dismiss_cookie_banners(page)
     target = _select_active_form_target(page)
 
     # 1. If the page has an 'Apply' / 'Apply for this job' button and no visible form inputs yet, click it
@@ -169,11 +177,12 @@ def _fill_form_sync(
             if apply_btn.count() > 0 and apply_btn.is_visible():
                 apply_btn.click(timeout=3500)
                 time.sleep(1.5)
+                _dismiss_cookie_banners(page)
                 target = _select_active_form_target(page)
     except Exception:
         pass
 
-    # 2. Check for login wall, email verification code, or CAPTCHA gate
+    # 2. Check for login wall or visible CAPTCHA gate
     page_content_low = ""
     try:
         page_content_low = (target.content() or "").lower()
@@ -181,28 +190,30 @@ def _fill_form_sync(
         pass
 
     captcha_selectors = [
-        "iframe[src*='recaptcha']",
-        "iframe[src*='hcaptcha']",
-        "iframe[src*='turnstile']",
-        ".g-recaptcha",
-        ".h-captcha",
-        ".cf-turnstile",
-        "#cf-turnstile",
+        "iframe[src*='recaptcha']:visible",
+        "iframe[src*='hcaptcha']:visible",
+        "iframe[src*='turnstile']:visible",
+        ".g-recaptcha:visible",
+        ".h-captcha:visible",
+        ".cf-turnstile:visible",
     ]
     has_captcha = False
     for sel in captcha_selectors:
         try:
             loc = target.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                has_captcha = True
-                break
+            if loc.count() > 0:
+                # Note: Invisible reCAPTCHA badge (size=invisible) does not block click unless a challenge popup opens;
+                # check if it's an interactive checkbox challenge
+                src_attr = (loc.first.get_attribute("src") or "").lower()
+                if "size=invisible" not in src_attr:
+                    has_captcha = True
+                    break
         except Exception:
             pass
 
     if "verify you are human" in page_content_low or "cf-browser-verification" in page_content_low:
         has_captcha = True
 
-    # Check if page is closed/expired
     is_closed_posting = any(
         phrase in page_content_low
         for phrase in (
@@ -222,7 +233,7 @@ def _fill_form_sync(
     except Exception:
         pass
 
-    # 3. Fill standard contact fields
+    # 3. Fill standard contact fields (handles both first_name and firstname conventions)
     full_name = (profile_data.get("full_name") or "").strip()
     parts = full_name.split()
     first_name = parts[0] if parts else ""
@@ -235,8 +246,16 @@ def _fill_form_sync(
     portfolio = (profile_data.get("portfolio_url") or github or linkedin).strip()
 
     field_mappings = [
-        ('input[name*="first_name" i], input[id*="first_name" i], input[autocomplete="given-name"]', first_name),
-        ('input[name*="last_name" i], input[id*="last_name" i], input[autocomplete="family-name"]', last_name),
+        (
+            'input[name*="first_name" i], input[id*="first_name" i], '
+            'input[name*="firstname" i], input[id*="firstname" i], input[autocomplete="given-name"]',
+            first_name,
+        ),
+        (
+            'input[name*="last_name" i], input[id*="last_name" i], '
+            'input[name*="lastname" i], input[id*="lastname" i], input[autocomplete="family-name"]',
+            last_name,
+        ),
         ('input[name="name" i], input[id="name" i], input[autocomplete="name"], input[name*="full_name" i]', full_name),
         ('input[type="email"], input[name*="email" i], input[id*="email" i]', email),
         ('input[type="tel"], input[name*="phone" i], input[id*="phone" i]', phone),
@@ -259,7 +278,6 @@ def _fill_form_sync(
         except Exception:
             pass
 
-    # Check if a required phone input exists when candidate's phone is empty
     if not phone:
         try:
             phone_loc = target.locator('input[type="tel"]:visible, input[name*="phone" i]:visible, input[id*="phone" i]:visible').first
@@ -274,37 +292,113 @@ def _fill_form_sync(
             pass
 
     # 4. Upload Tailored Resume & Cover Letter PDFs to `<input type="file">`
+    # Note: React ATS forms (Greenhouse, Workable, Ashby) unmount `<input type="file">` as soon as a file is set,
+    # shifting subsequent file inputs from nth(1) to nth(0). Always re-query instead of indexing a stale count.
     if files:
         resume_pdf = files.get("resume_pdf")
         cover_pdf = files.get("cover_letter_pdf")
-        try:
-            file_inputs = target.locator('input[type="file"]')
-            f_count = file_inputs.count()
-            for idx in range(f_count):
-                f_inp = file_inputs.nth(idx)
-                name_attr = (f_inp.get_attribute("name") or "").lower()
-                id_attr = (f_inp.get_attribute("id") or "").lower()
-                aria_attr = (f_inp.get_attribute("aria-label") or "").lower()
-                combined_attr = f"{name_attr} {id_attr} {aria_attr}"
-
-                if any(k in combined_attr for k in ("cover", "letter", "cl")):
-                    if cover_pdf and os.path.exists(cover_pdf):
-                        f_inp.set_input_files(cover_pdf)
-                        cover_letter_uploaded = True
-                        filled_count += 1
+        if resume_pdf and os.path.exists(resume_pdf):
+            try:
+                res_inp = target.locator(
+                    'input[type="file"][id*="resume" i], input[type="file"][name*="resume" i], '
+                    'input[type="file"][aria-label*="resume" i], input[type="file"][id*="cv" i]'
+                ).first
+                if res_inp.count() > 0:
+                    res_inp.set_input_files(resume_pdf, timeout=2000)
+                    resume_uploaded = True
+                    filled_count += 1
                 else:
-                    if resume_pdf and os.path.exists(resume_pdf) and not resume_uploaded:
-                        f_inp.set_input_files(resume_pdf)
+                    any_file = target.locator('input[type="file"]').first
+                    if any_file.count() > 0:
+                        any_file.set_input_files(resume_pdf, timeout=2000)
                         resume_uploaded = True
                         filled_count += 1
-                    elif cover_pdf and os.path.exists(cover_pdf) and not cover_letter_uploaded:
-                        f_inp.set_input_files(cover_pdf)
-                        cover_letter_uploaded = True
-                        filled_count += 1
-        except Exception as e:
-            logger.debug(f"File input upload check: {e}")
+                time.sleep(0.4)
+            except Exception as e:
+                logger.debug(f"Resume upload check: {e}")
 
-    # 5. Inspect and answer all remaining labeled inputs, textareas, and selects
+        if cover_pdf and os.path.exists(cover_pdf):
+            try:
+                cl_inp = target.locator(
+                    'input[type="file"][id*="cover" i], input[type="file"][name*="cover" i], '
+                    'input[type="file"][aria-label*="cover" i]'
+                ).first
+                if cl_inp.count() > 0:
+                    cl_inp.set_input_files(cover_pdf, timeout=2000)
+                    cover_letter_uploaded = True
+                    filled_count += 1
+                time.sleep(0.3)
+            except Exception as e:
+                logger.debug(f"Cover letter upload check: {e}")
+
+    # 5. Discover and answer Radio Button groups (`input[type="radio"]`)
+    try:
+        radios = target.locator("input[type='radio']:visible")
+        r_count = min(radios.count(), 30)
+        radio_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for i in range(r_count):
+            r_el = radios.nth(i)
+            r_name = r_el.get_attribute("name") or f"group_{i}"
+            info = r_el.evaluate(
+                """el => {
+                    const optLabel = (el.closest('label')?.innerText || el.getAttribute('aria-label') || el.value || '').trim();
+                    let cur = el;
+                    let promptText = '';
+                    for (let k = 0; k < 6; k++) {
+                        if (!cur.parentElement) break;
+                        cur = cur.parentElement;
+                        const txt = (cur.innerText || '').trim();
+                        const lines = txt.split('\\n').map(s => s.replace('*', '').trim()).filter(Boolean);
+                        if (lines.length > 2 && lines[0].toLowerCase() !== optLabel.toLowerCase()) {
+                            promptText = lines[0];
+                            break;
+                        }
+                    }
+                    const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true';
+                    return { optLabel, promptText, isReq };
+                }"""
+            )
+            radio_groups.setdefault(r_name, []).append({"index": i, **info})
+
+        for r_name, items in radio_groups.items():
+            prompt = next((it["promptText"] for it in items if it.get("promptText")), r_name)
+            options_list = [it["optLabel"] for it in items if it.get("optLabel")]
+            is_req = any(it.get("isReq") for it in items)
+
+            qa = answer_single_question(
+                question_text=prompt,
+                job_data=job_data,
+                profile_data=profile_data,
+                candidate_skills=candidate_skills,
+                app_kit=app_kit,
+                options=options_list,
+                field_type="radio",
+                required=is_req,
+            )
+            discovered_qa.append(qa)
+
+            if qa["confidence"] == "manual_needed" and is_req:
+                unanswered_required.append(prompt)
+                continue
+
+            desired_ans = (qa.get("answer") or "").strip().lower()
+            matched_item = next(
+                (it for it in items if it["optLabel"].lower() == desired_ans or desired_ans in it["optLabel"].lower()),
+                None,
+            )
+            if matched_item:
+                try:
+                    r_loc = radios.nth(matched_item["index"])
+                    r_loc.check(force=True, timeout=1500)
+                    filled_count += 1
+                except Exception:
+                    pass
+            elif is_req:
+                unanswered_required.append(prompt)
+    except Exception as e:
+        logger.debug(f"Radio group discovery error: {e}")
+
+    # 6. Inspect and answer remaining labeled text inputs, textareas, selects, and React-Select comboboxes
     try:
         elements = target.locator(
             "input[type='text']:visible, input[type='number']:visible, input[type='url']:visible, "
@@ -316,6 +410,13 @@ def _fill_form_sync(
             try:
                 tag_name = (el.evaluate("el => el.tagName.toLowerCase()")) or "input"
                 inp_type = (el.get_attribute("type") or "text").lower()
+                role_attr = (el.get_attribute("role") or "").lower()
+                el_id = el.get_attribute("id") or ""
+                el_name = el.get_attribute("name") or ""
+                if not el_id and not el_name and role_attr == "combobox":
+                    # Internal dummy React-Select input
+                    continue
+
                 is_req = (
                     el.get_attribute("required") is not None
                     or el.get_attribute("aria-required") == "true"
@@ -333,16 +434,22 @@ def _fill_form_sync(
                         }
                         const aria = el.getAttribute('aria-label');
                         if (aria) return aria.trim();
-                        const wrapper = el.closest('label, .field, .application-question, .form-group, [data-qa]');
+                        const wrapper = el.closest('label, .field, .application-question, .form-group, .select__container, [data-qa]');
                         if (wrapper) {
                             const lbl = wrapper.querySelector('label, .label, h4, legend');
                             if (lbl) return lbl.innerText.trim();
                         }
-                        return el.getAttribute('placeholder') || el.getAttribute('name') || '';
+                        return el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('id') || '';
                     }"""
                 )
                 label_clean = (label_text or "").replace("*", "").strip()
                 if not label_clean or len(label_clean) < 2:
+                    continue
+
+                # Skip optional EEO comboboxes unless required (never skip 'country' as Greenhouse requires Country when Phone is filled)
+                if role_attr == "combobox" and not is_req and any(
+                    k in label_clean.lower() for k in ("gender", "hispanic", "race", "veteran", "disability")
+                ):
                     continue
 
                 options_list: Optional[List[str]] = None
@@ -350,6 +457,16 @@ def _fill_form_sync(
                     options_list = el.evaluate(
                         "el => Array.from(el.options).map(o => o.text.trim()).filter(Boolean)"
                     )
+                elif role_attr == "combobox" and "country" not in label_clean.lower():
+                    try:
+                        el.click(force=True, timeout=1000)
+                        time.sleep(0.2)
+                        opts = target.locator(".select__option:visible, [id*='react-select'][role='option']:visible")
+                        opt_cnt = min(opts.count(), 25)
+                        if opt_cnt > 0:
+                            options_list = [opts.nth(k).inner_text().strip() for k in range(opt_cnt)]
+                    except Exception:
+                        pass
 
                 qa = answer_single_question(
                     question_text=label_clean,
@@ -364,11 +481,21 @@ def _fill_form_sync(
                 discovered_qa.append(qa)
 
                 if qa["confidence"] == "manual_needed" and is_req:
+                    if role_attr == "combobox":
+                        try:
+                            el.press("Escape")
+                        except Exception:
+                            pass
                     unanswered_required.append(label_clean)
                     continue
 
                 ans_val = qa.get("answer") or ""
                 if not ans_val:
+                    if role_attr == "combobox":
+                        try:
+                            el.press("Escape")
+                        except Exception:
+                            pass
                     if is_req:
                         unanswered_required.append(label_clean)
                     continue
@@ -376,6 +503,27 @@ def _fill_form_sync(
                 if tag_name == "select":
                     el.select_option(label=ans_val, timeout=1500)
                     filled_count += 1
+                elif role_attr == "combobox":
+                    opt_loc = target.locator(
+                        f".select__option:has-text('{ans_val}'):visible, "
+                        f"[id*='react-select'][role='option']:has-text('{ans_val}'):visible"
+                    ).first
+                    if opt_loc.count() > 0:
+                        opt_loc.click(timeout=1200)
+                        filled_count += 1
+                    else:
+                        el.click(force=True, timeout=1000)
+                        el.fill(str(ans_val), timeout=1000)
+                        time.sleep(0.25)
+                        filtered_opt = target.locator(
+                            ".select__option:visible, [id*='react-select'][role='option']:visible"
+                        ).first
+                        if filtered_opt.count() > 0:
+                            filtered_opt.click(timeout=1000)
+                        else:
+                            el.press("Enter")
+                            el.press("Escape")
+                        filled_count += 1
                 else:
                     el.fill(str(ans_val), timeout=1500)
                     filled_count += 1
@@ -415,7 +563,8 @@ def _attempt_submission_sync(
         context = browser.new_context()
         page = context.new_page()
         try:
-            resp = page.goto(job_url, timeout=12000, wait_until="domcontentloaded")
+            resp = page.goto(job_url, timeout=14000, wait_until="domcontentloaded")
+            page.set_default_timeout(2500)
             if resp and resp.status >= 400:
                 browser.close()
                 return {
@@ -494,6 +643,7 @@ def _attempt_submission_sync(
                     "discovered_qa": fill_res["discovered_qa"],
                 }
 
+            _dismiss_cookie_banners(page)
             submit_btn = target.locator(
                 "button[type='submit']:visible, input[type='submit']:visible, "
                 "button:has-text('Submit Application'):visible, button:has-text('Submit application'):visible, "
@@ -511,8 +661,13 @@ def _attempt_submission_sync(
                     "discovered_qa": fill_res["discovered_qa"],
                 }
 
-            submit_btn.click(timeout=4000)
-            time.sleep(2.0)
+            try:
+                submit_btn.scroll_into_view_if_needed(timeout=2000)
+                submit_btn.click(timeout=3000)
+            except Exception:
+                submit_btn.click(force=True, timeout=3000)
+
+            time.sleep(2.5)
 
             after_html = (target.content() or "").lower()
             confirmation_signals = (
@@ -522,9 +677,13 @@ def _attempt_submission_sync(
                 "we have received your application",
                 "thanks for applying",
                 "your application was sent",
+                "all done",
             )
             confirmed = any(sig in after_html for sig in confirmation_signals)
             has_security_code = "verification code" in after_html or "security code" in after_html
+            has_captcha_after = (
+                "recaptcha" in after_html and ("challenge" in after_html or "verify" in after_html)
+            )
             browser.close()
 
             if confirmed:
@@ -545,12 +704,21 @@ def _attempt_submission_sync(
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
                 }
+            elif has_captcha_after:
+                return {
+                    "submitted": False,
+                    "status_target": "TO_APPLY",
+                    "autopilot_status": "needs_manual_apply",
+                    "reason": f"Need to Apply: ATS triggered a CAPTCHA challenge on submit after filling {fill_res['filled_count']} fields",
+                    "filled_count": fill_res["filled_count"],
+                    "discovered_qa": fill_res["discovered_qa"],
+                }
             else:
                 return {
                     "submitted": False,
                     "status_target": "TO_APPLY",
                     "autopilot_status": "needs_manual_apply",
-                    "reason": f"Need to Apply: Filled {fill_res['filled_count']} fields, but final submission requires manual review on page",
+                    "reason": f"Need to Apply: Pre-filled {fill_res['filled_count']} fields + Resume PDF, awaiting final human submit check",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
                 }

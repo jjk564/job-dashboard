@@ -261,7 +261,7 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high" if (last_name or first_name) else "manual_needed",
         }
-    if q in ("name", "full name", "your name", "legal name", "candidate name") or "full legal name" in q:
+    if q in ("name", "full name", "your name", "legal name", "candidate name") or "legal name" in q:
         return {
             "question": q_raw,
             "answer": full_name,
@@ -348,6 +348,7 @@ def answer_single_question(
     # 4. Location / Address / Relocation / Remote / Workplace Arrangement
     if any(k in q for k in (
         "relocat", "willing to move", "commute to", "work on-site", "work onsite",
+        "work in the office", "days a week", "in-office", "in office", "residing in",
         "hybrid schedule", "workplace arrangement", "work arrangement", "remote / hybrid"
     )):
         wp = (job_data.get("workplace_type") or "remote").lower()
@@ -402,11 +403,11 @@ def answer_single_question(
         }
 
     # 6. Notice Period / Start Date / Availability
-    if any(k in q for k in ("notice period", "when can you start", "start date", "earliest start", "availability", "available to start")):
-        opt = _match_option(options, [notice_period, "2 weeks", "two weeks", "immediately", "immediate", "1-2 weeks"])
+    if any(k in q for k in ("notice period", "when can you start", "start date", "earliest start", "availability", "available to start", "available for")):
+        opt = _match_option(options, ["yes", notice_period, "2 weeks", "two weeks", "immediately", "immediate", "1-2 weeks"])
         return {
             "question": q_raw,
-            "answer": opt or notice_period,
+            "answer": opt or ("Yes" if "available for" in q else notice_period),
             "category": "availability",
             "confidence": "high",
         }
@@ -428,12 +429,44 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 8. Education / Degree / University
-    if any(k in q for k in ("highest level of education", "degree", "education level", "bachelor", "university", "college")):
-        opt = _match_option(options, ["bachelor", "b.s.", "bs", "4-year", "college", "yes"])
+    # 8. Education / Degree / University / School / Discipline / Graduation Date
+    if q in ("school", "university", "college") or "school" in q or "university" in q:
+        opt = _match_option(options, ["university of massachusetts lowell", "umass lowell", "university of massachusetts", "other"])
         return {
             "question": q_raw,
-            "answer": opt or "Bachelor's Degree in Computer Science / Information Technology",
+            "answer": opt or "University of Massachusetts Lowell",
+            "category": "education",
+            "confidence": "high",
+        }
+    if q in ("discipline", "major", "field of study") or any(k in q for k in ("discipline", "field of study", "major")):
+        opt = _match_option(options, ["computer science", "mathematics", "math", "information technology", "software engineering", "other"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Mathematics & Computer Science",
+            "category": "education",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("end date month", "graduation month", "start date month")):
+        opt = _match_option(options, ["may", "05", "june", "september"])
+        return {
+            "question": q_raw,
+            "answer": opt or "May",
+            "category": "education",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("end date year", "graduation year", "year of graduation", "start date year")):
+        opt = _match_option(options, ["2025", "2026", "2024"])
+        return {
+            "question": q_raw,
+            "answer": opt or "2025",
+            "category": "education",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("highest level of education", "degree", "education level", "bachelor", "college")):
+        opt = _match_option(options, ["bachelor", "b.a.", "b.s.", "bs", "ba", "4-year", "college", "yes"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Bachelor's Degree",
             "category": "education",
             "confidence": "high",
         }
@@ -449,7 +482,7 @@ def answer_single_question(
     if any(k in q for k in ("current company", "current employer", "most recent employer")):
         return {
             "question": q_raw,
-            "answer": "Independent / Software Engineering",
+            "answer": "Hyperice",
             "category": "experience",
             "confidence": "high",
         }
@@ -465,8 +498,16 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 11. Previously employed / Applied before / Government / Non-compete
-    if any(k in q for k in ("previously worked at", "ever worked for", "former employee", "applied before", "non-compete", "restrictive covenant", "government official", "related to anyone")):
+    # 11. Previously employed / Applied before / Government / Non-compete / Interview Accommodations
+    if any(k in q for k in ("accommodation", "accessible", "interview process more accessible")):
+        opt = _match_option(options, ["no, i don't need", "no", "none", "not require"])
+        return {
+            "question": q_raw,
+            "answer": opt or "No",
+            "category": "accommodations",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("previously worked", "ever worked for", "worked for", "former employee", "applied before", "non-compete", "restrictive covenant", "government official", "related to anyone")):
         opt = _match_option(options, ["no", "never", "none"])
         return {
             "question": q_raw,
