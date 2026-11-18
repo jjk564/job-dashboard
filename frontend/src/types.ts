@@ -154,6 +154,10 @@ export interface AutopilotConfig {
   require_full_qa_confidence: boolean;
   ai_provider: string;
   blocked_companies: string[];
+  imap_server?: string;
+  imap_email?: string;
+  imap_password?: string;
+  imap_password_configured?: boolean;
   last_run_at?: string | null;
   last_run_summary?: AutopilotRunSummary | null;
   updated_at?: string | null;

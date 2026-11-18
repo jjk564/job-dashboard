@@ -62,5 +62,14 @@ async def init_db():
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN autopilot_reason VARCHAR(500)"))
         if "answers_json" not in existing_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN answers_json TEXT"))
+        # Migrate columns for autopilot_configs table if not present
+        ac_res = await conn.execute(text("PRAGMA table_info(autopilot_configs)"))
+        ac_cols = {row[1] for row in ac_res.fetchall()}
+        if "imap_server" not in ac_cols:
+            await conn.execute(text("ALTER TABLE autopilot_configs ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com'"))
+        if "imap_email" not in ac_cols:
+            await conn.execute(text("ALTER TABLE autopilot_configs ADD COLUMN imap_email VARCHAR(255) DEFAULT ''"))
+        if "imap_password" not in ac_cols:
+            await conn.execute(text("ALTER TABLE autopilot_configs ADD COLUMN imap_password VARCHAR(255) DEFAULT ''"))
         # Migrate any legacy 'WISHLIST' status jobs to 'TO_APPLY'
         await conn.execute(text("UPDATE jobs SET status = 'TO_APPLY' WHERE status = 'WISHLIST'"))

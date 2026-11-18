@@ -5,13 +5,18 @@ Uses `sync_playwright` inside `asyncio.to_thread` so browser subprocesses work r
 on Windows under any asyncio event loop policy without blocking the FastAPI event loop.
 """
 import asyncio
+import json
 import logging
 import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from .question_answerer import answer_single_question
+from .email_code_reader import poll_for_security_code_sync
+from .question_answerer import PACKETS_DIR, answer_single_question
 
 logger = logging.getLogger(__name__)
 
@@ -545,6 +550,39 @@ def _fill_form_sync(
     }
 
 
+def _fill_greenhouse_security_code_sync(target: Any, code: str) -> bool:
+    """
+    Types an 8-character Greenhouse security code into #security-input-0..7
+    (or a single security code input) and clicks the Submit Application button.
+    """
+    clean_code = (code or "").strip()
+    if not clean_code:
+        return False
+
+    try:
+        box0 = target.locator("#security-input-0:visible")
+        if box0.count() > 0:
+            for idx, ch in enumerate(clean_code[:8]):
+                box = target.locator(f"#security-input-{idx}:visible")
+                if box.count() > 0:
+                    box.fill(ch, timeout=1000)
+            time.sleep(0.3)
+            submit_btn = target.locator(
+                "button[type='submit']:visible, input[type='submit']:visible, "
+                "button:has-text('Submit Application'):visible, button:has-text('Submit application'):visible"
+            ).first
+            if submit_btn.count() > 0:
+                try:
+                    submit_btn.click(timeout=3000)
+                except Exception:
+                    submit_btn.click(force=True, timeout=3000)
+            return True
+    except Exception as e:
+        logger.debug(f"Greenhouse security code fill error: {e}")
+
+    return False
+
+
 def _attempt_submission_sync(
     job_url: str,
     job_data: Dict[str, Any],
@@ -554,6 +592,7 @@ def _attempt_submission_sync(
     files: Optional[Dict[str, str]],
     headless: bool,
     require_full_qa_confidence: bool,
+    imap_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Runs synchronous Playwright inside a dedicated worker thread."""
     from playwright.sync_api import sync_playwright
@@ -661,6 +700,7 @@ def _attempt_submission_sync(
                     "discovered_qa": fill_res["discovered_qa"],
                 }
 
+            submit_click_ts = time.time()
             try:
                 submit_btn.scroll_into_view_if_needed(timeout=2000)
                 submit_btn.click(timeout=3000)
@@ -680,7 +720,39 @@ def _attempt_submission_sync(
                 "all done",
             )
             confirmed = any(sig in after_html for sig in confirmation_signals)
-            has_security_code = "verification code" in after_html or "security code" in after_html
+            has_security_code = (
+                "verification code" in after_html
+                or "security code" in after_html
+                or target.locator("#security-input-0:visible").count() > 0
+            )
+
+            # If Greenhouse requested an 8-character email security code, attempt automatic retrieval!
+            if not confirmed and has_security_code:
+                icfg = imap_config or {}
+                has_imap = bool(icfg.get("imap_email") and icfg.get("imap_password"))
+                wait_secs = 22 if has_imap else 3
+                code = poll_for_security_code_sync(
+                    imap_server=icfg.get("imap_server") or "imap.gmail.com",
+                    imap_email=icfg.get("imap_email"),
+                    imap_password=icfg.get("imap_password"),
+                    min_timestamp=submit_click_ts - 15,
+                    max_wait_seconds=wait_secs,
+                )
+                if code:
+                    if _fill_greenhouse_security_code_sync(target, code):
+                        time.sleep(2.5)
+                        after_code_html = (target.content() or "").lower()
+                        if any(sig in after_code_html for sig in confirmation_signals):
+                            browser.close()
+                            return {
+                                "submitted": True,
+                                "status_target": "APPLIED",
+                                "autopilot_status": "auto_applied",
+                                "reason": f"Autonomously submitted application + verified 8-char email security code ({fill_res['filled_count']} fields)",
+                                "filled_count": fill_res["filled_count"],
+                                "discovered_qa": fill_res["discovered_qa"],
+                            }
+
             has_captcha_after = (
                 "recaptcha" in after_html and ("challenge" in after_html or "verify" in after_html)
             )
@@ -700,7 +772,7 @@ def _attempt_submission_sync(
                     "submitted": False,
                     "status_target": "TO_APPLY",
                     "autopilot_status": "needs_manual_apply",
-                    "reason": f"Need to Apply: ATS sent a one-time email verification code after pre-filling {fill_res['filled_count']} fields",
+                    "reason": f"Need to Apply: ATS sent a one-time email verification code after pre-filling {fill_res['filled_count']} fields (configure Gmail App Password in Autopilot or click Open with Auto-Fill)",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
                 }
@@ -747,6 +819,7 @@ async def attempt_autonomous_submission(
     headless: bool = True,
     auto_submit: bool = True,
     require_full_qa_confidence: bool = True,
+    imap_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Attempts to autonomously fill and submit a job application via Playwright in a worker thread.
@@ -806,6 +879,7 @@ async def attempt_autonomous_submission(
             files,
             headless,
             require_full_qa_confidence,
+            imap_config,
         )
     except Exception as e:
         err_str = str(e) or type(e).__name__
@@ -827,9 +901,10 @@ async def launch_assisted_application(
     candidate_skills: Optional[List[Any]] = None,
     app_kit: Optional[Dict[str, Any]] = None,
     files: Optional[Dict[str, str]] = None,
+    imap_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Launches a visible Chromium session with Playwright in a background worker thread to pre-fill
+    Launches a visible Chromium session on the user's interactive desktop to pre-fill
     standard ATS form fields, upload tailored Resume & Cover Letter PDFs, and answer custom
     screening questions. Leaves the browser window open for user review and final submission.
     """
@@ -844,34 +919,65 @@ async def launch_assisted_application(
             "message": "Playwright is not installed. Please run 'pip install playwright && playwright install chromium'.",
         }
 
-    def _assisted_sync():
-        from playwright.sync_api import sync_playwright
+    PACKETS_DIR.mkdir(parents=True, exist_ok=True)
+    payload_path = PACKETS_DIR / "assisted_launch.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "job_url": job_url,
+                "job_data": job_data or {"url": job_url},
+                "profile_data": profile_data,
+                "candidate_skills": candidate_skills or [],
+                "app_kit": app_kit,
+                "files": files,
+                "imap_config": imap_config or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner_script = Path(__file__).resolve().parent / "assisted_runner.py"
+
+    if os.name == "nt":
+        # Use Windows Task Scheduler with /IT (Interactive Token) so the Chromium window
+        # always launches on the user's visible interactive desktop (WinSta0\Default)
+        python_exe = sys.executable
+        pythonw_exe = Path(python_exe).parent / "pythonw.exe"
+        exe_to_use = str(pythonw_exe if pythonw_exe.exists() else python_exe)
+        task_name = "JobPulse_AssistedBrowser"
+        cmd_tr = f'"{exe_to_use}" "{runner_script}"'
+
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False)
-                context = browser.new_context()
-                page = context.new_page()
-                page.goto(job_url, timeout=30000, wait_until="domcontentloaded")
-                time.sleep(2.0)
-
-                fill_res = _fill_form_sync(
-                    page=page,
-                    job_data=job_data or {"url": job_url},
-                    profile_data=profile_data,
-                    candidate_skills=candidate_skills,
-                    app_kit=app_kit,
-                    files=files,
-                )
-                logger.info(
-                    f"Assisted application launched. Pre-filled {fill_res['filled_count']} fields "
-                    f"(Resume uploaded: {fill_res['resume_uploaded']})."
-                )
-                time.sleep(300)
-                browser.close()
+            create_res = subprocess.run(
+                [
+                    "schtasks",
+                    "/Create",
+                    "/F",
+                    "/TN",
+                    task_name,
+                    "/TR",
+                    cmd_tr,
+                    "/SC",
+                    "ONCE",
+                    "/ST",
+                    "00:00",
+                    "/IT",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if create_res.returncode == 0:
+                subprocess.run(["schtasks", "/Run", "/TN", task_name], capture_output=True, text=True)
+                return {
+                    "success": True,
+                    "message": f"Visible browser window opened on your desktop for {job_url}. All fields, Resume PDF, Cover Letter PDF, and screening answers are being filled now!",
+                }
         except Exception as e:
-            logger.error(f"Playwright assistant error: {e}")
+            logger.warning(f"Interactive scheduled task fallback: {e}")
 
-    asyncio.create_task(asyncio.to_thread(_assisted_sync))
+    # Fallback: launch in background thread
+    from .assisted_runner import run_interactive_browser
+    asyncio.create_task(asyncio.to_thread(run_interactive_browser, str(payload_path)))
 
     return {
         "success": True,

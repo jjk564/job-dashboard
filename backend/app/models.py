@@ -281,6 +281,9 @@ class AutopilotConfig(Base):
     require_full_qa_confidence = Column(Boolean, default=True)
     ai_provider = Column(String(50), default="hadoku")
     blocked_companies_json = Column(Text, default="[]")
+    imap_server = Column(String(255), default="imap.gmail.com")
+    imap_email = Column(String(255), default="")
+    imap_password = Column(String(255), default="")
     last_run_at = Column(DateTime, nullable=True)
     last_run_summary_json = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -308,6 +311,9 @@ class AutopilotConfig(Base):
             "require_full_qa_confidence": bool(self.require_full_qa_confidence) if self.require_full_qa_confidence is not None else True,
             "ai_provider": self.ai_provider or "hadoku",
             "blocked_companies": self._parse_json(self.blocked_companies_json, []),
+            "imap_server": self.imap_server or "imap.gmail.com",
+            "imap_email": self.imap_email or "",
+            "imap_password_configured": bool(self.imap_password and self.imap_password.strip()),
             "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
             "last_run_summary": self._parse_json(self.last_run_summary_json, None),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

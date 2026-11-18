@@ -15,6 +15,8 @@ import {
   Layers,
   ExternalLink,
   Zap,
+  Mail,
+  KeyRound,
 } from 'lucide-react';
 import { AutopilotConfig, AutopilotRunSummary, Job, SearchProfile } from '../../types';
 import { api } from '../../api/client';
@@ -38,6 +40,13 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
   const [runningQueueOnly, setRunningQueueOnly] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [lastSummary, setLastSummary] = useState<AutopilotRunSummary | null>(null);
+
+  const [imapEmail, setImapEmail] = useState('jkilpatrick50@gmail.com');
+  const [imapPassword, setImapPassword] = useState('');
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [emailStatusMsg, setEmailStatusMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [manualCode, setManualCode] = useState('');
+  const [manualCodeMsg, setManualCodeMsg] = useState<string | null>(null);
 
   useEffect(() => {
     loadInitialData();
@@ -78,6 +87,9 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
       ]);
       setConfig(cfg);
       setSearchProfiles(profiles);
+      if (cfg.imap_email) {
+        setImapEmail(cfg.imap_email);
+      }
       if (cfg.last_run_summary) {
         setLastSummary(cfg.last_run_summary);
       }
@@ -85,6 +97,41 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
       console.error('Failed to load autopilot data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveAndTestEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTestingEmail(true);
+    setEmailStatusMsg(null);
+    try {
+      const res = await api.testAutopilotEmail({
+        imap_server: 'imap.gmail.com',
+        imap_email: imapEmail,
+        imap_password: imapPassword || undefined,
+        save: true,
+      });
+      setEmailStatusMsg({ ok: res.success, text: res.message });
+      if (res.success && config) {
+        setConfig({ ...config, imap_email: imapEmail, imap_password_configured: true });
+      }
+    } catch (err: any) {
+      setEmailStatusMsg({ ok: false, text: err.message || 'Failed to test IMAP connection.' });
+    } finally {
+      setTestingEmail(false);
+    }
+  };
+
+  const handleSendManualCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualCode.trim()) return;
+    try {
+      const res = await api.submitSecurityCode(manualCode.trim());
+      setManualCode('');
+      setManualCodeMsg(res.message);
+      setTimeout(() => setManualCodeMsg(null), 5000);
+    } catch (err: any) {
+      setManualCodeMsg(err.message || 'Failed to queue security code');
     }
   };
 
@@ -507,6 +554,101 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
             <span>
               <strong className="text-slate-200">Safety & Routing Guarantee:</strong> Portals with login walls (Workday, LinkedIn, iCIMS), CAPTCHA challenges, or custom required questions that cannot be verified are never forced — they are automatically placed in <strong className="text-blue-300">Need to Apply</strong> with tailored resumes, cover letters, and draft answers attached.
             </span>
+          </div>
+
+          {/* Automatic Email Verification Code Reader (Greenhouse 8-Char Security Code) */}
+          <div className="pt-4 border-t border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Mail className="w-4 h-4 text-emerald-400" />
+                <h4 className="font-bold text-xs uppercase tracking-wider text-slate-200">
+                  Automatic Email Code Retrieval (Greenhouse 2FA)
+                </h4>
+              </div>
+              {config.imap_password_configured && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                  Active
+                </span>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Greenhouse emails an 8-character security code when submitting an application. Connect a Gmail App Password so Autopilot can read the code from your inbox, fill the 8 boxes, and finish submitting automatically.{' '}
+              <a
+                href="https://myaccount.google.com/apppasswords"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-400 hover:underline font-medium"
+              >
+                Create Gmail App Password →
+              </a>
+            </p>
+
+            <form onSubmit={handleSaveAndTestEmail} className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="email"
+                  placeholder="jkilpatrick50@gmail.com"
+                  value={imapEmail}
+                  onChange={(e) => setImapEmail(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <input
+                  type="password"
+                  placeholder={config.imap_password_configured ? '•••••••••••••••• (Saved)' : '16-char Gmail App Password'}
+                  value={imapPassword}
+                  onChange={(e) => setImapPassword(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={testingEmail}
+                className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition disabled:opacity-50"
+              >
+                {testingEmail ? 'Testing IMAP Inbox...' : 'Save & Test Automatic Email Code Reader'}
+              </button>
+            </form>
+
+            {emailStatusMsg && (
+              <div
+                className={`p-2.5 rounded-xl border text-xs ${
+                  emailStatusMsg.ok
+                    ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-700/50 text-rose-300'
+                }`}
+              >
+                {emailStatusMsg.text}
+              </div>
+            )}
+
+            {/* Quick Manual 8-Character Security Code Drop-Box */}
+            <form onSubmit={handleSendManualCode} className="pt-2 space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-300 flex items-center space-x-1">
+                <KeyRound className="w-3 h-3 text-amber-400" />
+                <span>Or Paste 8-Char Greenhouse Code From Email:</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  maxLength={12}
+                  placeholder="e.g. X7k9P2mQ"
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                  className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!manualCode.trim()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50"
+                >
+                  Send Code
+                </button>
+              </div>
+              {manualCodeMsg && (
+                <p className="text-[11px] text-emerald-400 font-medium">{manualCodeMsg}</p>
+              )}
+            </form>
           </div>
         </div>
 

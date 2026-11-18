@@ -275,6 +275,7 @@ async def process_single_job_autopilot(
     ai_provider: str = "template",
     api_key: Optional[str] = None,
     fast_batch_mode: bool = False,
+    imap_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Runs the full autonomous pipeline on a single Job:
@@ -418,7 +419,9 @@ async def process_single_job_autopilot(
             "questions_answered": len(qa_list),
         }
 
-    # 6. Attempt Autonomous Submission via Playwright ATS engine (bounded by 24s timeout)
+    # 6. Attempt Autonomous Submission via Playwright ATS engine
+    has_imap = bool(imap_config and imap_config.get("imap_password"))
+    sub_timeout = 42.0 if has_imap else 24.0
     try:
         sub_res = await asyncio.wait_for(
             attempt_autonomous_submission(
@@ -430,8 +433,9 @@ async def process_single_job_autopilot(
                 headless=headless,
                 auto_submit=auto_submit,
                 require_full_qa_confidence=require_full_qa_confidence,
+                imap_config=imap_config,
             ),
-            timeout=24.0,
+            timeout=sub_timeout,
         )
     except asyncio.TimeoutError:
         sub_res = {
@@ -792,6 +796,12 @@ async def run_autopilot_cycle(
             total_questions_answered = 0
             use_fast_batch = len(jobs_to_process) > 2
 
+            imap_config = {
+                "imap_server": cfg.imap_server or "imap.gmail.com",
+                "imap_email": (cfg.imap_email or profile_dict.get("email") or "").strip(),
+                "imap_password": (cfg.imap_password or "").strip(),
+            }
+
             for job in jobs_to_process:
                 res_item = await process_single_job_autopilot(
                     db=db,
@@ -805,6 +815,7 @@ async def run_autopilot_cycle(
                     ai_provider=ai_provider,
                     api_key=api_key,
                     fast_batch_mode=use_fast_batch,
+                    imap_config=imap_config,
                 )
                 job_results.append(res_item)
                 if res_item["documents_generated"]:

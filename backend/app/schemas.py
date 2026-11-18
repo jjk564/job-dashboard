@@ -312,6 +312,9 @@ class AutopilotConfigUpdate(BaseModel):
     require_full_qa_confidence: Optional[bool] = None
     ai_provider: Optional[str] = None
     blocked_companies: Optional[List[str]] = None
+    imap_server: Optional[str] = None
+    imap_email: Optional[str] = None
+    imap_password: Optional[str] = None
 
 
 class AutopilotConfigResponse(BaseModel):
@@ -328,6 +331,9 @@ class AutopilotConfigResponse(BaseModel):
     require_full_qa_confidence: bool = True
     ai_provider: str = "hadoku"
     blocked_companies: List[str] = Field(default_factory=list)
+    imap_server: str = "imap.gmail.com"
+    imap_email: str = ""
+    imap_password_configured: bool = False
     last_run_at: Optional[str] = None
     last_run_summary: Optional[Dict[str, Any]] = None
     updated_at: Optional[str] = None

@@ -422,6 +422,34 @@ export const api = {
     return res.json();
   },
 
+  async testAutopilotEmail(payload: {
+    imap_server?: string;
+    imap_email?: string;
+    imap_password?: string;
+    save?: boolean;
+  }): Promise<{ success: boolean; message: string; recent_code?: string | null }> {
+    const res = await fetch(`${API_BASE}/autopilot/test-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('Failed to test email reader');
+    return res.json();
+  },
+
+  async submitSecurityCode(
+    code: string,
+    jobId?: number
+  ): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/autopilot/submit-security-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, job_id: jobId }),
+    });
+    if (!res.ok) throw new Error('Failed to submit security code');
+    return res.json();
+  },
+
   // Health & Live Reload Sync
   async getHealth(): Promise<{ status: string; service: string; boot_id?: string }> {
     const res = await fetch(`${API_BASE}/health`, { cache: 'no-store' });

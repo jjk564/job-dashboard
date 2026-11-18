@@ -328,15 +328,27 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
     if not job or not job.url:
         raise HTTPException(status_code=400, detail="Job or job URL not found")
 
-    from ..services.autopilot import ensure_candidate_profile, prepare_job_application_materials
+    from ..services.autopilot import (
+        ensure_candidate_profile,
+        get_or_create_autopilot_config,
+        prepare_job_application_materials,
+    )
+    cfg = await get_or_create_autopilot_config(db)
     profile_dict, skills = await ensure_candidate_profile(db)
     materials = await prepare_job_application_materials(
         db=db,
         job=job,
         profile_dict=profile_dict,
         skills=skills,
+        fast_batch_mode=True,
     )
     await db.commit()
+
+    imap_config = {
+        "imap_server": cfg.imap_server or "imap.gmail.com",
+        "imap_email": (cfg.imap_email or profile_dict.get("email") or "").strip(),
+        "imap_password": (cfg.imap_password or "").strip(),
+    }
 
     result = await launch_assisted_application(
         job_url=job.url,
@@ -345,5 +357,6 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
         candidate_skills=skills,
         app_kit=materials.get("app_kit"),
         files=materials.get("files"),
+        imap_config=imap_config,
     )
     return result

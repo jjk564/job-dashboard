@@ -68,6 +68,12 @@ async def update_autopilot_config(
         cfg.ai_provider = updates["ai_provider"]
     if "blocked_companies" in updates and updates["blocked_companies"] is not None:
         cfg.blocked_companies_json = json.dumps([c.strip() for c in updates["blocked_companies"] if c and c.strip()])
+    if "imap_server" in updates and updates["imap_server"] is not None:
+        cfg.imap_server = updates["imap_server"].strip() or "imap.gmail.com"
+    if "imap_email" in updates and updates["imap_email"] is not None:
+        cfg.imap_email = updates["imap_email"].strip()
+    if "imap_password" in updates and updates["imap_password"] is not None:
+        cfg.imap_password = updates["imap_password"].strip()
 
     cfg.updated_at = datetime.utcnow()
     await db.commit()
@@ -133,6 +139,11 @@ async def run_autopilot_for_single_job(
     opts = payload or {}
 
     profile_dict, skills = await ensure_candidate_profile(db)
+    imap_config = {
+        "imap_server": cfg.imap_server or "imap.gmail.com",
+        "imap_email": (cfg.imap_email or profile_dict.get("email") or "").strip(),
+        "imap_password": (cfg.imap_password or "").strip(),
+    }
 
     result = await process_single_job_autopilot(
         db=db,
@@ -145,6 +156,7 @@ async def run_autopilot_for_single_job(
         require_full_qa_confidence=opts.get("require_full_qa_confidence", cfg_dict["require_full_qa_confidence"]),
         ai_provider=opts.get("ai_provider", cfg_dict["ai_provider"]),
         api_key=opts.get("api_key"),
+        imap_config=imap_config,
     )
 
     # Reload full job with relationships
@@ -219,3 +231,54 @@ async def answer_custom_job_question(
         "answer_item": qa,
         "answers": existing_answers,
     }
+
+
+@router.post("/test-email")
+async def test_autopilot_email_reader(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Tests IMAP connection for automatic Greenhouse / ATS verification code retrieval.
+    """
+    import asyncio
+    from ..services.email_code_reader import test_imap_connection
+
+    cfg = await get_or_create_autopilot_config(db)
+    profile_dict, _ = await ensure_candidate_profile(db)
+    body = payload or {}
+
+    server = (body.get("imap_server") or cfg.imap_server or "imap.gmail.com").strip()
+    email_addr = (body.get("imap_email") or cfg.imap_email or profile_dict.get("email") or "").strip()
+    password = (body.get("imap_password") or cfg.imap_password or "").strip()
+
+    if body.get("save") and password:
+        cfg.imap_server = server
+        cfg.imap_email = email_addr
+        cfg.imap_password = password
+        cfg.updated_at = datetime.utcnow()
+        await db.commit()
+
+    return await asyncio.to_thread(test_imap_connection, server, email_addr, password)
+
+
+@router.post("/submit-security-code")
+async def submit_manual_security_code(
+    payload: Dict[str, Any] = Body(...),
+):
+    """
+    Drops an 8-character Greenhouse security code into the local manual code file
+    so any active Playwright session (headless or assisted desktop window) fills it immediately.
+    """
+    from ..services.email_code_reader import save_manual_security_code
+
+    code = (payload.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Security code is required")
+
+    save_manual_security_code(code, job_id=payload.get("job_id"))
+    return {
+        "success": True,
+        "message": f"Security code '{code}' queued for active browser session.",
+    }
+

@@ -55,6 +55,19 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
 
   const [customQuestionInput, setCustomQuestionInput] = useState('');
   const [answeringQuestion, setAnsweringQuestion] = useState(false);
+  const [securityCodeInput, setSecurityCodeInput] = useState('');
+
+  const handleSendSecurityCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!securityCodeInput.trim()) return;
+    try {
+      const res = await api.submitSecurityCode(securityCodeInput.trim(), job.id);
+      setSecurityCodeInput('');
+      setBrowserMessage(res.message);
+    } catch (err: any) {
+      setBrowserMessage(err.message || 'Failed to send security code.');
+    }
+  };
 
   // Sync pre-generated documents when job or docType changes
   React.useEffect(() => {
@@ -506,6 +519,24 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                   {browserMessage}
                 </div>
               )}
+
+              <form onSubmit={handleSendSecurityCode} className="pt-1 flex gap-2">
+                <input
+                  type="text"
+                  maxLength={12}
+                  placeholder="Have an 8-char Greenhouse email code? Paste here to auto-fill & submit..."
+                  value={securityCodeInput}
+                  onChange={(e) => setSecurityCodeInput(e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!securityCodeInput.trim()}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold disabled:opacity-50 shrink-0"
+                >
+                  Fill Code
+                </button>
+              </form>
             </div>
 
             {/* Interactive Custom Question Answerer */}
