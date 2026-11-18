@@ -5,14 +5,26 @@ import os
 import webbrowser
 import socket
 import atexit
+import urllib.request
 
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
 
 
 def is_port_in_use(port: int) -> bool:
-    """Check if a local port is already occupied."""
+    """Check if a local port is accepting TCP connections."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.5)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def is_http_healthy(url: str, timeout: float = 3.0) -> bool:
+    """Verify the HTTP server actually responds on the given URL."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "JobPulse-Watchdog/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 500
+    except Exception:
+        return False
 
 
 def free_port(port: int):
@@ -32,7 +44,6 @@ def free_port(port: int):
                         pids.add(pid)
             for pid in pids:
                 subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
-                # Also terminate any orphaned multiprocessing children referencing parent_pid=<pid>
                 subprocess.run(
                     f'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object {{ $_.ParentProcessId -eq {pid} -or $_.CommandLine -like \'*parent_pid={pid}*\' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"',
                     shell=True,
@@ -72,29 +83,93 @@ def start_frontend(frontend_dir: str, npm_cmd: str):
     )
 
 
+def ensure_windows_startup(root_dir: str):
+    """
+    Registers a lightweight VBS startup script in the current user's Windows Startup folder
+    so JobPulse Watchdog starts automatically in the background on Windows login.
+    """
+    if os.name != "nt":
+        return
+    try:
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return
+        startup_dir = os.path.join(appdata, "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+        if not os.path.isdir(startup_dir):
+            return
+        vbs_path = os.path.join(startup_dir, "JobPulse_AlwaysOn.vbs")
+        python_exe = sys.executable
+        pythonw_exe = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
+        runner_exe = pythonw_exe if os.path.exists(pythonw_exe) else python_exe
+        start_py = os.path.join(root_dir, "start.py")
+
+        vbs_content = (
+            'Set WshShell = CreateObject("WScript.Shell")\n'
+            f'WshShell.CurrentDirectory = "{root_dir}"\n'
+            f'WshShell.Run """{runner_exe}"" ""{start_py}"" --no-browser --ensure-running", 0, False\n'
+        )
+        with open(vbs_path, "w", encoding="utf-8") as f:
+            f.write(vbs_content)
+        print(f"[OK] Registered Windows Startup Always-On launcher: {vbs_path}")
+    except Exception as e:
+        print(f"[*] Could not register Windows Startup launcher: {e}")
+
+
+
 def main():
     root_dir = os.path.dirname(os.path.abspath(__file__))
     backend_dir = os.path.join(root_dir, "backend")
     frontend_dir = os.path.join(root_dir, "frontend")
-
-    print("=" * 60)
-    print("   Starting JobPulse: Local Job Dashboard & Copilot   ")
-    print("=" * 60)
-
-    # Free up ports if previous instances left stale background processes
-    free_port(8000)
-    free_port(5173)
-
-    # 1. Start Backend
-    print("[1/3] Starting FastAPI backend on http://127.0.0.1:8000...")
-    backend_proc = start_backend(backend_dir)
-
-    # 2. Start Frontend
-    print("[2/3] Starting Vite frontend on http://localhost:5173...")
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
-    frontend_proc = start_frontend(frontend_dir, npm_cmd)
+
+    ensure_windows_startup(root_dir)
+
+    if "--spawn-detached" in sys.argv:
+        # Spawn start.py as an independent detached background process that survives shell exit
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NO_WINDOW = 0x08000000
+        flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW if os.name == "nt" else 0
+        log_path = os.path.join(root_dir, "watchdog.log")
+        log_file = open(log_path, "a", encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(root_dir, "start.py"), "--no-browser", "--no-kill-on-exit"],
+            cwd=root_dir,
+            stdout=log_file,
+            stderr=log_file,
+            creationflags=flags,
+            close_fds=True if os.name != "nt" else False,
+        )
+        print(f"[*] Spawned detached Always-On JobPulse Watchdog (PID: {proc.pid})")
+        for _ in range(30):
+            time.sleep(0.5)
+            if is_http_healthy("http://127.0.0.1:8000/api/health") and is_port_in_use(5173):
+                print("[OK] Backend (http://127.0.0.1:8000) and Frontend (http://localhost:5173) are ONLINE!")
+                return
+        print("[*] Watchdog is initializing services in the background...")
+        return
+
+    print("=" * 60)
+    print("   Starting JobPulse: Always-On Watchdog & Local Copilot   ")
+    print("=" * 60)
+
+    # If already healthy and --ensure-running is passed, reuse existing servers
+    if "--ensure-running" in sys.argv and is_http_healthy("http://127.0.0.1:8000/api/health") and is_port_in_use(5173):
+        print("[OK] JobPulse Backend (8000) and Frontend (5173) are already healthy. Entering watchdog monitor...")
+        backend_proc = None
+        frontend_proc = None
+    else:
+        free_port(8000)
+        free_port(5173)
+
+        print("[1/3] Starting FastAPI backend on http://127.0.0.1:8000...")
+        backend_proc = start_backend(backend_dir)
+
+        print("[2/3] Starting Vite frontend on http://localhost:5173...")
+        frontend_proc = start_frontend(frontend_dir, npm_cmd)
 
     def cleanup():
+        if "--no-kill-on-exit" in sys.argv:
+            return
         print("\nStopping JobPulse services...")
         kill_proc_tree(backend_proc)
         kill_proc_tree(frontend_proc)
@@ -102,18 +177,16 @@ def main():
 
     atexit.register(cleanup)
 
-    # Wait up to 12 seconds for both backend and frontend to become responsive, then open browser
     print("[3/3] Waiting for services to initialize...")
-    for _ in range(24):
+    for _ in range(30):
         time.sleep(0.5)
         if is_port_in_use(8000) and is_port_in_use(5173):
             break
 
-    print("\nJobPulse is active!")
+    print("\nJobPulse is active and monitored by Always-On Watchdog!")
     print(" - Dashboard:   http://localhost:5173")
     print(" - Backend API: http://127.0.0.1:8000/docs")
-    print(" - Live Reload: Active (Frontend HMR + Backend Hot-Reload)")
-    print("Press Ctrl+C to stop both servers.\n")
+    print(" - Watchdog:    Auto-restarts Backend or Frontend on crash or health check failure\n")
 
     if "--no-browser" not in sys.argv:
         try:
@@ -121,18 +194,43 @@ def main():
         except Exception:
             pass
 
+    backend_fail_streak = 0
+    frontend_fail_streak = 0
+
     try:
         while True:
-            time.sleep(1)
-            # Automatically restart either service if it exits unexpectedly
-            if backend_proc.poll() is not None:
-                print(f"[!] Backend exited with code {backend_proc.poll()}. Restarting backend...")
-                free_port(8000)
-                backend_proc = start_backend(backend_dir)
-            if frontend_proc.poll() is not None:
-                print(f"[!] Frontend exited with code {frontend_proc.poll()}. Restarting frontend...")
-                free_port(5173)
-                frontend_proc = start_frontend(frontend_dir, npm_cmd)
+            time.sleep(3)
+
+            # 1. Verify Backend process & HTTP health
+            proc_dead = backend_proc is not None and backend_proc.poll() is not None
+            http_ok = is_http_healthy("http://127.0.0.1:8000/api/health", timeout=2.5)
+            if proc_dead or not http_ok:
+                backend_fail_streak += 1
+                if proc_dead or backend_fail_streak >= 3:
+                    print(f"[!] Watchdog: Backend unhealthy (proc_dead={proc_dead}, streak={backend_fail_streak}). Restarting backend...")
+                    kill_proc_tree(backend_proc)
+                    free_port(8000)
+                    backend_proc = start_backend(backend_dir)
+                    backend_fail_streak = 0
+                    time.sleep(2)
+            else:
+                backend_fail_streak = 0
+
+            # 2. Verify Frontend process & TCP/HTTP health
+            fe_dead = frontend_proc is not None and frontend_proc.poll() is not None
+            fe_ok = is_port_in_use(5173)
+            if fe_dead or not fe_ok:
+                frontend_fail_streak += 1
+                if fe_dead or frontend_fail_streak >= 3:
+                    print(f"[!] Watchdog: Frontend unhealthy (fe_dead={fe_dead}, streak={frontend_fail_streak}). Restarting frontend...")
+                    kill_proc_tree(frontend_proc)
+                    free_port(5173)
+                    frontend_proc = start_frontend(frontend_dir, npm_cmd)
+                    frontend_fail_streak = 0
+                    time.sleep(2)
+            else:
+                frontend_fail_streak = 0
+
     except KeyboardInterrupt:
         pass
 

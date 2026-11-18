@@ -71,3 +71,4 @@ playwright/.cache/
 .coverage
 htmlcov/
 backend/generated_packets/
+watchdog.log
