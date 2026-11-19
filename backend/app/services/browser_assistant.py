@@ -221,14 +221,31 @@ def _fill_form_sync(
     if "verify you are human" in page_content_low or "cf-browser-verification" in page_content_low:
         has_captcha = True
 
-    is_closed_posting = any(
-        phrase in page_content_low
+    # Use visible body text (excluding script tags) to avoid false positives on i18n translation JSON bundles
+    visible_body_text = ""
+    try:
+        visible_body_text = (target.inner_text("body") or "").lower()
+    except Exception:
+        visible_body_text = page_content_low
+
+    # A page that contains active form inputs or an Apply button is NOT a 404/closed posting
+    has_form_or_apply = False
+    try:
+        has_form_or_apply = target.locator(
+            "button:has-text('Apply'), a:has-text('Apply'), form input, input[type='file'], input[type='email']"
+        ).count() > 0
+    except Exception:
+        pass
+
+    is_closed_posting = not has_form_or_apply and any(
+        phrase in visible_body_text
         for phrase in (
             "no longer open",
             "no longer accepting applications",
             "position has been filled",
             "job is no longer available",
             "page not found",
+            "404 not found",
         )
     )
 
@@ -646,8 +663,9 @@ def _fill_form_sync(
                     continue
 
                 # Skip optional EEO comboboxes unless required (never skip 'country' as Greenhouse requires Country when Phone is filled)
+                # Gender and pronouns are actively filled with candidate's preference (Male / He/him/his)
                 if role_attr == "combobox" and not is_req and any(
-                    k in label_clean.lower() for k in ("gender", "hispanic", "race", "veteran", "disability")
+                    k in label_clean.lower() for k in ("hispanic", "race", "veteran", "disability")
                 ):
                     continue
 
@@ -818,8 +836,13 @@ def _attempt_submission_sync(
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        context = browser.new_context()
+        browser = p.chromium.launch(
+            headless=headless,
+            args=["--disable-blink-features=AutomationControlled"] if headless else None,
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" if headless else None,
+        )
         page = context.new_page()
         try:
             resp = page.goto(job_url, timeout=14000, wait_until="domcontentloaded")
@@ -1009,7 +1032,11 @@ def _attempt_submission_sync(
                             }
 
             has_captcha_after = (
-                "recaptcha" in after_html and ("challenge" in after_html or "verify" in after_html)
+                ("recaptcha" in after_html and ("challenge" in after_html or "verify" in after_html))
+                or "challenges.cloudflare.com" in after_html
+                or "turnstile" in after_html
+                or "cf-turnstile" in after_html
+                or target.locator("iframe[src*='challenges.cloudflare.com']").count() > 0
             )
             browser.close()
 
@@ -1036,7 +1063,7 @@ def _attempt_submission_sync(
                     "submitted": False,
                     "status_target": "TO_APPLY",
                     "autopilot_status": "needs_manual_apply",
-                    "reason": f"Need to Apply: ATS triggered a CAPTCHA challenge on submit after filling {fill_res['filled_count']} fields",
+                    "reason": f"Need to Apply: ATS triggered a Cloudflare / CAPTCHA human verification check on submit after pre-filling {fill_res['filled_count']} fields (click Open with Auto-Fill to submit in 1 click)",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
                 }

@@ -300,12 +300,18 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high" if full_name else "manual_needed",
         }
-    if "preferred name" in q or "pronoun" in q:
-        ans = first_name if "preferred name" in q else "Prefer not to say"
-        opt = _match_option(options, [ans, "prefer not", "decline"])
+    if "preferred name" in q:
         return {
             "question": q_raw,
-            "answer": opt or ans,
+            "answer": first_name or full_name,
+            "category": "contact",
+            "confidence": "high",
+        }
+    if "pronoun" in q:
+        opt = _match_option(options, ["he/him/his", "he/him", "he / him", "he", "prefer not to say"])
+        return {
+            "question": q_raw,
+            "answer": opt or "He/him/his",
             "category": "contact",
             "confidence": "high",
         }
@@ -651,7 +657,16 @@ def answer_single_question(
         }
 
     # 12. EEO / Voluntary Self-Identification (Gender, Ethnicity, Veteran, Disability)
-    if any(k in q for k in ("gender", "race", "hispanic", "latino", "ethnicity", "veteran", "disability", "sexual orientation", "self-identify", "demographic")):
+    if any(k in q for k in ("gender", "sex")) and "sexual orientation" not in q:
+        opt = _match_option(options, ["male", "man", "he/him", "prefer not to say"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Male",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("race", "hispanic", "latino", "ethnicity", "veteran", "disability", "sexual orientation", "self-identify", "demographic")):
         opt = _match_option(
             options,
             [
