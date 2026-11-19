@@ -156,6 +156,8 @@ def _fill_form_sync(
     candidate_skills: Optional[List[Any]] = None,
     app_kit: Optional[Dict[str, Any]] = None,
     files: Optional[Dict[str, str]] = None,
+    job_url: Optional[str] = None,
+    **kwargs,
 ) -> Dict[str, Any]:
     """
     Synchronous Playwright form discovery and autofill routine (executed inside worker thread).
@@ -529,10 +531,11 @@ def _fill_form_sync(
     # 6. Inspect and answer remaining labeled text inputs, textareas, selects, and React/Custom comboboxes
     try:
         elements = target.locator(
-            "input[type='text']:visible, input[type='number']:visible, input[type='url']:visible, "
+            "input:visible:not([type='file']):not([type='radio']):not([type='checkbox']):not([type='hidden']):not([type='submit']):not([type='button']), "
             "textarea:visible, select:visible, div[role='combobox']:visible, button[role='combobox']:visible"
         )
-        el_count = min(elements.count(), 40)
+        el_count = min(elements.count(), 45)
+        logger.debug(f"[LOOP START] total elements={el_count}")
         for i in range(el_count):
             el = elements.nth(i)
             try:
@@ -541,6 +544,7 @@ def _fill_form_sync(
                 role_attr = (el.get_attribute("role") or "").lower()
                 el_id = el.get_attribute("id") or ""
                 el_name = el.get_attribute("name") or ""
+                logger.debug(f"[LOOP ITEM] i={i}/{el_count}, tag={tag_name}, id={el_id}, role={role_attr}")
                 if not el_id and not el_name and role_attr == "combobox" and tag_name == "input":
                     # Internal dummy React-Select input
                     continue
@@ -584,8 +588,13 @@ def _fill_form_sync(
                         }
                         // 5. Container walk & previousElementSibling (critical for Rippling & React forms!)
                         let cur = el;
-                        for (let k = 0; k < 6 && cur; k++) {
-                            if (cur.getAttribute('data-testid') === 'field' || cur.classList.contains('eun831x1') || cur.parentElement?.classList?.contains('application-question')) {
+                        for (let k = 0; k < 12 && cur; k++) {
+                            const isFieldContainer = (
+                                cur.getAttribute('data-testid') === 'field' ||
+                                (cur.className && String(cur.className).includes('eun831x1')) ||
+                                (cur.parentElement && cur.parentElement.getAttribute('data-testid') === 'field')
+                            );
+                            if (isFieldContainer) {
                                 if (cur.previousElementSibling) {
                                     const txt = (cur.previousElementSibling.innerText || '').trim();
                                     if (txt && txt.length > 2) return txt;
@@ -626,9 +635,11 @@ def _fill_form_sync(
                     )
                 elif role_attr == "combobox" and "country" not in label_clean.lower():
                     try:
+                        el.scroll_into_view_if_needed(timeout=1000)
                         el.click(force=True, timeout=1200)
                         time.sleep(0.3)
                         opts = target.locator(
+                            f"#{el_id}-list [role='option'], [role='listbox'] [role='option'], "
                             ".select__option:visible, [id*='react-select'][role='option']:visible, "
                             "[role='option']:visible, [class*='option']:visible, li:visible"
                         )
@@ -648,6 +659,7 @@ def _fill_form_sync(
                     field_type="number" if inp_type == "number" else tag_name,
                     required=is_req,
                 )
+                logger.debug(f"[LOOP QA] {el_id}: ans={qa.get('answer')}, conf={qa.get('confidence')}")
                 discovered_qa.append(qa)
 
                 if qa["confidence"] == "manual_needed" and is_req:
@@ -670,45 +682,68 @@ def _fill_form_sync(
                         unanswered_required.append(label_clean)
                     continue
 
+                logger.debug(f"[LOOP APPLYING] {el_id}: role={role_attr}, ans={ans_val}")
                 if tag_name == "select":
                     el.select_option(label=ans_val, timeout=1500)
                     filled_count += 1
                 elif role_attr == "combobox":
-                    opt_loc = target.locator(
-                        f"[role='option']:has-text('{ans_val}'):visible, "
-                        f".select__option:has-text('{ans_val}'):visible, "
-                        f"[id*='react-select'][role='option']:has-text('{ans_val}'):visible, "
-                        f"[class*='option']:has-text('{ans_val}'):visible, "
-                        f"li:has-text('{ans_val}'):visible"
-                    ).first
-                    if opt_loc.count() > 0:
-                        opt_loc.click(force=True, timeout=1200)
-                        filled_count += 1
-                    else:
-                        if tag_name == "input":
-                            el.click(force=True, timeout=1000)
-                            el.fill(str(ans_val), timeout=1000)
-                            time.sleep(0.25)
-                            filtered_opt = target.locator(
-                                ".select__option:visible, [id*='react-select'][role='option']:visible, "
-                                "[role='option']:visible, li:visible"
-                            ).first
-                            if filtered_opt.count() > 0:
-                                filtered_opt.click(timeout=1000)
-                            else:
-                                el.press("Enter")
-                                el.press("Escape")
+                    # Scoped option locator: check #{el_id}-list first, then [role='listbox'], then visible options
+                    opt_loc = None
+                    candidate_locators = []
+                    if el_id:
+                        candidate_locators.append(target.locator(f"#{el_id}-list [role='option']"))
+                        candidate_locators.append(target.locator(f"#{el_id}-list li"))
+                    candidate_locators.append(target.locator("[role='listbox'] [role='option']"))
+                    candidate_locators.append(target.locator("[role='listbox'] li"))
+                    candidate_locators.append(target.locator("[role='option']:visible"))
+                    candidate_locators.append(target.locator(".select__option:visible"))
+                    candidate_locators.append(target.locator("li[role='option']:visible"))
+
+                    for cloc in candidate_locators:
+                        try:
+                            matched = cloc.filter(has_text=str(ans_val)).first
+                            if matched.count() > 0:
+                                opt_loc = matched
+                                break
+                        except Exception:
+                            pass
+
+                    if opt_loc and opt_loc.count() > 0:
+                        try:
+                            opt_loc.click(force=True, timeout=1200)
                             filled_count += 1
-                        else:
-                            try:
-                                el.press("Escape")
-                            except Exception:
-                                pass
+                            time.sleep(0.3)
+                            logger.debug(f"[COMBOBOX FILL] {el_id}: selected {ans_val}, new val={el.inner_text()}")
+                        except Exception as e:
+                            logger.debug(f"[COMBOBOX FILL error] {el_id}: {e}")
+                    else:
+                        # Fallback: re-click and search
+                        try:
+                            el.scroll_into_view_if_needed(timeout=1000)
+                            el.click(force=True, timeout=1200)
+                            time.sleep(0.3)
+                            for cloc in candidate_locators:
+                                matched = cloc.filter(has_text=str(ans_val)).first
+                                if matched.count() > 0:
+                                    matched.click(force=True, timeout=1200)
+                                    filled_count += 1
+                                    time.sleep(0.3)
+                                    logger.debug(f"[COMBOBOX FILL fallback] {el_id}: selected {ans_val}")
+                                    break
+                            else:
+                                if tag_name == "input":
+                                    el.fill(str(ans_val), timeout=1000)
+                                    time.sleep(0.2)
+                                    target.locator(".select__option:visible, [role='option']:visible").filter(has_text=str(ans_val)).first.click(timeout=1000)
+                                else:
+                                    el.press("Escape")
+                        except Exception as e:
+                            logger.debug(f"[COMBOBOX FILL fallback error] {el_id}: {e}")
                 else:
                     el.fill(str(ans_val), timeout=1500)
                     filled_count += 1
-            except Exception:
-                pass
+            except Exception as item_err:
+                logger.debug(f"[LOOP ITEM ERROR] i={i}, id={el_id}: {item_err}")
     except Exception as e:
         logger.debug(f"Custom field discovery error: {e}")
 
