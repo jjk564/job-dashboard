@@ -633,21 +633,6 @@ def _fill_form_sync(
                     options_list = el.evaluate(
                         "el => Array.from(el.options).map(o => o.text.trim()).filter(Boolean)"
                     )
-                elif role_attr == "combobox" and "country" not in label_clean.lower():
-                    try:
-                        el.scroll_into_view_if_needed(timeout=1000)
-                        el.click(force=True, timeout=1200)
-                        time.sleep(0.3)
-                        opts = target.locator(
-                            f"#{el_id}-list [role='option'], [role='listbox'] [role='option'], "
-                            ".select__option:visible, [id*='react-select'][role='option']:visible, "
-                            "[role='option']:visible, [class*='option']:visible, li:visible"
-                        )
-                        opt_cnt = min(opts.count(), 25)
-                        if opt_cnt > 0:
-                            options_list = [opts.nth(k).inner_text().strip() for k in range(opt_cnt)]
-                    except Exception:
-                        pass
 
                 qa = answer_single_question(
                     question_text=label_clean,
@@ -663,21 +648,11 @@ def _fill_form_sync(
                 discovered_qa.append(qa)
 
                 if qa["confidence"] == "manual_needed" and is_req:
-                    if role_attr == "combobox":
-                        try:
-                            el.press("Escape")
-                        except Exception:
-                            pass
                     unanswered_required.append(label_clean)
                     continue
 
                 ans_val = qa.get("answer") or ""
                 if not ans_val:
-                    if role_attr == "combobox":
-                        try:
-                            el.press("Escape")
-                        except Exception:
-                            pass
                     if is_req:
                         unanswered_required.append(label_clean)
                     continue
@@ -687,58 +662,70 @@ def _fill_form_sync(
                     el.select_option(label=ans_val, timeout=1500)
                     filled_count += 1
                 elif role_attr == "combobox":
-                    # Scoped option locator: check #{el_id}-list first, then [role='listbox'], then visible options
-                    opt_loc = None
-                    candidate_locators = []
-                    if el_id:
-                        candidate_locators.append(target.locator(f"#{el_id}-list [role='option']"))
-                        candidate_locators.append(target.locator(f"#{el_id}-list li"))
-                    candidate_locators.append(target.locator("[role='listbox'] [role='option']"))
-                    candidate_locators.append(target.locator("[role='listbox'] li"))
-                    candidate_locators.append(target.locator("[role='option']:visible"))
-                    candidate_locators.append(target.locator(".select__option:visible"))
-                    candidate_locators.append(target.locator("li[role='option']:visible"))
+                    # 1. Scroll combobox into view and click to open its menu
+                    try:
+                        el.scroll_into_view_if_needed(timeout=1500)
+                        el.click(force=True, timeout=1200)
+                        time.sleep(0.35)
+                    except Exception as click_err:
+                        logger.debug(f"[COMBOBOX OPEN ERR] {el_id}: {click_err}")
 
-                    for cloc in candidate_locators:
+                    # 2. STRICTLY scope option search to THIS combobox's menu container!
+                    # Prevents unclosed or animating menus from prior questions from stealing the click
+                    opt_loc = None
+                    aria_ctrl = el.get_attribute("aria-controls") or ""
+                    menu_locators = []
+                    if el_id:
+                        menu_locators.append(target.locator(f"#{el_id}-list"))
+                    if aria_ctrl:
+                        menu_locators.append(target.locator(f"#{aria_ctrl}"))
+                    if not menu_locators:
+                        menu_locators.append(target.locator("[role='listbox']:visible, ul[data-testid='menuList']:visible").first)
+
+                    for m_loc in menu_locators:
                         try:
-                            matched = cloc.filter(has_text=str(ans_val)).first
-                            if matched.count() > 0:
-                                opt_loc = matched
+                            candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
+                            candidate.wait_for(state="visible", timeout=1500)
+                            opt_loc = candidate
+                            break
+                        except Exception:
+                            pass
+
+                    # Fallback retry: click el again if menu was not open
+                    if not opt_loc:
+                        try:
+                            el.scroll_into_view_if_needed(timeout=1000)
+                            el.click(force=True, timeout=1200)
+                            time.sleep(0.35)
+                            for m_loc in menu_locators:
+                                candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
+                                candidate.wait_for(state="visible", timeout=1500)
+                                opt_loc = candidate
                                 break
                         except Exception:
                             pass
 
-                    if opt_loc and opt_loc.count() > 0:
+                    if opt_loc:
                         try:
-                            opt_loc.click(force=True, timeout=1200)
+                            parent_id = opt_loc.evaluate("el => el.parentElement.id || el.parentElement.tagName")
+                            logger.debug(f"[COMBOBOX CLICK ATTEMPT] {el_id}: target opt parent={parent_id}")
+                            opt_loc.click(force=True, timeout=1500)
                             filled_count += 1
                             time.sleep(0.3)
                             logger.debug(f"[COMBOBOX FILL] {el_id}: selected {ans_val}, new val={el.inner_text()}")
                         except Exception as e:
                             logger.debug(f"[COMBOBOX FILL error] {el_id}: {e}")
                     else:
-                        # Fallback: re-click and search
-                        try:
-                            el.scroll_into_view_if_needed(timeout=1000)
-                            el.click(force=True, timeout=1200)
-                            time.sleep(0.3)
-                            for cloc in candidate_locators:
-                                matched = cloc.filter(has_text=str(ans_val)).first
-                                if matched.count() > 0:
-                                    matched.click(force=True, timeout=1200)
-                                    filled_count += 1
-                                    time.sleep(0.3)
-                                    logger.debug(f"[COMBOBOX FILL fallback] {el_id}: selected {ans_val}")
-                                    break
-                            else:
-                                if tag_name == "input":
-                                    el.fill(str(ans_val), timeout=1000)
-                                    time.sleep(0.2)
-                                    target.locator(".select__option:visible, [role='option']:visible").filter(has_text=str(ans_val)).first.click(timeout=1000)
-                                else:
-                                    el.press("Escape")
-                        except Exception as e:
-                            logger.debug(f"[COMBOBOX FILL fallback error] {el_id}: {e}")
+                        logger.debug(f"[COMBOBOX NO OPT_LOC FOUND] {el_id}: ans={ans_val}")
+                        if tag_name == "input":
+                            el.fill(str(ans_val), timeout=1000)
+                            time.sleep(0.2)
+                            target.locator(".select__option:visible, [role='option']:visible").filter(has_text=str(ans_val)).first.click(timeout=1000)
+                        else:
+                            try:
+                                el.press("Escape")
+                            except Exception:
+                                pass
                 else:
                     el.fill(str(ans_val), timeout=1500)
                     filled_count += 1
