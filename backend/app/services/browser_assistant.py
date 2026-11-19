@@ -839,11 +839,16 @@ def _attempt_submission_sync(
         browser = p.chromium.launch(
             headless=headless,
             args=["--disable-blink-features=AutomationControlled"] if headless else None,
+            ignore_default_args=["--enable-automation"] if headless else None,
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" if headless else None,
         )
         page = context.new_page()
+        try:
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        except Exception:
+            pass
         try:
             resp = page.goto(job_url, timeout=14000, wait_until="domcontentloaded")
             page.set_default_timeout(2500)

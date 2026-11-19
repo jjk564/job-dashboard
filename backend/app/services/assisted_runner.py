@@ -66,13 +66,30 @@ def run_interactive_browser(payload_path: str) -> None:
 
     try:
         with sync_playwright() as p:
-            log("Launching Chromium (headless=False)...")
-            browser = p.chromium.launch(
-                headless=False,
-                args=["--start-maximized"],
-            )
+            log("Launching desktop browser (headless=False)...")
+            browser = None
+            for ch in ["chrome", "msedge", None]:
+                try:
+                    browser = p.chromium.launch(
+                        headless=False,
+                        channel=ch,
+                        args=["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                        ignore_default_args=["--enable-automation"],
+                    )
+                    log(f"Launched browser with channel: {ch}")
+                    break
+                except Exception as ch_err:
+                    log(f"Channel {ch} unavailable: {ch_err}")
+
+            if not browser:
+                browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+
             context = browser.new_context(no_viewport=True)
             page = context.new_page()
+            try:
+                page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            except Exception:
+                pass
 
             try:
                 log(f"Navigating to {job_url}...")
