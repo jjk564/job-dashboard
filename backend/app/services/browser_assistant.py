@@ -444,7 +444,14 @@ def _fill_form_sync(
             r_name = r_el.get_attribute("name") or f"group_{i}"
             info = r_el.evaluate(
                 """el => {
-                    let optLabel = (el.closest('label')?.innerText || el.getAttribute('aria-label') || el.value || '').trim();
+                    let optLabel = (
+                        el.closest('[role="radio"]')?.innerText ||
+                        el.closest('[data-testid*="radio-label"]')?.innerText ||
+                        el.closest('label')?.innerText ||
+                        el.getAttribute('aria-label') ||
+                        el.value ||
+                        ''
+                    ).trim();
                     if (!optLabel && el.parentElement) {
                         optLabel = (el.parentElement.innerText || '').trim();
                     }
@@ -498,18 +505,34 @@ def _fill_form_sync(
 
             desired_ans = (qa.get("answer") or "").strip().lower()
             matched_item = next(
-                (it for it in items if it["optLabel"].lower() == desired_ans or desired_ans in it["optLabel"].lower()),
+                (it for it in items if it["optLabel"].lower() == desired_ans or desired_ans in it["optLabel"].lower() or it["optLabel"].lower() in desired_ans),
                 None,
             )
+            if not matched_item and desired_ans.startswith("yes"):
+                matched_item = next(
+                    (it for it in items if "yes" in it["optLabel"].lower() or it["optLabel"].lower() == "true"),
+                    None,
+                )
+
             if matched_item:
                 checked_ok = False
                 try:
                     r_loc = radios.nth(matched_item["index"])
-                    r_loc.check(force=True, timeout=1000)
+                    # On React/Rippling, click the enclosing custom radio component or label
+                    r_loc.evaluate("el => (el.closest('[role=\"radio\"]') || el.closest('label') || el).click()")
                     checked_ok = True
                     filled_count += 1
                 except Exception:
                     pass
+
+                if not checked_ok:
+                    try:
+                        r_loc = radios.nth(matched_item["index"])
+                        r_loc.check(force=True, timeout=1000)
+                        checked_ok = True
+                        filled_count += 1
+                    except Exception:
+                        pass
 
                 # If native input is visually hidden / aria-hidden, click visible text or label
                 if not checked_ok:

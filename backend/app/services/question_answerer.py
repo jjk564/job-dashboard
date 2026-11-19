@@ -359,6 +359,16 @@ def answer_single_question(
             "confidence": "high",
         }
 
+    # Check for SMS / text message agreement upfront so 'opt out' in SMS disclosures doesn't match visa OPT
+    if any(k in q for k in ("text message", "text messages", "sms opt", "sms updates", "receive text message", "receive text", "text messaging")):
+        opt = _match_option(options, ["yes - i consent to receiving text messages", "yes - i consent", "i consent", "yes", "true", "agree"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes - I consent to receiving text messages",
+            "category": "consent",
+            "confidence": "high",
+        }
+
     # Questions asking if the candidate is legally authorized to work (e.g. "...without the need for visa sponsorship")
     if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work")):
         opt = _match_option(options, ["yes", "authorized", "citizen", "permanent resident", "u.s. citizen", "us citizen"])
@@ -380,7 +390,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("sponsorship", "visa", "h-1b", "h1b", "opt", "cpt", "immigration")):
+    if any(k in q for k in ("sponsorship", "visa", "h-1b", "h1b", "cpt", "immigration")) or (re.search(r"\bopt\b", q) and not re.search(r"\bopt[- ](out|in)\b", q)):
         desired = "Yes" if needs_sponsorship else "No"
         opt = _match_option(options, [desired, "no", "do not require", "not require"] if not needs_sponsorship else ["yes", "require"])
         return {
