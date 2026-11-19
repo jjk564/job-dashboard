@@ -72,6 +72,9 @@ def start_backend(backend_dir: str):
         [sys.executable, "run.py"],
         cwd=backend_dir,
         creationflags=CREATE_NEW_PROCESS_GROUP,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -80,6 +83,9 @@ def start_frontend(frontend_dir: str, npm_cmd: str):
         [npm_cmd, "run", "dev"],
         cwd=frontend_dir,
         creationflags=CREATE_NEW_PROCESS_GROUP,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -106,7 +112,7 @@ def ensure_windows_startup(root_dir: str):
         vbs_content = (
             'Set WshShell = CreateObject("WScript.Shell")\n'
             f'WshShell.CurrentDirectory = "{root_dir}"\n'
-            f'WshShell.Run """{runner_exe}"" ""{start_py}"" --no-browser --ensure-running", 0, False\n'
+            f'WshShell.Run """{runner_exe}"" ""{start_py}"" --no-browser --ensure-running --no-kill-on-exit", 0, False\n'
         )
         with open(vbs_path, "w", encoding="utf-8") as f:
             f.write(vbs_content)
@@ -118,6 +124,15 @@ def ensure_windows_startup(root_dir: str):
 
 def main():
     root_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Redirect logging to watchdog.log if run in windowless pythonw mode
+    if sys.stdout is None or getattr(sys.stdout, "closed", False):
+        try:
+            log_f = open(os.path.join(root_dir, "watchdog.log"), "a", encoding="utf-8", buffering=1)
+            sys.stdout = log_f
+            sys.stderr = log_f
+        except Exception:
+            pass
     backend_dir = os.path.join(root_dir, "backend")
     frontend_dir = os.path.join(root_dir, "frontend")
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
@@ -168,7 +183,7 @@ def main():
         frontend_proc = start_frontend(frontend_dir, npm_cmd)
 
     def cleanup():
-        if "--no-kill-on-exit" in sys.argv:
+        if "--no-kill-on-exit" in sys.argv or "--ensure-running" in sys.argv:
             return
         print("\nStopping JobPulse services...")
         kill_proc_tree(backend_proc)
