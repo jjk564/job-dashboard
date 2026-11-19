@@ -43,12 +43,15 @@ async def ensure_seed_search_profiles(db: AsyncSession, user_id: str) -> List[Se
     # Seed starter profiles tailored to software/backend and IT/systems tracks
     p1 = SearchProfile(
         user_id=user_id,
-        name="Software & Data Engineering (IC)",
+        name="Entry Level AI Software Engineer (IC)",
         is_default=True,
-        keywords_json=json.dumps(["Python", "SQL", "Go", "REST APIs", "SQLite", "Git", "Data Pipelines", "FastAPI", "TypeScript"]),
+        keywords_json=json.dumps([
+            "AI", "Artificial Intelligence", "Machine Learning", "LLM", "Python",
+            "Software Engineer", "Full Stack", "TypeScript", "FastAPI", "REST APIs", "PyTorch", "NLP"
+        ]),
         target_companies_json=json.dumps(["Stripe", "Cloudflare", "Databricks", "OpenAI", "Anthropic", "Linear", "Supabase", "Vercel"]),
         track="ic",
-        levels_json=json.dumps(["junior", "mid", "senior"]),
+        levels_json=json.dumps(["junior"]),
         remote_pref="any",
         location="",
         radius_miles=50,

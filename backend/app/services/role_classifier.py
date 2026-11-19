@@ -270,7 +270,7 @@ def score_job_for_search_profile(
             canonical = SKILL_SYNONYMS.get(kw_norm, kw_norm)
             if kw_norm in title_lower or canonical in title_extracted:
                 hits += 1
-        title_signal = min(1.0, (hits / max(1, min(len(profile_keywords), 3))) * 0.85 + 0.15) if hits > 0 else 0.45
+        title_signal = min(1.0, (hits / max(1, min(len(profile_keywords), 3))) * 0.85 + 0.15) if hits > 0 else 0.10
     else:
         title_signal = keyword_signal
 

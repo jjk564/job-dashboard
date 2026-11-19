@@ -17,6 +17,7 @@ End-to-end autonomous workflow:
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -563,6 +564,8 @@ async def _fast_scrape_for_profile(
         sp_name_low = (sp_dict.get("name") or "").lower()
         if any(w in sp_name_low for w in ("it", "system", "security", "support", "help desk")):
             primary_query = "it support"
+        elif any(w in sp_name_low for w in ("ai", "machine learning", "ml")):
+            primary_query = "entry level ai software engineer"
         else:
             primary_query = "entry level software engineer"
 
@@ -591,12 +594,12 @@ async def _fast_scrape_for_profile(
 
     tasks = [
         _safe_fetch(fetch_simplify_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
-        _safe_fetch(fetch_company_boards_jobs("software engineer", us_only=us_only, location=location, include_remote=include_remote)),
+        _safe_fetch(fetch_company_boards_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
         _safe_fetch(fetch_hadoku_scraper_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
         _safe_fetch(fetch_themuse_jobs(primary_query, us_only=us_only, location=location, include_remote=include_remote)),
-        _safe_fetch(fetch_remoteok_jobs("engineer", us_only=us_only)),
-        _safe_fetch(fetch_weworkremotely_jobs("developer", us_only=us_only)),
-        _safe_fetch(fetch_jobicy_jobs("developer", us_only=us_only)),
+        _safe_fetch(fetch_remoteok_jobs(primary_query, us_only=us_only)),
+        _safe_fetch(fetch_weworkremotely_jobs(primary_query, us_only=us_only)),
+        _safe_fetch(fetch_jobicy_jobs(primary_query, us_only=us_only)),
     ]
     batches = await asyncio.gather(*tasks, return_exceptions=True)
     combined: List[Dict[str, Any]] = []
@@ -755,6 +758,49 @@ async def run_autopilot_cycle(
                     sp_track = sp_dict.get("track", "either")
                     if sp_track in ("ic", "manager") and classified["track"] in ("ic", "manager") and classified["track"] != sp_track:
                         continue
+
+                    # 1. Level filtering: If profile restricts levels, hard-filter non-matching levels
+                    sp_levels = [lvl.lower().strip() for lvl in (sp_dict.get("levels") or [])]
+                    if sp_levels:
+                        allowed_levels = set()
+                        for lvl in sp_levels:
+                            if lvl in ("entry", "entry-level", "new grad", "intern", "associate", "junior"):
+                                allowed_levels.add("junior")
+                            elif lvl in ("mid", "mid-level", "intermediate"):
+                                allowed_levels.add("mid")
+                            elif lvl in ("senior", "sr", "sr.", "lead"):
+                                allowed_levels.add("senior")
+                            elif lvl in ("staff", "principal"):
+                                allowed_levels.add("staff")
+                                allowed_levels.add("principal")
+                            else:
+                                allowed_levels.add(lvl)
+
+                        title_low = title.lower()
+                        is_senior_title = any(
+                            re.search(rf"\b{re.escape(term)}\b", title_low)
+                            for term in (
+                                "senior", "sr", "lead", "staff", "principal", "head of", "director", "manager", "vp", "chief", "architect"
+                            )
+                        )
+                        # Reject senior roles if senior/staff is not in allowed levels
+                        if is_senior_title and not allowed_levels.intersection({"senior", "staff", "principal"}):
+                            logger.debug(f"[AUTOPILOT FILTER] Excluding senior job: '{title}'")
+                            continue
+
+                        job_lvl = (classified.get("level") or "").lower().strip()
+                        if job_lvl and job_lvl not in allowed_levels:
+                            logger.debug(f"[AUTOPILOT FILTER] Excluding level '{job_lvl}' not in {allowed_levels}: '{title}'")
+                            continue
+
+                    # 2. Discipline filtering: For engineering / tech search profiles, exclude non-engineering roles
+                    sp_name_check = sp_dict.get("name", "").lower()
+                    if sp_track == "ic" and any(k in sp_name_check for k in ("engineer", "software", "ai", "data", "developer")):
+                        if classified.get("discipline") in ("adjacent", "unknown"):
+                            tech_kws = ("engineer", "developer", "swe", "sde", "ai", "ml", "data", "software", "python", "backend", "full stack")
+                            if not any(k in title.lower() for k in tech_kws):
+                                logger.debug(f"[AUTOPILOT FILTER] Excluding non-engineering job: '{title}'")
+                                continue
 
                     scored = score_job_for_search_profile(
                         title=title,

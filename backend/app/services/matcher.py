@@ -189,13 +189,12 @@ def analyze_job_fit(job_text: str, candidate_skills: List[str], profile_text: st
     candidate_set.update(implied)
 
     if not job_reqs:
-        # If no specific tech skills were isolated, fallback to word overlap
         return {
-            "score": 70,
-            "matched_skills": list(candidate_set)[:5],
-            "missing_skills": [],
+            "score": 25,
+            "matched_skills": [],
+            "missing_skills": list(candidate_set)[:5],
             "detected_requirements": [],
-            "summary": "No specific technical stack detected. Good general profile match.",
+            "summary": "No specific technical stack detected in job description.",
         }
 
     matched = sorted(list(job_reqs.intersection(candidate_set)))
