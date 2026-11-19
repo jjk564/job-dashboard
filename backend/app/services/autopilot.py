@@ -421,7 +421,7 @@ async def process_single_job_autopilot(
 
     # 6. Attempt Autonomous Submission via Playwright ATS engine
     has_imap = bool(imap_config and imap_config.get("imap_password"))
-    sub_timeout = 42.0 if has_imap else 24.0
+    sub_timeout = 55.0 if has_imap else 30.0
     try:
         sub_res = await asyncio.wait_for(
             attempt_autonomous_submission(

@@ -7,6 +7,10 @@ application submission. Also supports a local manual code drop-box file so codes
 into the JobPulse UI are picked up immediately.
 """
 import email
+import email.message
+from email.header import decode_header
+from email.message import Message
+from email.utils import parsedate_to_datetime
 import imaplib
 import json
 import logging
@@ -14,8 +18,6 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from email.header import decode_header
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 

@@ -707,30 +707,52 @@ def _attempt_submission_sync(
             except Exception:
                 submit_btn.click(force=True, timeout=3000)
 
-            time.sleep(2.5)
-
-            after_html = (target.content() or "").lower()
             confirmation_signals = (
                 "thank you for applying",
                 "application has been submitted",
                 "application submitted",
                 "we have received your application",
+                "your application has been received",
                 "thanks for applying",
                 "your application was sent",
                 "all done",
+                "thank you for your interest",
+                "application received",
+                "submission successful",
             )
-            confirmed = any(sig in after_html for sig in confirmation_signals)
-            has_security_code = (
-                "verification code" in after_html
-                or "security code" in after_html
-                or target.locator("#security-input-0:visible").count() > 0
-            )
+            confirmed = False
+            has_security_code = False
+            after_html = ""
+
+            # Poll for up to 10 seconds for confirmation redirect or security code box
+            for _ in range(20):
+                time.sleep(0.5)
+                try:
+                    curr_url = (page.url or "").lower()
+                    if any(k in curr_url for k in ("/confirmation", "confirm", "thank_you", "thanks", "success")):
+                        confirmed = True
+                        break
+                    after_html = (target.content() or "").lower()
+                    if any(sig in after_html for sig in confirmation_signals):
+                        confirmed = True
+                        break
+                    if "security-input-0" in after_html or target.locator("#security-input-0:visible").count() > 0 or "verification code" in after_html or "security code" in after_html:
+                        has_security_code = True
+                        break
+                except Exception:
+                    pass
+
+            if not after_html:
+                try:
+                    after_html = (target.content() or "").lower()
+                except Exception:
+                    after_html = ""
 
             # If Greenhouse requested an 8-character email security code, attempt automatic retrieval!
             if not confirmed and has_security_code:
                 icfg = imap_config or {}
                 has_imap = bool(icfg.get("imap_email") and icfg.get("imap_password"))
-                wait_secs = 22 if has_imap else 3
+                wait_secs = 28 if has_imap else 3
                 code = poll_for_security_code_sync(
                     imap_server=icfg.get("imap_server") or "imap.gmail.com",
                     imap_email=icfg.get("imap_email"),
@@ -740,9 +762,22 @@ def _attempt_submission_sync(
                 )
                 if code:
                     if _fill_greenhouse_security_code_sync(target, code):
-                        time.sleep(2.5)
-                        after_code_html = (target.content() or "").lower()
-                        if any(sig in after_code_html for sig in confirmation_signals):
+                        # Poll up to 8 seconds for confirmation after code verification
+                        for _ in range(16):
+                            time.sleep(0.5)
+                            try:
+                                curr_url = (page.url or "").lower()
+                                if any(k in curr_url for k in ("/confirmation", "confirm", "thank_you", "thanks", "success")):
+                                    confirmed = True
+                                    break
+                                after_code_html = (target.content() or "").lower()
+                                if any(sig in after_code_html for sig in confirmation_signals):
+                                    confirmed = True
+                                    break
+                            except Exception:
+                                pass
+
+                        if confirmed:
                             browser.close()
                             return {
                                 "submitted": True,
@@ -939,41 +974,29 @@ async def launch_assisted_application(
     runner_script = Path(__file__).resolve().parent / "assisted_runner.py"
 
     if os.name == "nt":
-        # Use Windows Task Scheduler with /IT (Interactive Token) so the Chromium window
-        # always launches on the user's visible interactive desktop (WinSta0\Default)
         python_exe = sys.executable
         pythonw_exe = Path(python_exe).parent / "pythonw.exe"
         exe_to_use = str(pythonw_exe if pythonw_exe.exists() else python_exe)
-        task_name = "JobPulse_AssistedBrowser"
-        cmd_tr = f'"{exe_to_use}" "{runner_script}"'
-
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        CREATE_NO_WINDOW = 0x08000000
+        flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW
         try:
-            create_res = subprocess.run(
-                [
-                    "schtasks",
-                    "/Create",
-                    "/F",
-                    "/TN",
-                    task_name,
-                    "/TR",
-                    cmd_tr,
-                    "/SC",
-                    "ONCE",
-                    "/ST",
-                    "00:00",
-                    "/IT",
-                ],
-                capture_output=True,
-                text=True,
+            subprocess.Popen(
+                [exe_to_use, str(runner_script), str(payload_path)],
+                cwd=str(runner_script.parents[2]),
+                creationflags=flags,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
             )
-            if create_res.returncode == 0:
-                subprocess.run(["schtasks", "/Run", "/TN", task_name], capture_output=True, text=True)
-                return {
-                    "success": True,
-                    "message": f"Visible browser window opened on your desktop for {job_url}. All fields, Resume PDF, Cover Letter PDF, and screening answers are being filled now!",
-                }
+            return {
+                "success": True,
+                "message": f"Visible Chromium browser window opened on your desktop for {job_url}. Pre-filling fields, tailored PDF resume & cover letter, and screening answers now!",
+            }
         except Exception as e:
-            logger.warning(f"Interactive scheduled task fallback: {e}")
+            logger.warning(f"Detached interactive runner launch error: {e}")
 
     # Fallback: launch in background thread
     from .assisted_runner import run_interactive_browser

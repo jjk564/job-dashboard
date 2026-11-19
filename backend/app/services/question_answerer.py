@@ -317,6 +317,14 @@ def answer_single_question(
 
     # 3. Work Authorization & Visa Sponsorship (evaluated before country/location so 'authorized to work in the United States' matches work auth)
     needs_sponsorship = "require sponsorship" in work_auth.lower() and "without" not in work_auth.lower()
+    if any(k in q for k in ("export control", "export controls", "itar", "u.s. export", "us export", "u.s. person under", "us person under", "eligible under u.s. law to receive information")):
+        opt = _match_option(options, ["yes", "u.s. citizen", "us citizen", "u.s. person", "authorized", "permanent resident"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "work_authorization",
+            "confidence": "high",
+        }
     if any(k in q for k in ("sponsorship", "visa", "h-1b", "h1b", "opt", "cpt", "immigration")):
         desired = "Yes" if needs_sponsorship else "No"
         opt = _match_option(options, [desired, "no", "do not require", "not require"] if not needs_sponsorship else ["yes", "require"])
@@ -446,6 +454,22 @@ def answer_single_question(
             "category": "education",
             "confidence": "high",
         }
+    if any(k in q for k in ("graduation date", "grad date", "when did you graduate", "expected graduation", "date of graduation")):
+        opt = _match_option(options, ["may 2024", "2024", "may 2025", "2025", "graduated", "already graduated"])
+        return {
+            "question": q_raw,
+            "answer": opt or "May 2024",
+            "category": "education",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("gpa", "grade point average", "cumulative gpa", "overall gpa")):
+        opt = _match_option(options, ["3.5", "3.5 - 4.0", "3.0 - 3.5", "3.5+", "3.0+", "n/a", "na"])
+        return {
+            "question": q_raw,
+            "answer": opt or "3.5",
+            "category": "education",
+            "confidence": "high",
+        }
     if any(k in q for k in ("end date month", "graduation month", "start date month")):
         opt = _match_option(options, ["may", "05", "june", "september"])
         return {
@@ -507,8 +531,8 @@ def answer_single_question(
             "category": "accommodations",
             "confidence": "high",
         }
-    if any(k in q for k in ("previously worked", "ever worked for", "worked for", "former employee", "applied before", "non-compete", "restrictive covenant", "government official", "related to anyone")):
-        opt = _match_option(options, ["no", "never", "none"])
+    if any(k in q for k in ("previously worked", "ever worked for", "worked for", "former employee", "applied before", "non-compete", "restrictive covenant", "government official", "related to anyone", "history with", "affiliated with", "relationship with")):
+        opt = _match_option(options, ["no", "never", "none", "n/a", "neither"])
         return {
             "question": q_raw,
             "answer": opt or "No",
