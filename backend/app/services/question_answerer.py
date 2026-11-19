@@ -349,6 +349,7 @@ def answer_single_question(
 
     # 3. Work Authorization & Visa Sponsorship (evaluated before country/location so 'authorized to work in the United States' matches work auth)
     needs_sponsorship = "require sponsorship" in work_auth.lower() and "without" not in work_auth.lower()
+
     if any(k in q for k in ("export control", "export controls", "itar", "u.s. export", "us export", "u.s. person under", "us person under", "eligible under u.s. law to receive information")):
         opt = _match_option(options, ["yes", "u.s. citizen", "us citizen", "u.s. person", "authorized", "permanent resident"])
         return {
@@ -357,6 +358,28 @@ def answer_single_question(
             "category": "work_authorization",
             "confidence": "high",
         }
+
+    # Questions asking if the candidate is legally authorized to work (e.g. "...without the need for visa sponsorship")
+    if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work")):
+        opt = _match_option(options, ["yes", "authorized", "citizen", "permanent resident", "u.s. citizen", "us citizen"])
+        return {
+            "question": q_raw,
+            "answer": opt or ("Yes" if options is not None or "?" in q_raw else work_auth),
+            "category": "work_authorization",
+            "confidence": "high",
+        }
+
+    # Questions asking if candidate requires sponsorship
+    if any(k in q for k in ("require sponsorship", "need sponsorship", "require visa", "sponsorship for employment", "sponsorship now or in the future", "will you now or in the future require", "require any visa")):
+        desired = "Yes" if needs_sponsorship else "No"
+        opt = _match_option(options, [desired, "no", "do not require", "not require"] if not needs_sponsorship else ["yes", "require"])
+        return {
+            "question": q_raw,
+            "answer": opt or desired,
+            "category": "work_authorization",
+            "confidence": "high",
+        }
+
     if any(k in q for k in ("sponsorship", "visa", "h-1b", "h1b", "opt", "cpt", "immigration")):
         desired = "Yes" if needs_sponsorship else "No"
         opt = _match_option(options, [desired, "no", "do not require", "not require"] if not needs_sponsorship else ["yes", "require"])
@@ -366,14 +389,7 @@ def answer_single_question(
             "category": "work_authorization",
             "confidence": "high",
         }
-    if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work")):
-        opt = _match_option(options, ["yes", "authorized", "citizen", "permanent"])
-        return {
-            "question": q_raw,
-            "answer": opt or ("Yes" if options is not None or "?" in q_raw else work_auth),
-            "category": "work_authorization",
-            "confidence": "high",
-        }
+
     if any(k in q for k in ("security clearance", "active clearance", "ts/sci", "secret clearance")):
         has_clearance = "clearance" in master_resume.lower() or "clearance" in summary.lower()
         ans = "Yes" if has_clearance else "No"
@@ -417,8 +433,42 @@ def answer_single_question(
             "confidence": "high" if location else "medium",
         }
 
+    # Remote Connectivity / High-Speed Internet / Equipment Requirements
+    if any(k in q for k in (
+        "internet connection", "high-speed internet", "download and", "upload speeds",
+        "mbps", "working remotely?", "meet this requirement while working remotely",
+        "reliable high-speed", "vpn access", "home office"
+    )):
+        opt = _match_option(options, ["yes", "meet requirement", "agree", "i am able"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "remote_requirements",
+            "confidence": "high",
+        }
+
     # 5. Compensation & Salary Expectations
+    # Check for salary alignment first (e.g. "Do your salary expectations align with the posted salary range?")
+    if any(k in q for k in ("salary expectations align", "align with the posted salary", "within the posted salary", "posted salary range", "salary expectations within")):
+        opt = _match_option(options, ["yes", "align", "agree"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "compensation",
+            "confidence": "high",
+        }
+
     if any(k in q for k in ("salary", "compensation", "pay expectation", "desired pay", "hourly rate", "annual base")):
+        # If question is asking a Yes/No comfort question about salary
+        opt_yn = _match_option(options, ["yes", "acceptable", "agree"])
+        if opt_yn and options and len(options) <= 3 and any("yes" in o.lower() for o in options):
+            return {
+                "question": q_raw,
+                "answer": opt_yn,
+                "category": "compensation",
+                "confidence": "high",
+            }
+
         sal_ans = desired_salary
         if not sal_ans:
             s_min = job_data.get("salary_min")
@@ -430,10 +480,10 @@ def answer_single_question(
             elif app_kit and app_kit.get("salary_line"):
                 sal_ans = app_kit["salary_line"]
             else:
-                sal_ans = "$110,000 - $145,000 (flexible based on total compensation)"
+                sal_ans = "$70,000"
         if field_type == "number":
             nums = re.findall(r"\d+", sal_ans.replace(",", ""))
-            num_val = nums[0] if nums else "120000"
+            num_val = nums[0] if nums else "70000"
             return {"question": q_raw, "answer": num_val, "category": "compensation", "confidence": "high"}
         return {
             "question": q_raw,
@@ -555,11 +605,11 @@ def answer_single_question(
         }
 
     # 11. Previously employed / Applied before / Government / Non-compete / Interview Accommodations
-    if any(k in q for k in ("accommodation", "accessible", "interview process more accessible")):
-        opt = _match_option(options, ["no, i don't need", "no", "none", "not require"])
+    if any(k in q for k in ("accommodation", "accessible", "interview process more accessible", "accessible and inclusive")):
+        opt = _match_option(options, ["i do not require accommodations", "no accommodations needed", "no", "none", "not require"])
         return {
             "question": q_raw,
-            "answer": opt or "No",
+            "answer": opt or "I do not require accommodations",
             "category": "accommodations",
             "confidence": "high",
         }
@@ -577,6 +627,16 @@ def answer_single_question(
             "question": q_raw,
             "answer": opt or "Yes",
             "category": "compliance",
+            "confidence": "high",
+        }
+
+    # Background Check / Drug Screening / Criminal History
+    if any(k in q for k in ("background check", "background screening", "drug test", "drug screen", "substance test", "criminal history", "pre-employment background")):
+        opt = _match_option(options, ["yes", "i agree", "willing", "consent", "accept"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "background_check",
             "confidence": "high",
         }
 
@@ -600,7 +660,15 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 13. Privacy Policy / Terms & Certification Checkboxes
+    # 13. Privacy Policy / Terms & Certification Checkboxes / SMS Consent
+    if any(k in q for k in ("text message", "text messages", "sms opt", "sms updates", "receive text message")):
+        opt = _match_option(options, ["yes - i consent to receiving text messages", "yes - i consent", "i consent", "yes", "agree"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes - I consent to receiving text messages",
+            "category": "consent",
+            "confidence": "high",
+        }
     if any(k in q for k in ("privacy policy", "acknowledge", "certify that", "consent to", "terms and conditions", "agree to")):
         opt = _match_option(options, ["yes", "i agree", "i acknowledge", "accept"])
         return {
@@ -648,7 +716,35 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 16. Check pre-drafted screening_answers from Hadoku application_kit
+    # 16. Specific Cultural / Ranking / Short Stints Custom Prompts
+    if any(k in q for k in ("coffee", "wi-fi", "wifi")) and any(k in q for k in ("coworkers", "snacks", "being right")):
+        ranking_ans = (
+            "1. Wi-Fi: High-speed, reliable connectivity is foundational for remote engineering, team collaboration, and shipping code.\n"
+            "2. Good coworkers: A supportive, communicative team drives collective problem-solving, code quality, and engineering velocity.\n"
+            "3. Coffee: Essential fuel for sustained focus during deep engineering sessions.\n"
+            "4. Snacks: Great productivity booster for long problem-solving stretches.\n"
+            "5. Being right: Delivering the right technical solution for the team and product matters far more than individual ego."
+        )
+        return {
+            "question": q_raw,
+            "answer": ranking_ans,
+            "category": "culture_fit",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("short stints", "gaps in your resume", "gap in employment", "clarify about your previous experience", "taken a break to travel")):
+        gaps_ans = (
+            "I have a continuous record of technical growth and hands-on engineering experience across hardware diagnostics, "
+            "systems administration, and full-stack software development with no unexplained employment gaps."
+        )
+        return {
+            "question": q_raw,
+            "answer": gaps_ans,
+            "category": "experience_clarification",
+            "confidence": "high",
+        }
+
+    # 17. Check pre-drafted screening_answers from Hadoku application_kit
     if app_kit and app_kit.get("screening_answers"):
         for item in app_kit["screening_answers"]:
             kit_q = (item.get("q") or "").lower()

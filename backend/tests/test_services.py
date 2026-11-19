@@ -468,6 +468,63 @@ def test_question_answering_and_pdf_export():
     assert q_yrs["answer"] == "5"
     assert q_yrs["confidence"] == "high"
 
+    # Test work auth with "without sponsorship" in question (precedence test)
+    q_auth_without = answer_single_question(
+        "Are you legally authorized to work in the US (or relevant country) without the need for visa sponsorship now or in the future?",
+        job_data, profile_data, skills, options=["Yes", "No"]
+    )
+    assert q_auth_without["answer"] == "Yes"
+
+    # Test sponsorship question
+    q_req_spons = answer_single_question(
+        "Will you now or in the future require sponsorship for employment visa status in this country?",
+        job_data, profile_data, skills, options=["Yes", "No"]
+    )
+    assert q_req_spons["answer"] == "No"
+
+    # Test salary alignment question
+    q_sal_align = answer_single_question(
+        "Do your salary expectations align with the posted salary range for this role?",
+        job_data, profile_data, skills, options=["Yes", "No"]
+    )
+    assert q_sal_align["answer"] == "Yes"
+
+    # Test background check & drug test
+    q_bg = answer_single_question(
+        "Are you willing to undergo a pre-employment background check and drug test, following a conditional offer of employment, as part of our hiring process?",
+        job_data, profile_data, skills, options=["Yes", "No"]
+    )
+    assert q_bg["answer"] == "Yes"
+
+    # Test remote high-speed internet requirement
+    q_net = answer_single_question(
+        "This remote position requires a reliable high-speed internet connection to support VPN access, video conferencing... Are you able to meet this requirement while working remotely?",
+        job_data, profile_data, skills, options=["Yes", "No"]
+    )
+    assert q_net["answer"] == "Yes"
+
+    # Test ranking question
+    q_rank = answer_single_question(
+        "- ank these in order of importance: coffee, Wi-Fi, snacks, good coworkers, and being right. Explain your reasoning.",
+        job_data, profile_data, skills
+    )
+    assert "Wi-Fi" in q_rank["answer"] and "coworkers" in q_rank["answer"]
+
+    # Test gaps / short stints
+    q_gaps = answer_single_question(
+        "Have you had a lot of short stints? Taken a break to travel or pursue another passion? If there’s anything you want to clarify about your previous experience or gaps in your resume, let us know here!",
+        job_data, profile_data, skills
+    )
+    assert "no unexplained" in q_gaps["answer"]
+
+    # Test accommodations
+    q_accom = answer_single_question(
+        "If you require any accommodations to participate in the interview or assessment process, please let us know below.",
+        job_data, profile_data, skills,
+        options=["I do not require accommodations", "I may require accommodations"]
+    )
+    assert q_accom["answer"] == "I do not require accommodations"
+
     # 2. Comprehensive Q&A bundle includes both standard and extracted description questions
     bundle = generate_comprehensive_qa_bundle(job_data, profile_data, skills)
     assert len(bundle) >= 11

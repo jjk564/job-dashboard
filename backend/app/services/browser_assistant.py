@@ -434,7 +434,7 @@ def _fill_form_sync(
 
     # 5. Discover and answer Radio Button groups (`input[type="radio"]`)
     try:
-        radios = target.locator("input[type='radio']:visible")
+        radios = target.locator("input[type='radio']")
         r_count = min(radios.count(), 30)
         radio_groups: Dict[str, List[Dict[str, Any]]] = {}
         for i in range(r_count):
@@ -442,18 +442,30 @@ def _fill_form_sync(
             r_name = r_el.get_attribute("name") or f"group_{i}"
             info = r_el.evaluate(
                 """el => {
-                    const optLabel = (el.closest('label')?.innerText || el.getAttribute('aria-label') || el.value || '').trim();
+                    let optLabel = (el.closest('label')?.innerText || el.getAttribute('aria-label') || el.value || '').trim();
+                    if (!optLabel && el.parentElement) {
+                        optLabel = (el.parentElement.innerText || '').trim();
+                    }
                     let cur = el;
                     let promptText = '';
-                    for (let k = 0; k < 6; k++) {
-                        if (!cur.parentElement) break;
-                        cur = cur.parentElement;
-                        const txt = (cur.innerText || '').trim();
-                        const lines = txt.split('\\n').map(s => s.replace('*', '').trim()).filter(Boolean);
-                        if (lines.length > 2 && lines[0].toLowerCase() !== optLabel.toLowerCase()) {
-                            promptText = lines[0];
-                            break;
+                    while (cur && cur !== document.body) {
+                        if (cur.getAttribute('data-testid') === 'field' || cur.classList.contains('eun831x1') || cur.parentElement?.classList?.contains('application-question')) {
+                            if (cur.previousElementSibling) {
+                                const txt = (cur.previousElementSibling.innerText || '').trim();
+                                if (txt && txt.length > 2) {
+                                    promptText = txt;
+                                    break;
+                                }
+                            }
                         }
+                        if (cur.previousElementSibling) {
+                            const prev = (cur.previousElementSibling.innerText || '').trim();
+                            if (prev && prev.length > 2 && prev.toLowerCase() !== optLabel.toLowerCase()) {
+                                promptText = prev;
+                                break;
+                            }
+                        }
+                        cur = cur.parentElement;
                     }
                     const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true';
                     return { optLabel, promptText, isReq };
@@ -488,24 +500,39 @@ def _fill_form_sync(
                 None,
             )
             if matched_item:
+                checked_ok = False
                 try:
                     r_loc = radios.nth(matched_item["index"])
-                    r_loc.check(force=True, timeout=1500)
+                    r_loc.check(force=True, timeout=1000)
+                    checked_ok = True
                     filled_count += 1
                 except Exception:
                     pass
+
+                # If native input is visually hidden / aria-hidden, click visible text or label
+                if not checked_ok:
+                    try:
+                        lbl_text = matched_item["optLabel"]
+                        click_target = target.locator(
+                            f"text='{lbl_text}':visible, label:has-text('{lbl_text}'):visible"
+                        ).first
+                        if click_target.count() > 0:
+                            click_target.click(force=True, timeout=1000)
+                            filled_count += 1
+                    except Exception:
+                        pass
             elif is_req:
                 unanswered_required.append(prompt)
     except Exception as e:
         logger.debug(f"Radio group discovery error: {e}")
 
-    # 6. Inspect and answer remaining labeled text inputs, textareas, selects, and React-Select comboboxes
+    # 6. Inspect and answer remaining labeled text inputs, textareas, selects, and React/Custom comboboxes
     try:
         elements = target.locator(
             "input[type='text']:visible, input[type='number']:visible, input[type='url']:visible, "
-            "textarea:visible, select:visible"
+            "textarea:visible, select:visible, div[role='combobox']:visible, button[role='combobox']:visible"
         )
-        el_count = min(elements.count(), 35)
+        el_count = min(elements.count(), 40)
         for i in range(el_count):
             el = elements.nth(i)
             try:
@@ -514,7 +541,7 @@ def _fill_form_sync(
                 role_attr = (el.get_attribute("role") or "").lower()
                 el_id = el.get_attribute("id") or ""
                 el_name = el.get_attribute("name") or ""
-                if not el_id and not el_name and role_attr == "combobox":
+                if not el_id and not el_name and role_attr == "combobox" and tag_name == "input":
                     # Internal dummy React-Select input
                     continue
 
@@ -527,18 +554,57 @@ def _fill_form_sync(
                     existing_val = (el.input_value() or "").strip()
                     if existing_val:
                         continue
+                elif role_attr == "combobox":
+                    existing_txt = (el.inner_text() or "").strip().lower()
+                    if existing_txt and existing_txt not in ("select", "choose", "--", "search"):
+                        continue
 
                 label_text = el.evaluate(
                     """el => {
+                        // 1. Native labels
                         if (el.labels && el.labels.length > 0) {
-                            return Array.from(el.labels).map(l => l.innerText).join(' ').trim();
+                            const t = Array.from(el.labels).map(l => l.innerText).join(' ').trim();
+                            if (t) return t;
                         }
-                        const aria = el.getAttribute('aria-label');
-                        if (aria) return aria.trim();
-                        const wrapper = el.closest('label, .field, .application-question, .form-group, .select__container, [data-qa]');
-                        if (wrapper) {
-                            const lbl = wrapper.querySelector('label, .label, h4, legend');
-                            if (lbl) return lbl.innerText.trim();
+                        // 2. aria-labelledby
+                        const ariaLbl = el.getAttribute('aria-labelledby');
+                        if (ariaLbl) {
+                            const target = document.getElementById(ariaLbl);
+                            if (target && target.innerText.trim()) return target.innerText.trim();
+                        }
+                        // 3. aria-label (unless generic)
+                        const aria = (el.getAttribute('aria-label') || '').trim();
+                        if (aria && !['select', 'search', 'textbox', 'combobox', 'option'].includes(aria.toLowerCase())) {
+                            return aria;
+                        }
+                        // 4. label[for=id]
+                        if (el.id) {
+                            const forLbl = document.querySelector(`label[for="${el.id}"]`);
+                            if (forLbl && forLbl.innerText.trim()) return forLbl.innerText.trim();
+                        }
+                        // 5. Container walk & previousElementSibling (critical for Rippling & React forms!)
+                        let cur = el;
+                        for (let k = 0; k < 6 && cur; k++) {
+                            if (cur.getAttribute('data-testid') === 'field' || cur.classList.contains('eun831x1') || cur.parentElement?.classList?.contains('application-question')) {
+                                if (cur.previousElementSibling) {
+                                    const txt = (cur.previousElementSibling.innerText || '').trim();
+                                    if (txt && txt.length > 2) return txt;
+                                }
+                            }
+                            if (cur.previousElementSibling) {
+                                const prev = (cur.previousElementSibling.innerText || '').trim();
+                                if (prev && prev.length > 2 && !prev.toLowerCase().includes('select')) {
+                                    return prev;
+                                }
+                            }
+                            const headings = cur.querySelectorAll('label, h1, h2, h3, h4, h5, h6, legend, p[class*="label"], span[class*="label"], [data-testid*="label"], [class*="question"]');
+                            for (const h of headings) {
+                                const ht = (h.innerText || '').trim();
+                                if (ht && ht.length > 2 && ht !== el.innerText && !ht.toLowerCase().includes('select')) {
+                                    return ht;
+                                }
+                            }
+                            cur = cur.parentElement;
                         }
                         return el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('id') || '';
                     }"""
@@ -560,9 +626,12 @@ def _fill_form_sync(
                     )
                 elif role_attr == "combobox" and "country" not in label_clean.lower():
                     try:
-                        el.click(force=True, timeout=1000)
-                        time.sleep(0.2)
-                        opts = target.locator(".select__option:visible, [id*='react-select'][role='option']:visible")
+                        el.click(force=True, timeout=1200)
+                        time.sleep(0.3)
+                        opts = target.locator(
+                            ".select__option:visible, [id*='react-select'][role='option']:visible, "
+                            "[role='option']:visible, [class*='option']:visible, li:visible"
+                        )
                         opt_cnt = min(opts.count(), 25)
                         if opt_cnt > 0:
                             options_list = [opts.nth(k).inner_text().strip() for k in range(opt_cnt)]
@@ -606,25 +675,35 @@ def _fill_form_sync(
                     filled_count += 1
                 elif role_attr == "combobox":
                     opt_loc = target.locator(
+                        f"[role='option']:has-text('{ans_val}'):visible, "
                         f".select__option:has-text('{ans_val}'):visible, "
-                        f"[id*='react-select'][role='option']:has-text('{ans_val}'):visible"
+                        f"[id*='react-select'][role='option']:has-text('{ans_val}'):visible, "
+                        f"[class*='option']:has-text('{ans_val}'):visible, "
+                        f"li:has-text('{ans_val}'):visible"
                     ).first
                     if opt_loc.count() > 0:
-                        opt_loc.click(timeout=1200)
+                        opt_loc.click(force=True, timeout=1200)
                         filled_count += 1
                     else:
-                        el.click(force=True, timeout=1000)
-                        el.fill(str(ans_val), timeout=1000)
-                        time.sleep(0.25)
-                        filtered_opt = target.locator(
-                            ".select__option:visible, [id*='react-select'][role='option']:visible"
-                        ).first
-                        if filtered_opt.count() > 0:
-                            filtered_opt.click(timeout=1000)
+                        if tag_name == "input":
+                            el.click(force=True, timeout=1000)
+                            el.fill(str(ans_val), timeout=1000)
+                            time.sleep(0.25)
+                            filtered_opt = target.locator(
+                                ".select__option:visible, [id*='react-select'][role='option']:visible, "
+                                "[role='option']:visible, li:visible"
+                            ).first
+                            if filtered_opt.count() > 0:
+                                filtered_opt.click(timeout=1000)
+                            else:
+                                el.press("Enter")
+                                el.press("Escape")
+                            filled_count += 1
                         else:
-                            el.press("Enter")
-                            el.press("Escape")
-                        filled_count += 1
+                            try:
+                                el.press("Escape")
+                            except Exception:
+                                pass
                 else:
                     el.fill(str(ans_val), timeout=1500)
                     filled_count += 1
