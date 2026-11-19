@@ -47,6 +47,7 @@ from .job_fetcher import (
     search_aggregated_jobs,
 )
 from .matcher import analyze_job_fit
+from .location_matcher import is_job_in_range
 from .question_answerer import (
     export_application_files,
     generate_comprehensive_qa_bundle,
@@ -419,6 +420,47 @@ async def process_single_job_autopilot(
             "questions_answered": len(qa_list),
         }
 
+    # 5.5. Verify location and remote eligibility before attempting autonomous submission
+    target_loc = (profile_dict.get("location") or "").strip() or "Boston, MA"
+    radius_mi = 50
+    if not is_job_in_range(
+        job_location=job.location or "",
+        target_location=target_loc,
+        radius_miles=radius_mi,
+        workplace_type=job.workplace_type or "",
+        include_remote=True,
+        title=job.title or "",
+    ):
+        reason = (
+            f"Need to Apply: Position is {job.workplace_type or 'on-site'} in {job.location or 'unspecified location'}, "
+            f"outside your {radius_mi}-mile commute radius from {target_loc} (remote or local commute only) "
+            f"— Tailored Resume, Cover Letter & {len(qa_list)} answers ready"
+        )
+        job.status = "TO_APPLY"
+        job.autopilot_status = "needs_manual_apply"
+        job.autopilot_reason = reason
+        job.updated_at = datetime.utcnow()
+        db.add(
+            ApplicationActivity(
+                job_id=job.id,
+                activity_type="autopilot_queued",
+                title="Routed to Need to Apply (Location / Remote Preference)",
+                details=reason,
+            )
+        )
+        await db.commit()
+        return {
+            "job_id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "fit_score": score,
+            "outcome": "needs_manual_apply",
+            "status": "TO_APPLY",
+            "reason": reason,
+            "documents_generated": True,
+            "questions_answered": len(qa_list),
+        }
+
     # 6. Attempt Autonomous Submission via Playwright ATS engine
     has_imap = bool(imap_config and imap_config.get("imap_password"))
     sub_timeout = 55.0 if has_imap else 30.0
@@ -692,6 +734,21 @@ async def run_autopilot_cycle(
                     wp = (item.get("workplace_type") or item.get("remote_type") or "remote").lower()
                     if wp not in ("remote", "hybrid", "onsite"):
                         wp = "remote" if "remote" in loc.lower() else "onsite"
+
+                    # Location & Commute radius check:
+                    # Non-remote (hybrid or onsite) jobs must be within radius_miles of target location
+                    target_loc = (sp_dict.get("location") or "").strip() or (profile_dict.get("location") or "").strip() or "Boston, MA"
+                    radius_mi = sp_dict.get("radius_miles") or 50
+                    include_remote = sp_dict.get("remote_pref", "any") in ("any", "remote")
+                    if not is_job_in_range(
+                        job_location=loc,
+                        target_location=target_loc,
+                        radius_miles=radius_mi,
+                        workplace_type=wp,
+                        include_remote=include_remote,
+                        title=title,
+                    ):
+                        continue
 
                     classified = classify_role(title, item.get("description") or "")
                     sp_track = sp_dict.get("track", "either")

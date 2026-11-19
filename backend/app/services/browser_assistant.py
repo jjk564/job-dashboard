@@ -891,6 +891,28 @@ async def attempt_autonomous_submission(
             "discovered_qa": [],
         }
 
+    target_loc = (profile_data.get("location") or "").strip() or "Boston, MA"
+    job_loc = (job_data.get("location") or "").strip()
+    wp = (job_data.get("workplace_type") or "").strip().lower()
+    title = (job_data.get("title") or "").strip()
+    from .location_matcher import is_job_in_range
+    if not is_job_in_range(
+        job_location=job_loc,
+        target_location=target_loc,
+        radius_miles=50,
+        workplace_type=wp,
+        include_remote=True,
+        title=title,
+    ):
+        return {
+            "submitted": False,
+            "status_target": "TO_APPLY",
+            "autopilot_status": "needs_manual_apply",
+            "reason": f"Need to Apply: Job is {wp or 'on-site'} in {job_loc or 'unspecified location'}, outside your 50-mile commute radius from {target_loc} (remote or local commute only)",
+            "filled_count": 0,
+            "discovered_qa": [],
+        }
+
     try:
         import playwright  # noqa: F401
     except ImportError:

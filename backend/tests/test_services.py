@@ -499,6 +499,67 @@ def test_question_answering_and_pdf_export():
     assert wd_cls["ats_type"] == "auth_gated"
 
 
+def test_location_commute_radius_and_remote_filtering():
+    from app.services.location_matcher import is_job_in_range, parse_city_state
+
+    target_loc = "Boston, Massachusetts (Remote)"
+    radius = 50
+
+    # 1. Parsing multi-segment locations
+    assert parse_city_state("SF, Mountain View, CA") == ("mountain view", "ca")
+    assert parse_city_state("Boston, Massachusetts (Remote)") == ("boston", "ma")
+    assert parse_city_state("Cambridge, MA") == ("cambridge", "ma")
+
+    # 2. Pure Remote jobs anywhere in the US must be accepted
+    assert is_job_in_range(
+        job_location="Remote, US",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="remote",
+        include_remote=True,
+    ) is True
+
+    # 3. Local jobs in Boston metro area (within 50 miles) must be accepted
+    assert is_job_in_range(
+        job_location="Cambridge, MA",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="hybrid",
+        include_remote=True,
+    ) is True
+    assert is_job_in_range(
+        job_location="Worcester, MA",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="onsite",
+        include_remote=True,
+    ) is True
+
+    # 4. Out-of-region hybrid or onsite jobs (like California, New York, Washington) must be rejected
+    assert is_job_in_range(
+        job_location="SF, Mountain View, CA",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="hybrid",
+        include_remote=True,
+    ) is False
+    assert is_job_in_range(
+        job_location="Los Angeles, CA",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="onsite",
+        include_remote=True,
+    ) is False
+    assert is_job_in_range(
+        job_location="Seattle, WA",
+        target_location=target_loc,
+        radius_miles=radius,
+        workplace_type="hybrid",
+        include_remote=True,
+    ) is False
+
+
+
 
 
 

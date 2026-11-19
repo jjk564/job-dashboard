@@ -238,21 +238,35 @@ def parse_city_state(loc_str: str) -> Tuple[Optional[str], Optional[str]]:
     cleaned = re.sub(r'\s*-\s*', ', ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip(', ')
 
-    # 1. Look for patterns like "City, ST" or "City, State Name"
+    # 1. Look for patterns like "City, ST", "City, State Name", or multi-city "SF, Mountain View, CA"
     parts = [p.strip() for p in cleaned.split(',') if p.strip()]
     if len(parts) >= 2:
-        city = parts[0]
-        # State part might have extra words or zip codes like "TX 78701" or "CA USA"
-        state_words = parts[1].split()
-        if state_words:
-            candidate_state = state_words[0].lower()
-            if candidate_state in US_STATE_CODES:
-                return city, candidate_state
-            if candidate_state in US_STATE_NAME_TO_CODE:
-                return city, US_STATE_NAME_TO_CODE[candidate_state]
-            full_state = " ".join(state_words[:2]).lower()
-            if full_state in US_STATE_NAME_TO_CODE:
-                return city, US_STATE_NAME_TO_CODE[full_state]
+        # Check last part first for state code or name
+        last_words = parts[-1].split()
+        if last_words:
+            cand_last = last_words[0].lower()
+            if cand_last in US_STATE_CODES:
+                city = parts[-2] if len(parts) > 2 else parts[0]
+                return city, cand_last
+            if cand_last in US_STATE_NAME_TO_CODE:
+                city = parts[-2] if len(parts) > 2 else parts[0]
+                return city, US_STATE_NAME_TO_CODE[cand_last]
+            full_last = " ".join(last_words[:2]).lower()
+            if full_last in US_STATE_NAME_TO_CODE:
+                city = parts[-2] if len(parts) > 2 else parts[0]
+                return city, US_STATE_NAME_TO_CODE[full_last]
+
+        # Check second part for format like "City, ST, USA"
+        second_words = parts[1].split()
+        if second_words:
+            cand_sec = second_words[0].lower()
+            if cand_sec in US_STATE_CODES:
+                return parts[0], cand_sec
+            if cand_sec in US_STATE_NAME_TO_CODE:
+                return parts[0], US_STATE_NAME_TO_CODE[cand_sec]
+            full_sec = " ".join(second_words[:2]).lower()
+            if full_sec in US_STATE_NAME_TO_CODE:
+                return parts[0], US_STATE_NAME_TO_CODE[full_sec]
 
     # 2. Check for "City ST" without comma (e.g. "Austin TX" or "Seattle WA")
     match_st = re.search(r'\b([a-z\s]+?)\s+([a-z]{2})\b$', cleaned)
