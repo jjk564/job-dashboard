@@ -94,7 +94,11 @@ def run_interactive_browser(payload_path: str) -> None:
                     files=files,
                 )
                 target = fill_res.get("target") or page
-                log(f"Form filled: {fill_res.get('filled_count', 0)} fields filled.")
+                log(
+                    f"Form filled: {fill_res.get('filled_count', 0)} fields filled "
+                    f"(resume_uploaded={fill_res.get('resume_uploaded')}, "
+                    f"cover_letter_uploaded={fill_res.get('cover_letter_uploaded')})."
+                )
             except Exception as fill_e:
                 log(f"Form filling error: {fill_e}\n{traceback.format_exc()}")
 

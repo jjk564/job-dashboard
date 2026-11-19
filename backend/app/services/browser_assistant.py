@@ -297,44 +297,140 @@ def _fill_form_sync(
             pass
 
     # 4. Upload Tailored Resume & Cover Letter PDFs to `<input type="file">`
-    # Note: React ATS forms (Greenhouse, Workable, Ashby) unmount `<input type="file">` as soon as a file is set,
-    # shifting subsequent file inputs from nth(1) to nth(0). Always re-query instead of indexing a stale count.
     if files:
         resume_pdf = files.get("resume_pdf")
         cover_pdf = files.get("cover_letter_pdf")
-        if resume_pdf and os.path.exists(resume_pdf):
-            try:
-                res_inp = target.locator(
-                    'input[type="file"][id*="resume" i], input[type="file"][name*="resume" i], '
-                    'input[type="file"][aria-label*="resume" i], input[type="file"][id*="cv" i]'
-                ).first
-                if res_inp.count() > 0:
-                    res_inp.set_input_files(resume_pdf, timeout=2000)
+
+        # Fallback to legacy file paths if primary candidate-named files don't exist
+        if resume_pdf and not os.path.exists(resume_pdf):
+            resume_pdf = files.get("legacy_resume_pdf")
+        if cover_pdf and not os.path.exists(cover_pdf):
+            cover_pdf = files.get("legacy_cover_letter_pdf")
+
+        try:
+            file_inputs = target.locator('input[type="file"]')
+            total_files = file_inputs.count()
+            logger.debug(f"Detected {total_files} file inputs on application page")
+
+            resume_inp = None
+            cover_inp = None
+
+            if total_files > 0:
+                # Inspect each input's attributes and surrounding DOM container text
+                meta_list = []
+                for idx in range(total_files):
+                    el = file_inputs.nth(idx)
+                    meta = el.evaluate("""el => {
+                        const id = (el.id || '').toLowerCase();
+                        const name = (el.name || '').toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        let container = '';
+                        const parent = el.closest('div, section, fieldset, li, tr, form') || el.parentElement;
+                        if (parent) {
+                            container = (parent.innerText || '').toLowerCase();
+                        }
+                        return { id, name, aria, container };
+                    }""")
+                    meta_list.append({"index": idx, "locator": el, **meta})
+
+                # Phase 1: Semantic matching via keywords
+                for m in meta_list:
+                    haystack = f"{m['id']} {m['name']} {m['aria']} {m['container']}"
+                    if any(w in haystack for w in ("cover letter", "cover_letter", "coverletter", "cover")):
+                        if cover_inp is None:
+                            cover_inp = m["locator"]
+                    elif any(w in haystack for w in ("resume", "résumé", "cv", "curriculum")):
+                        if resume_inp is None:
+                            resume_inp = m["locator"]
+
+                # Phase 2: Positional / count fallback
+                if total_files == 1:
+                    if resume_inp is None and cover_inp is None:
+                        resume_inp = file_inputs.first
+                elif total_files >= 2:
+                    if resume_inp is None and cover_inp is not None:
+                        for m in meta_list:
+                            if m["locator"] != cover_inp:
+                                resume_inp = m["locator"]
+                                break
+                    elif cover_inp is None and resume_inp is not None:
+                        for m in meta_list:
+                            if m["locator"] != resume_inp:
+                                cover_inp = m["locator"]
+                                break
+                    elif resume_inp is None and cover_inp is None:
+                        resume_inp = file_inputs.nth(0)
+                        cover_inp = file_inputs.nth(1)
+
+            # Upload Resume PDF
+            if resume_pdf and os.path.exists(resume_pdf) and resume_inp is not None:
+                try:
+                    resume_inp.set_input_files(resume_pdf, timeout=3000)
                     resume_uploaded = True
                     filled_count += 1
-                else:
-                    any_file = target.locator('input[type="file"]').first
-                    if any_file.count() > 0:
-                        any_file.set_input_files(resume_pdf, timeout=2000)
-                        resume_uploaded = True
-                        filled_count += 1
-                time.sleep(0.4)
-            except Exception as e:
-                logger.debug(f"Resume upload check: {e}")
+                    logger.info(f"Resume uploaded successfully: {os.path.basename(resume_pdf)}")
+                    time.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"Resume upload error: {e}")
 
-        if cover_pdf and os.path.exists(cover_pdf):
+            # Upload Cover Letter PDF
+            if cover_pdf and os.path.exists(cover_pdf):
+                cl_uploaded = False
+                if cover_inp is not None:
+                    try:
+                        cover_inp.set_input_files(cover_pdf, timeout=3000)
+                        cl_uploaded = True
+                        cover_letter_uploaded = True
+                        filled_count += 1
+                        logger.info(f"Cover letter uploaded successfully: {os.path.basename(cover_pdf)}")
+                        time.sleep(0.5)
+                    except Exception as e:
+                        logger.debug(f"Cover letter initial upload error: {e}")
+
+                # If primary attempt failed (e.g. dynamic unmount shifted elements), re-query
+                if not cl_uploaded:
+                    try:
+                        remaining_inputs = target.locator('input[type="file"]')
+                        rem_count = remaining_inputs.count()
+                        if rem_count > 0:
+                            for r_idx in range(rem_count):
+                                r_el = remaining_inputs.nth(r_idx)
+                                r_text = r_el.evaluate("""el => {
+                                    const p = el.closest('div, section, fieldset, li, tr, form') || el.parentElement;
+                                    return `${el.id} ${el.name} ${el.getAttribute('aria-label') || ''} ${p ? p.innerText : ''}`.toLowerCase();
+                                }""")
+                                if any(w in r_text for w in ("cover", "letter")) or (rem_count == 1 and resume_uploaded):
+                                    r_el.set_input_files(cover_pdf, timeout=3000)
+                                    cover_letter_uploaded = True
+                                    filled_count += 1
+                                    logger.info(f"Cover letter uploaded via fallback: {os.path.basename(cover_pdf)}")
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Cover letter fallback upload error: {e}")
+
+        except Exception as e:
+            logger.debug(f"File upload discovery/upload error: {e}")
+
+        # Section 4.5: Cover Letter Textarea Fallback (if no file input or file input failed)
+        if not cover_letter_uploaded:
             try:
-                cl_inp = target.locator(
-                    'input[type="file"][id*="cover" i], input[type="file"][name*="cover" i], '
-                    'input[type="file"][aria-label*="cover" i]'
+                cl_textarea = target.locator(
+                    'textarea[id*="cover" i], textarea[name*="cover" i], '
+                    'textarea[placeholder*="cover" i], textarea[aria-label*="cover" i]'
                 ).first
-                if cl_inp.count() > 0:
-                    cl_inp.set_input_files(cover_pdf, timeout=2000)
-                    cover_letter_uploaded = True
-                    filled_count += 1
-                time.sleep(0.3)
+                if cl_textarea.count() > 0 and not (cl_textarea.input_value() or "").strip():
+                    txt_path = files.get("cover_letter_txt") or files.get("cover_letter_md")
+                    cl_text = ""
+                    if txt_path and os.path.exists(txt_path):
+                        with open(txt_path, "r", encoding="utf-8") as f:
+                            cl_text = f.read().strip()
+                    if cl_text:
+                        cl_textarea.fill(cl_text, timeout=2000)
+                        cover_letter_uploaded = True
+                        filled_count += 1
+                        logger.info("Cover letter filled into textarea")
             except Exception as e:
-                logger.debug(f"Cover letter upload check: {e}")
+                logger.debug(f"Cover letter textarea fill error: {e}")
 
     # 5. Discover and answer Radio Button groups (`input[type="radio"]`)
     try:

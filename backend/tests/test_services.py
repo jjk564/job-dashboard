@@ -484,10 +484,28 @@ def test_question_answering_and_pdf_export():
         job_title="Senior Backend Engineer",
         resume_markdown="# Tailored Resume\nPython & Go",
         cover_letter_markdown="# Cover Letter\nDear Stripe Hiring Team",
+        candidate_name="Justin Kilpatrick",
     )
     assert os.path.exists(exported["resume_pdf"])
+    assert "Justin_Kilpatrick_Resume.pdf" in exported["resume_pdf"]
     assert os.path.exists(exported["cover_letter_pdf"])
+    assert "Justin_Kilpatrick_Cover_Letter.pdf" in exported["cover_letter_pdf"]
+    assert os.path.exists(exported["legacy_resume_pdf"])
+    assert os.path.exists(exported["legacy_cover_letter_pdf"])
     shutil.rmtree(exported["directory"], ignore_errors=True)
+
+    # Test custom candidate name sanitization
+    custom_exp = export_application_files(
+        job_id=99998,
+        company="GitHub",
+        job_title="Staff Engineer",
+        resume_markdown="# Resume",
+        cover_letter_markdown="# Cover",
+        candidate_name="Jane O'Connor-Smith",
+    )
+    assert os.path.exists(custom_exp["resume_pdf"])
+    assert "Jane_OConnor-Smith_Resume.pdf" in custom_exp["resume_pdf"]
+    shutil.rmtree(custom_exp["directory"], ignore_errors=True)
 
     # 4. ATS URL Classification
     gh_cls = classify_ats_url("https://boards.greenhouse.io/stripe/jobs/12345")

@@ -252,6 +252,7 @@ async def prepare_job_application_materials(
         job_title=job.title,
         resume_markdown=resume_md,
         cover_letter_markdown=cover_md,
+        candidate_name=profile_dict.get("full_name") or "Justin Kilpatrick",
     )
 
     return {

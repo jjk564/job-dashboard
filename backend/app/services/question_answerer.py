@@ -134,39 +134,71 @@ def export_application_files(
     job_title: str,
     resume_markdown: str,
     cover_letter_markdown: str,
+    candidate_name: Optional[str] = "Justin Kilpatrick",
 ) -> Dict[str, str]:
     """
     Writes tailored resume and cover letter files (.pdf, .md, .txt) to disk under
-    backend/generated_packets/job_{job_id}/ so browser automation can upload them.
+    backend/generated_packets/job_{job_id}/ with professional candidate naming
+    (e.g., Justin_Kilpatrick_Resume.pdf) and backwards-compatible legacy aliases.
     """
     safe_company = re.sub(r"[^a-zA-Z0-9_-]+", "_", (company or "Company").strip())[:30].strip("_") or "Company"
     job_dir = PACKETS_DIR / f"job_{job_id}_{safe_company}"
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    resume_pdf_path = job_dir / "Tailored_Resume.pdf"
-    resume_md_path = job_dir / "Tailored_Resume.md"
-    resume_txt_path = job_dir / "Tailored_Resume.txt"
+    raw_name = (candidate_name or "Justin Kilpatrick").strip()
+    safe_name = re.sub(r"[^\w\s-]", "", raw_name).strip()
+    name_slug = "_".join(safe_name.split()) if safe_name else "Justin_Kilpatrick"
 
-    cover_pdf_path = job_dir / "Tailored_Cover_Letter.pdf"
-    cover_md_path = job_dir / "Tailored_Cover_Letter.md"
-    cover_txt_path = job_dir / "Tailored_Cover_Letter.txt"
+    primary_resume_pdf = job_dir / f"{name_slug}_Resume.pdf"
+    primary_resume_md = job_dir / f"{name_slug}_Resume.md"
+    primary_resume_txt = job_dir / f"{name_slug}_Resume.txt"
 
-    resume_md_path.write_text(resume_markdown or "", encoding="utf-8")
-    resume_txt_path.write_text(_clean_markdown_to_plain(resume_markdown or ""), encoding="utf-8")
-    resume_pdf_path.write_bytes(render_text_to_minimal_pdf(f"Resume - {job_title}", resume_markdown or ""))
+    primary_cover_pdf = job_dir / f"{name_slug}_Cover_Letter.pdf"
+    primary_cover_md = job_dir / f"{name_slug}_Cover_Letter.md"
+    primary_cover_txt = job_dir / f"{name_slug}_Cover_Letter.txt"
 
-    cover_md_path.write_text(cover_letter_markdown or "", encoding="utf-8")
-    cover_txt_path.write_text(_clean_markdown_to_plain(cover_letter_markdown or ""), encoding="utf-8")
-    cover_pdf_path.write_bytes(render_text_to_minimal_pdf(f"Cover Letter - {company}", cover_letter_markdown or ""))
+    legacy_resume_pdf = job_dir / "Tailored_Resume.pdf"
+    legacy_resume_md = job_dir / "Tailored_Resume.md"
+    legacy_resume_txt = job_dir / "Tailored_Resume.txt"
+
+    legacy_cover_pdf = job_dir / "Tailored_Cover_Letter.pdf"
+    legacy_cover_md = job_dir / "Tailored_Cover_Letter.md"
+    legacy_cover_txt = job_dir / "Tailored_Cover_Letter.txt"
+
+    resume_txt_content = _clean_markdown_to_plain(resume_markdown or "")
+    resume_pdf_bytes = render_text_to_minimal_pdf(f"Resume - {job_title}", resume_markdown or "")
+
+    cover_txt_content = _clean_markdown_to_plain(cover_letter_markdown or "")
+    cover_pdf_bytes = render_text_to_minimal_pdf(f"Cover Letter - {company}", cover_letter_markdown or "")
+
+    primary_md = resume_markdown or ""
+    primary_resume_md.write_text(primary_md, encoding="utf-8")
+    primary_resume_txt.write_text(resume_txt_content, encoding="utf-8")
+    primary_resume_pdf.write_bytes(resume_pdf_bytes)
+
+    primary_cover_md.write_text(cover_letter_markdown or "", encoding="utf-8")
+    primary_cover_txt.write_text(cover_txt_content, encoding="utf-8")
+    primary_cover_pdf.write_bytes(cover_pdf_bytes)
+
+    # Legacy aliases so existing references or tests never fail
+    legacy_resume_md.write_text(primary_md, encoding="utf-8")
+    legacy_resume_txt.write_text(resume_txt_content, encoding="utf-8")
+    legacy_resume_pdf.write_bytes(resume_pdf_bytes)
+
+    legacy_cover_md.write_text(cover_letter_markdown or "", encoding="utf-8")
+    legacy_cover_txt.write_text(cover_txt_content, encoding="utf-8")
+    legacy_cover_pdf.write_bytes(cover_pdf_bytes)
 
     return {
         "directory": str(job_dir),
-        "resume_pdf": str(resume_pdf_path),
-        "resume_md": str(resume_md_path),
-        "resume_txt": str(resume_txt_path),
-        "cover_letter_pdf": str(cover_pdf_path),
-        "cover_letter_md": str(cover_md_path),
-        "cover_letter_txt": str(cover_txt_path),
+        "resume_pdf": str(primary_resume_pdf),
+        "resume_md": str(primary_resume_md),
+        "resume_txt": str(primary_resume_txt),
+        "cover_letter_pdf": str(primary_cover_pdf),
+        "cover_letter_md": str(primary_cover_md),
+        "cover_letter_txt": str(primary_cover_txt),
+        "legacy_resume_pdf": str(legacy_resume_pdf),
+        "legacy_cover_letter_pdf": str(legacy_cover_pdf),
     }
 
 
