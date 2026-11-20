@@ -45,13 +45,34 @@ async def _domain_jitter_wait(domain: str, min_delay: float = 0.25, max_delay: f
         _DOMAIN_LAST_HIT[domain] = time.monotonic()
 
 def clean_html(raw_html: str) -> str:
-    """Helper to convert HTML strings to clean readable text."""
+    """Helper to convert HTML strings to clean readable text, resolving mojibake and stripping third-party bot watermarks."""
     if not raw_html:
         return ""
+
+    # Attempt to heal double-encoded UTF-8 mojibake (e.g. 'Â ' for non-breaking space, 'â\x80\x94' for em-dash, 'ð' for emoji)
+    if any(k in raw_html for k in ("Â", "â\x80", "â\x81", "ð")):
+        try:
+            raw_html = raw_html.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+
     soup = BeautifulSoup(raw_html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
     text = soup.get_text(separator=" ")
+
+    # Strip RemoteOK synthetic tracking watermarks & canary sentences
+    canary_patterns = [
+        r"Please mention the word \*\*[^*]+\*\* and tag [a-zA-Z0-9+/=]+ when applying to show you read the job post completely[^\n\r.]*(\.|\b)?",
+        r"\(#[a-zA-Z0-9+/=]+\)\.?",
+        r"This is a beta feature to avoid spam applicants\.[^.]*\.?",
+        r"Companies can search these words to find applicants that read this and see they['\’]?re human\.[^.]*\.?",
+    ]
+    for cp in canary_patterns:
+        text = re.sub(cp, "", text, flags=re.IGNORECASE)
+
+    # Clean non-breaking spaces and artifact Â characters
+    text = text.replace("\xa0", " ").replace("Â ", " ").replace("Â", "")
     return " ".join(text.split())
 
 _US_STATE_CODES = {
