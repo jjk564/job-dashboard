@@ -391,11 +391,12 @@ def run_interactive_browser(payload_path: str) -> None:
 
                 # Inject HUD
                 try:
-                    status_text = (
-                        f"Auto-filled {filled_count} fields. Review form & submit, or advance:"
-                        if filled_count > 0
-                        else "Page loaded. Review form & submit, or advance:"
-                    )
+                    if fill_res.get("is_closed_posting"):
+                        status_text = "⚠️ Posting closed or redirected. Click Skip or Next."
+                    elif filled_count > 0:
+                        status_text = f"Auto-filled {filled_count} fields. Review form & submit, or advance:"
+                    else:
+                        status_text = "Page loaded. Review form & submit, or advance:"
                     page.evaluate(
                         HUD_INJECTION_SCRIPT,
                         {

@@ -79,6 +79,12 @@ async def check_job_expiration(
             if "ziprecruiter.com/c/" in orig_lower and "/job/" not in final_lower and "/c/" not in final_lower:
                 return True, "Redirected from job posting"
 
+            if "gh_jid=" in orig_lower and "gh_jid=" not in final_lower and "/jobs/" not in final_lower:
+                return True, "Posting closed: Redirected from specific job to general careers page"
+
+            if ("ashbyhq.com" in orig_lower or "greenhouse.io" in orig_lower or "lever.co" in orig_lower) and final_lower.rstrip("/").endswith(("/careers", "/jobs")):
+                return True, "Posting closed: Redirected to general careers page"
+
             # Parse visible text
             soup = BeautifulSoup(resp.text, "html.parser")
             for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):

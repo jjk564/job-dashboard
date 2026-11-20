@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -264,15 +265,24 @@ def _fill_form_sync(
     except Exception:
         pass
 
-    is_closed_posting = not has_form_or_apply and any(
-        phrase in visible_body_text
-        for phrase in (
-            "no longer open",
-            "no longer accepting applications",
-            "position has been filled",
-            "job is no longer available",
-            "page not found",
-            "404 not found",
+    curr_target_url = (getattr(target, "url", "") or (page.url if page else "")).lower()
+    apply_url = (job_data.get("apply_url") or job_data.get("url") or "").lower()
+    redirected_away = ("gh_jid=" in apply_url and "gh_jid=" not in curr_target_url and "/jobs/" not in curr_target_url)
+
+    is_closed_posting = redirected_away or (
+        any(
+            phrase in visible_body_text
+            for phrase in (
+                "no longer open",
+                "no longer accepting applications",
+                "position has been filled",
+                "job is no longer available",
+                "posting has expired",
+                "posting is closed",
+                "position is closed",
+                "page not found",
+                "404 not found",
+            )
         )
     )
 
@@ -310,7 +320,6 @@ def _fill_form_sync(
         ('input[name="name" i], input[id="name" i], input[autocomplete="name"], input[name*="full_name" i]', full_name),
         ('input[type="email"], input[name*="email" i], input[id*="email" i]', email),
         ('input[type="tel"], input[name*="phone" i], input[id*="phone" i]', phone),
-        ('input[name*="location" i], input[id*="location" i], input[name*="city" i]', location),
         ('input[name*="linkedin" i], input[id*="linkedin" i], input[placeholder*="linkedin" i]', linkedin),
         ('input[name*="github" i], input[id*="github" i], input[placeholder*="github" i]', github),
         ('input[name*="website" i], input[id*="portfolio" i], input[placeholder*="portfolio" i], input[name*="portfolio" i]', portfolio),
@@ -328,6 +337,43 @@ def _fill_form_sync(
                     filled_count += 1
         except Exception:
             pass
+
+    # Location field handling with typeahead commit
+    clean_location = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location).split("-")[0].strip() or "Boston, MA"
+    if clean_location:
+        try:
+            loc_input = target.locator(
+                'input[name*="location" i]:visible, input[id*="location" i]:visible, '
+                'input[name*="city" i]:visible, input[id*="city" i]:visible'
+            ).first
+            if loc_input.count() > 0:
+                current_loc_val = (loc_input.input_value() or "").strip()
+                if not current_loc_val:
+                    loc_input.click()
+                    loc_input.fill(clean_location, timeout=1500)
+                    filled_count += 1
+                    time.sleep(0.4)
+                    try:
+                        sugg = target.locator(
+                            '.pac-item:visible, .location-typeahead-list li:visible, '
+                            '[role="listbox"] [role="option"]:visible, .select__option:visible, '
+                            '[class*="suggestion"]:visible'
+                        ).first
+                        if sugg.count() > 0:
+                            sugg.click(timeout=1000)
+                        else:
+                            loc_input.press("ArrowDown")
+                            time.sleep(0.1)
+                            loc_input.press("Enter")
+                    except Exception:
+                        try:
+                            loc_input.press("ArrowDown")
+                            time.sleep(0.1)
+                            loc_input.press("Enter")
+                        except Exception:
+                            pass
+        except Exception as loc_err:
+            logger.debug(f"[LOCATION FILL ERR]: {loc_err}")
 
     if not phone:
         try:
@@ -686,14 +732,12 @@ def _fill_form_sync(
                     }"""
                 )
                 label_clean = (label_text or "").replace("*", "").strip()
-                if not label_clean or len(label_clean) < 2:
-                    continue
+                if not label_clean or len(label_clean) < 2 or label_clean.lower() in ("select", "choose", "first option"):
+                    raw_id = (el.get_attribute("id") or el.get_attribute("name") or "").replace("_", " ").replace("-", " ")
+                    if any(k in raw_id.lower() for k in ("race", "ethnicity", "hispanic", "veteran", "disability", "gender", "pronoun")):
+                        label_clean = raw_id
 
-                # Skip optional EEO comboboxes unless required (never skip 'country' as Greenhouse requires Country when Phone is filled)
-                # Gender and pronouns are actively filled with candidate's preference (Male / He/him/his)
-                if role_attr == "combobox" and not is_req and any(
-                    k in label_clean.lower() for k in ("hispanic", "race", "veteran", "disability")
-                ):
+                if not label_clean or len(label_clean) < 2:
                     continue
 
                 options_list: Optional[List[str]] = None
@@ -727,8 +771,32 @@ def _fill_form_sync(
 
                 logger.debug(f"[LOOP APPLYING] {el_id}: role={role_attr}, ans={ans_val}")
                 if tag_name == "select":
-                    el.select_option(label=ans_val, timeout=1500)
-                    filled_count += 1
+                    sel_done = False
+                    try:
+                        el.select_option(label=ans_val, timeout=1500)
+                        sel_done = True
+                        filled_count += 1
+                    except Exception:
+                        pass
+                    if not sel_done:
+                        try:
+                            matched_val = el.evaluate("""(sel, targetText) => {
+                                const opts = Array.from(sel.options);
+                                const targetLower = String(targetText).toLowerCase().trim();
+                                const exact = opts.find(o => o.text.trim().toLowerCase() === targetLower);
+                                if (exact) return exact.value || exact.text;
+                                const partial = opts.find(o => {
+                                    const t = o.text.trim().toLowerCase();
+                                    return t && (t.includes(targetLower) || targetLower.includes(t));
+                                });
+                                if (partial) return partial.value || partial.text;
+                                return null;
+                            }""", str(ans_val))
+                            if matched_val is not None:
+                                el.select_option(value=matched_val, timeout=1500)
+                                filled_count += 1
+                        except Exception as sel_err:
+                            logger.debug(f"[SELECT FALLBACK ERR] {el_id}: {sel_err}")
                 elif role_attr == "combobox":
                     # 1. Scroll combobox into view and click to open its menu
                     try:
@@ -905,9 +973,9 @@ def _attempt_submission_sync(
                 browser.close()
                 return {
                     "submitted": False,
-                    "status_target": "TO_APPLY",
-                    "autopilot_status": "needs_manual_apply",
-                    "reason": "Need to Apply: External career page indicates this posting may be closed or redirected",
+                    "status_target": "REJECTED",
+                    "autopilot_status": "expired",
+                    "reason": "Posting closed: External career page indicates this posting is closed, removed, or redirected",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
                 }

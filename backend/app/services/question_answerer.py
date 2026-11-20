@@ -246,6 +246,7 @@ def answer_single_question(
     email = (profile_data.get("email") or "").strip()
     phone = (profile_data.get("phone") or "").strip()
     location = (profile_data.get("location") or "Remote, US").strip()
+    clean_location = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location).split("-")[0].strip() or "Boston, MA"
     title = (profile_data.get("title") or "Software Engineer").strip()
     summary = (profile_data.get("summary") or "").strip()
     linkedin = (profile_data.get("linkedin_url") or "").strip()
@@ -440,8 +441,8 @@ def answer_single_question(
             "confidence": "high",
         }
     if any(k in q for k in ("city", "current location", "location", "where are you based", "where do you live", "address", "state")):
-        loc_val = location or "United States"
-        opt = _match_option(options, [loc_val, "remote", "united states"])
+        loc_val = clean_location or "Boston, MA"
+        opt = _match_option(options, [loc_val, "boston", "massachusetts", "remote", "united states"])
         return {
             "question": q_raw,
             "answer": opt or loc_val,
@@ -656,7 +657,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 12. EEO / Voluntary Self-Identification (Gender, Ethnicity, Veteran, Disability)
+    # 12. EEO / Voluntary Self-Identification (Gender, Ethnicity, Race, Veteran, Disability)
     if any(k in q for k in ("gender", "sex")) and "sexual orientation" not in q:
         opt = _match_option(options, ["male", "man", "cisgender male", "he/him", "he/him/his"])
         return {
@@ -666,16 +667,78 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("race", "hispanic", "latino", "ethnicity", "veteran", "disability", "sexual orientation", "self-identify", "demographic")):
+    # Hispanic / Latino ethnicity check
+    if any(k in q for k in ("hispanic", "latino")):
         opt = _match_option(
             options,
             [
-                "decline to self-identify",
-                "i do not wish to answer",
-                "prefer not to say",
-                "prefer not to answer",
-                "decline",
+                "no", "not hispanic", "not hispanic or latino", "no, i am not", "no, not hispanic",
+                "decline to self-identify", "decline to state", "i do not wish to answer", "prefer not to say",
+            ],
+        )
+        return {
+            "question": q_raw,
+            "answer": opt or "No",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    # Race / Ethnicity
+    if any(k in q for k in ("race", "ethnicity", "ethnic origin", "racial", "demographic")):
+        opt = _match_option(
+            options,
+            [
+                "white (not hispanic or latino)", "white", "caucasian",
+                "decline to self-identify", "decline to state", "i do not wish to answer", "prefer not to say", "decline",
                 "choose not to disclose",
+            ],
+        )
+        return {
+            "question": q_raw,
+            "answer": opt or "White (Not Hispanic or Latino)",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    # Veteran Status
+    if any(k in q for k in ("veteran", "military")):
+        opt = _match_option(
+            options,
+            [
+                "i am not a protected veteran", "not a veteran", "no", "not a protected veteran",
+                "i am not a veteran", "decline to self-identify", "i do not wish to answer", "prefer not to say",
+            ],
+        )
+        return {
+            "question": q_raw,
+            "answer": opt or "I am not a protected veteran",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    # Disability Status
+    if any(k in q for k in ("disability", "handicap", "impairment")):
+        opt = _match_option(
+            options,
+            [
+                "no, i do not have a disability", "no, i don't have a disability", "no",
+                "i do not have a disability", "no disability",
+                "i do not wish to answer", "decline to self-identify", "prefer not to say",
+            ],
+        )
+        return {
+            "question": q_raw,
+            "answer": opt or "No, I do not have a disability",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("sexual orientation", "self-identify")):
+        opt = _match_option(
+            options,
+            [
+                "heterosexual", "straight",
+                "decline to self-identify", "i do not wish to answer", "prefer not to say",
             ],
         )
         return {
