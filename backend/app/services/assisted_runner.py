@@ -253,7 +253,7 @@ def run_interactive_browser(payload_path: str) -> None:
                         "user_data_dir": str(BROWSER_DATA_DIR),
                         "headless": False,
                         "args": ["--disable-blink-features=AutomationControlled", "--start-maximized"],
-                        "ignore_default_args": ["--enable-automation"],
+                        "ignore_default_args": ["--enable-automation", "--no-sandbox"],
                         "no_viewport": True,
                     }
                     if ch:
@@ -265,8 +265,33 @@ def run_interactive_browser(payload_path: str) -> None:
                     log(f"Channel {ch} persistent launch failed: {ch_err}")
 
             if not context:
+                # If primary profile was locked by another running browser instance, try auxiliary profile
+                aux_profile_dir = BACKEND_DIR / "browser_data" / "chrome_user_profile_aux"
+                aux_profile_dir.mkdir(parents=True, exist_ok=True)
+                for ch in ["chrome", "msedge", None]:
+                    try:
+                        kwargs = {
+                            "user_data_dir": str(aux_profile_dir),
+                            "headless": False,
+                            "args": ["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                            "ignore_default_args": ["--enable-automation", "--no-sandbox"],
+                            "no_viewport": True,
+                        }
+                        if ch:
+                            kwargs["channel"] = ch
+                        context = p.chromium.launch_persistent_context(**kwargs)
+                        log(f"Launched auxiliary persistent context with channel: {ch}")
+                        break
+                    except Exception:
+                        pass
+
+            if not context:
                 log("Falling back to ephemeral browser context...")
-                browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+                browser = p.chromium.launch(
+                    headless=False,
+                    args=["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                    ignore_default_args=["--enable-automation", "--no-sandbox"],
+                )
                 context = browser.new_context(no_viewport=True)
 
             page = context.pages[0] if context.pages else context.new_page()
@@ -386,6 +411,7 @@ def run_interactive_browser(payload_path: str) -> None:
                 start_job_ts = time.time()
                 code_filled = False
                 job_completed = False
+                notified_gate = False
 
                 while time.time() - start_job_ts < 1800:
                     try:
@@ -420,6 +446,18 @@ def run_interactive_browser(payload_path: str) -> None:
                             update_job_status_applied(job_id)
                             job_completed = True
                             break
+
+                        if "weworkremotely.com/job-seekers" in curr_url or "register?alert=" in curr_url:
+                            if not notified_gate:
+                                notified_gate = True
+                                log("Detected aggregator account registration gate.")
+                                try:
+                                    page.evaluate(
+                                        HUD_DONE_SCRIPT,
+                                        "⚠️ Third-party account gate detected (WeWorkRemotely). Log in, or click [⏭ Skip] / [✓ Mark Applied]."
+                                    )
+                                except Exception:
+                                    pass
 
                         # Check Greenhouse 2FA security code box
                         if not code_filled:

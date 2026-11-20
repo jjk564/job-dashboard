@@ -35,6 +35,7 @@ AUTH_GATED_DOMAINS = (
     "ultipro.com",
     "adp.com",
     "usajobs.gov",
+    "weworkremotely.com",
 )
 
 # Direct ATS platforms that host public, single-page or direct-apply forms without login walls
@@ -839,7 +840,7 @@ def _attempt_submission_sync(
         browser = p.chromium.launch(
             headless=headless,
             args=["--disable-blink-features=AutomationControlled"] if headless else None,
-            ignore_default_args=["--enable-automation"] if headless else None,
+            ignore_default_args=["--enable-automation", "--no-sandbox"],
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" if headless else None,
