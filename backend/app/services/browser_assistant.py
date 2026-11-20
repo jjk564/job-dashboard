@@ -302,6 +302,7 @@ def _fill_form_sync(
     email = (profile_data.get("email") or "").strip()
     phone = (profile_data.get("phone") or "").strip()
     location = (profile_data.get("location") or "").strip()
+    company = (profile_data.get("company") or profile_data.get("current_company") or "Hyperice").strip()
     linkedin = (profile_data.get("linkedin_url") or "").strip()
     github = (profile_data.get("github_url") or "").strip()
     portfolio = (profile_data.get("portfolio_url") or github or linkedin).strip()
@@ -320,6 +321,12 @@ def _fill_form_sync(
         ('input[name="name" i], input[id="name" i], input[autocomplete="name"], input[name*="full_name" i]', full_name),
         ('input[type="email"], input[name*="email" i], input[id*="email" i]', email),
         ('input[type="tel"], input[name*="phone" i], input[id*="phone" i]', phone),
+        (
+            'input[name="org" i], input[name*="current_company" i], input[name*="company" i], '
+            'input[id*="current_company" i], input[id*="company" i], input[placeholder*="company" i], '
+            'input[name*="employer" i]',
+            company,
+        ),
         ('input[name*="linkedin" i], input[id*="linkedin" i], input[placeholder*="linkedin" i]', linkedin),
         ('input[name*="github" i], input[id*="github" i], input[placeholder*="github" i]', github),
         ('input[name*="website" i], input[id*="portfolio" i], input[placeholder*="portfolio" i], input[name*="portfolio" i]', portfolio),
@@ -338,11 +345,13 @@ def _fill_form_sync(
         except Exception:
             pass
 
-    # Location field handling with typeahead commit
+    # Location field handling with typeahead commit (supports Lever, Greenhouse, Ashby, and Google Places)
     clean_location = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location).split("-")[0].strip() or "Boston, MA"
+    loc_type_str = clean_location.replace("Massachusetts", "MA").strip()
     if clean_location:
         try:
             loc_input = target.locator(
+                '#location-input:visible, input[name="location"]:visible, '
                 'input[name*="location" i]:visible, input[id*="location" i]:visible, '
                 'input[name*="city" i]:visible, input[id*="city" i]:visible'
             ).first
@@ -350,18 +359,32 @@ def _fill_form_sync(
                 current_loc_val = (loc_input.input_value() or "").strip()
                 if not current_loc_val:
                     loc_input.click()
-                    loc_input.fill(clean_location, timeout=1500)
-                    filled_count += 1
-                    time.sleep(0.4)
+                    # Use press_sequentially with clean location string to trigger Lever / Google Places / Ashby typeahead
                     try:
-                        sugg = target.locator(
+                        loc_input.press_sequentially(loc_type_str, delay=70)
+                    except Exception:
+                        loc_input.fill(loc_type_str)
+                    filled_count += 1
+                    time.sleep(1.0)
+                    try:
+                        suggs = target.locator(
+                            '.dropdown-location:visible, #location-0:visible, .dropdown-results:visible, '
                             '.pac-item:visible, .location-typeahead-list li:visible, '
                             '[role="listbox"] [role="option"]:visible, .select__option:visible, '
                             '[class*="suggestion"]:visible'
-                        ).first
-                        if sugg.count() > 0:
-                            sugg.click(timeout=1000)
+                        )
+                        sugg_count = suggs.count()
+                        if sugg_count > 0:
+                            best_sugg = None
+                            for s_idx in range(min(5, sugg_count)):
+                                s_el = suggs.nth(s_idx)
+                                s_txt = (s_el.inner_text() or "").lower()
+                                if any(tok in s_txt for tok in ("ma", "massachusetts", "usa", "united states")):
+                                    best_sugg = s_el
+                                    break
+                            (best_sugg or suggs.first).click(timeout=1500)
                         else:
+                            loc_input.fill(clean_location)
                             loc_input.press("ArrowDown")
                             time.sleep(0.1)
                             loc_input.press("Enter")
@@ -737,6 +760,18 @@ def _fill_form_sync(
                     if any(k in raw_id.lower() for k in ("race", "ethnicity", "hispanic", "veteran", "disability", "gender", "pronoun")):
                         label_clean = raw_id
 
+                # Sanitize EEO select labels on Lever / Greenhouse so option text in parent container doesn't pollute the label
+                raw_name = (el.get_attribute("name") or "").lower()
+                raw_id_attr = (el.get_attribute("id") or "").lower()
+                if "eeo[race]" in raw_name or "race" in raw_id_attr or "job_application_race" in raw_name:
+                    label_clean = "Race"
+                elif "eeo[gender]" in raw_name or "gender" in raw_id_attr or "job_application_gender" in raw_name:
+                    label_clean = "Gender"
+                elif "eeo[veteran]" in raw_name or "veteran" in raw_id_attr:
+                    label_clean = "Veteran status"
+                elif "eeo[disability]" in raw_name or "disability" in raw_id_attr:
+                    label_clean = "Disability status"
+
                 if not label_clean or len(label_clean) < 2:
                     continue
 
@@ -761,7 +796,6 @@ def _fill_form_sync(
 
                 if qa["confidence"] == "manual_needed" and is_req:
                     unanswered_required.append(label_clean)
-                    continue
 
                 ans_val = qa.get("answer") or ""
                 if not ans_val:

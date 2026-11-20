@@ -209,11 +209,28 @@ def _match_option(options: Optional[List[str]], preferred_patterns: List[str]) -
     cleaned = [o.strip() for o in options if o and o.strip() and not o.strip().lower().startswith(("select", "choose", "--"))]
     if not cleaned:
         return None
+
+    # Pass 1: Exact matches (case-insensitive)
     for pat in preferred_patterns:
-        pat_low = pat.lower()
+        pat_low = pat.lower().strip()
         for opt in cleaned:
-            if pat_low == opt.lower() or pat_low in opt.lower():
+            if pat_low == opt.lower().strip():
                 return opt
+
+    # Pass 2: Whole-word boundary matches or multi-word substring matches
+    for pat in preferred_patterns:
+        pat_low = pat.lower().strip()
+        for opt in cleaned:
+            opt_low = opt.lower().strip()
+            # If pattern contains multiple words, allow substring match
+            if " " in pat_low:
+                if pat_low in opt_low or opt_low in pat_low:
+                    return opt
+            else:
+                # Single word: match strictly with word boundaries so "no" doesn't match "latino"
+                if re.search(r"\b" + re.escape(pat_low) + r"\b", opt_low):
+                    return opt
+
     return None
 
 
@@ -657,7 +674,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 12. EEO / Voluntary Self-Identification (Gender, Ethnicity, Race, Veteran, Disability)
+    # 12. EEO / Voluntary Self-Identification (Gender, Race, Ethnicity, Veteran, Disability)
     if any(k in q for k in ("gender", "sex")) and "sexual orientation" not in q:
         opt = _match_option(options, ["male", "man", "cisgender male", "he/him", "he/him/his"])
         return {
@@ -667,23 +684,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # Hispanic / Latino ethnicity check
-    if any(k in q for k in ("hispanic", "latino")):
-        opt = _match_option(
-            options,
-            [
-                "no", "not hispanic", "not hispanic or latino", "no, i am not", "no, not hispanic",
-                "decline to self-identify", "decline to state", "i do not wish to answer", "prefer not to say",
-            ],
-        )
-        return {
-            "question": q_raw,
-            "answer": opt or "No",
-            "category": "eeo",
-            "confidence": "high",
-        }
-
-    # Race / Ethnicity
+    # Race / Ethnicity (evaluated before standalone Hispanic check so options containing Latino don't hijack Race)
     if any(k in q for k in ("race", "ethnicity", "ethnic origin", "racial", "demographic")):
         opt = _match_option(
             options,
@@ -696,6 +697,22 @@ def answer_single_question(
         return {
             "question": q_raw,
             "answer": opt or "White (Not Hispanic or Latino)",
+            "category": "eeo",
+            "confidence": "high",
+        }
+
+    # Hispanic / Latino ethnicity check (standalone question)
+    if any(k in q for k in ("hispanic", "latino")):
+        opt = _match_option(
+            options,
+            [
+                "no", "not hispanic", "not hispanic or latino", "no, i am not", "no, not hispanic",
+                "decline to self-identify", "decline to state", "i do not wish to answer", "prefer not to say",
+            ],
+        )
+        return {
+            "question": q_raw,
+            "answer": opt or "No",
             "category": "eeo",
             "confidence": "high",
         }
@@ -767,7 +784,37 @@ def answer_single_question(
         }
 
     # 14. Motivation / Why This Company / Why This Role / Cover Letter / Summary
-    if any(k in q for k in ("why do you want", "why are you interested", "what excites you", "why this role", f"why {company.lower()}", "what draws you")):
+    if any(k in q for k in ("passionate about testing", "passionate about qa", "quality assurance", "passion for qa", "passion for testing", "testing and qa", "why qa", "why testing")):
+        qa_ans = (
+            "I am passionate about Testing and QA because robust quality engineering is what transforms complex software into reliable, trustworthy systems. "
+            "I thrive on designing thorough test strategies, isolating edge cases early, and writing automated tests in Python and modern frameworks to ensure "
+            "end-users experience seamless, defect-free products. Combining my hardware diagnostic precision with software quality methodologies gives me a natural "
+            "drive for uncovering root causes and continuously elevating software reliability."
+        )
+        return {
+            "question": q_raw,
+            "answer": qa_ans,
+            "category": "motivation",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in (
+        "not obvious from your resume", "isn't obvious from your resume", "not on your resume",
+        "share about yourself", "tell us something about yourself", "outside of your resume", "more about yourself"
+    )):
+        share_ans = (
+            "Outside of my resume bullets, I have an innate curiosity for reverse-engineering complex systems and removing friction through automated tooling. "
+            "Whether I am experimenting with local AI workflows, optimizing developer pipelines, or diagnosing intricate hardware-software interfaces, I bring "
+            "a disciplined diagnostic mindset, strong technical empathy, and genuine enthusiasm for collaborative team problem-solving."
+        )
+        return {
+            "question": q_raw,
+            "answer": share_ans,
+            "category": "about_me",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("why do you want", "why are you interested", "what excites you", "why this role", f"why {company.lower()}", "what draws you", "passionate about", "passion for")):
         why_ans = (
             (app_kit or {}).get("why_hook")
             or f"I am drawn to {company}'s technical mission and the opportunity to contribute to the {job_title} role using my hands-on experience in {skills_str}. {summary}".strip()
