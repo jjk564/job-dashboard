@@ -86,6 +86,27 @@ export const App: React.FC<JobPlatformProps> = ({ appName, theme }) => {
     loadJobs();
   }, []);
 
+  // Auto-sync jobs when returning to tab, window focus, or periodically
+  useEffect(() => {
+    let active = true;
+
+    const handleSync = () => {
+      if (!active || document.visibilityState === 'hidden') return;
+      loadJobs(true);
+    };
+
+    window.addEventListener('focus', handleSync);
+    document.addEventListener('visibilitychange', handleSync);
+    const syncInterval = setInterval(handleSync, 6000);
+
+    return () => {
+      active = false;
+      window.removeEventListener('focus', handleSync);
+      document.removeEventListener('visibilitychange', handleSync);
+      clearInterval(syncInterval);
+    };
+  }, []);
+
   // Poll backend health boot_id to automatically sync live backend updates without reopening
   useEffect(() => {
     let active = true;

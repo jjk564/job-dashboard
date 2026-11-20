@@ -324,6 +324,15 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     return filteredJobs.filter((j) => j.status === 'REJECTED').length;
   }, [filteredJobs]);
 
+  const hasActiveFilters = Boolean(
+    searchTerm ||
+    workplaceFilter !== 'all' ||
+    trackFilter !== 'all' ||
+    minFitScore > 0 ||
+    hideExpired ||
+    activeProfileId !== 'all'
+  );
+
   const handleMoveStatus = (job: Job, direction: 'prev' | 'next') => {
     let idx = STATUS_ORDER.indexOf(job.status);
     if (idx === -1) {
@@ -507,6 +516,25 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               <ChevronLeft className="w-3.5 h-3.5 text-slate-500" />
             )}
           </button>
+
+          {/* Active Filter Reset Indicator */}
+          {hasActiveFilters && (
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setWorkplaceFilter('all');
+                setTrackFilter('all');
+                setMinFitScore(0);
+                setActiveProfileId('all');
+                setHideExpired(false);
+              }}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs transition cursor-pointer select-none"
+              title="Click to reset filters and show all jobs in all columns"
+            >
+              <XCircle className="w-3.5 h-3.5" />
+              <span>Reset Filters ({filteredJobs.length}/{jobs.length})</span>
+            </button>
+          )}
         </div>
       </div>
 

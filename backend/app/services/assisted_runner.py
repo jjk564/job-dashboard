@@ -42,7 +42,11 @@ def update_job_status_applied(job_id: int) -> None:
         import urllib.request
         req = urllib.request.Request(
             f"http://127.0.0.1:8000/api/jobs/{job_id}",
-            data=json.dumps({"status": "APPLIED"}).encode("utf-8"),
+            data=json.dumps({
+                "status": "APPLIED",
+                "autopilot_status": "auto_applied",
+                "autopilot_reason": "Applied via Autopilot Speed-Run",
+            }).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="PATCH",
         )
@@ -60,7 +64,7 @@ def update_job_status_applied(job_id: int) -> None:
             conn = sqlite3.connect(str(db_file), timeout=15)
             c = conn.cursor()
             c.execute(
-                "UPDATE jobs SET status = 'APPLIED', applied_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+                "UPDATE jobs SET status = 'APPLIED', autopilot_status = 'auto_applied', autopilot_reason = 'Applied via Autopilot Speed-Run', applied_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
                 (job_id,),
             )
             c.execute(
