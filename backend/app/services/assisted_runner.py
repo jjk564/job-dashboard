@@ -252,7 +252,7 @@ def run_interactive_browser(payload_path: str) -> None:
                     kwargs = {
                         "user_data_dir": str(BROWSER_DATA_DIR),
                         "headless": False,
-                        "args": ["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                        "args": ["--start-maximized"],
                         "ignore_default_args": ["--enable-automation", "--no-sandbox"],
                         "no_viewport": True,
                     }
@@ -273,7 +273,7 @@ def run_interactive_browser(payload_path: str) -> None:
                         kwargs = {
                             "user_data_dir": str(aux_profile_dir),
                             "headless": False,
-                            "args": ["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                            "args": ["--start-maximized"],
                             "ignore_default_args": ["--enable-automation", "--no-sandbox"],
                             "no_viewport": True,
                         }
@@ -289,10 +289,15 @@ def run_interactive_browser(payload_path: str) -> None:
                 log("Falling back to ephemeral browser context...")
                 browser = p.chromium.launch(
                     headless=False,
-                    args=["--disable-blink-features=AutomationControlled", "--start-maximized"],
+                    args=["--start-maximized"],
                     ignore_default_args=["--enable-automation", "--no-sandbox"],
                 )
                 context = browser.new_context(no_viewport=True)
+
+            try:
+                context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            except Exception:
+                pass
 
             page = context.pages[0] if context.pages else context.new_page()
 

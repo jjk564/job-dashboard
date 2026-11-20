@@ -839,7 +839,7 @@ def _attempt_submission_sync(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=headless,
-            args=["--disable-blink-features=AutomationControlled"] if headless else None,
+            args=["--start-maximized"] if not headless else None,
             ignore_default_args=["--enable-automation", "--no-sandbox"],
         )
         context = browser.new_context(
