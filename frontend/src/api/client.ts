@@ -249,6 +249,19 @@ export const api = {
     return res.json();
   },
 
+  async startSpeedRun(jobIds?: number[]): Promise<{ success: boolean; message: string; count: number }> {
+    const res = await fetch(`${API_BASE}/assistant/speed-run/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobIds ? { job_ids: jobIds } : {}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to start speed-run' }));
+      throw new Error(err.detail || 'Failed to start speed-run');
+    }
+    return res.json();
+  },
+
   async generateApplicationKit(jobId: number): Promise<{
     provider_used: string;
     why_hook: string;

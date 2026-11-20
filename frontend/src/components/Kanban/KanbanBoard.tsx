@@ -15,7 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
-  Bot
+  Bot,
+  Zap
 } from 'lucide-react';
 import { Job, JobStatus, SearchProfile } from '../../types';
 import { JobCard } from './JobCard';
@@ -93,6 +94,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [hideExpired, setHideExpired] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isRunningAutopilot, setIsRunningAutopilot] = useState(false);
+  const [isSpeedRunning, setIsSpeedRunning] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [searchProfiles, setSearchProfiles] = useState<SearchProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<number | 'all'>('all');
@@ -273,6 +275,26 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
   };
 
+  const handleStartSpeedRun = async (specificJobIds?: number[]) => {
+    setIsSpeedRunning(true);
+    setVerifyMessage('⚡ Starting Speed-Run Queue...');
+    try {
+      const res = await api.startSpeedRun(specificJobIds);
+      if (res.success) {
+        setVerifyMessage(`⚡ Speed-Run active (${res.count} jobs)! Check the Chromium window on your screen.`);
+      } else {
+        setVerifyMessage(res.message);
+      }
+      setTimeout(() => setVerifyMessage(null), 8000);
+    } catch (err: any) {
+      console.error('Failed to start speed run:', err);
+      setVerifyMessage(err?.message || 'Failed to start Speed-Run');
+      setTimeout(() => setVerifyMessage(null), 5000);
+    } finally {
+      setIsSpeedRunning(false);
+    }
+  };
+
   // Filter jobs based on search term, workplace, fit score, and expired status
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
@@ -343,6 +365,17 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           >
             <Bot className={`w-3.5 h-3.5 text-emerald-400 ${isRunningAutopilot ? 'animate-spin' : ''}`} />
             <span>{isRunningAutopilot ? 'Autopilot Running...' : 'Run Autopilot'}</span>
+          </button>
+
+          {/* Speed-Run Queue Apply Button */}
+          <button
+            onClick={() => handleStartSpeedRun()}
+            disabled={isSpeedRunning}
+            className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600/30 to-indigo-600/30 hover:from-blue-600/40 hover:to-indigo-600/40 px-3 py-1.5 rounded-lg border border-blue-500/50 text-blue-300 hover:text-white font-semibold transition text-xs shadow-xs disabled:opacity-50 cursor-pointer"
+            title="Rapidly loop through all jobs in Need to Apply with pre-filled forms and top HUD"
+          >
+            <Zap className={`w-3.5 h-3.5 text-yellow-400 fill-yellow-400 ${isSpeedRunning ? 'animate-bounce' : ''}`} />
+            <span>{isSpeedRunning ? 'Speed-Run Opening...' : '⚡ Speed-Run Apply'}</span>
           </button>
 
           {/* Verify Postings Button */}
@@ -585,6 +618,20 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${col.colorClass}`}>
                       {columnJobs.length}
                     </span>
+                    {col.id === 'TO_APPLY' && columnJobs.length > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartSpeedRun();
+                        }}
+                        disabled={isSpeedRunning}
+                        className="flex items-center space-x-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-[11px] shadow-sm transition cursor-pointer disabled:opacity-50 ml-1"
+                        title="Start rapid sequential application queue for this column"
+                      >
+                        <Zap className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+                        <span>Speed-Run</span>
+                      </button>
+                    )}
                     {col.id === 'REJECTED' && (
                       <button
                         onClick={toggleArchive}

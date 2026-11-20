@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from pydantic import BaseModel
+from typing import Optional, List
 from ..database import get_db
 from ..models import Job, Profile, Skill, TailoredDocument
 from ..schemas import (
@@ -13,9 +15,94 @@ from ..schemas import (
 )
 from ..services.matcher import analyze_job_fit
 from ..services.ai_generator import generate_ai_document
-from ..services.browser_assistant import launch_assisted_application
+from ..services.browser_assistant import launch_assisted_application, launch_speedrun_queue
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
+
+class SpeedRunRequest(BaseModel):
+    job_ids: Optional[List[int]] = None
+
+
+@router.post("/speed-run/start")
+async def start_speed_run(
+    req: Optional[SpeedRunRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Launches a rapid sequential application queue for all or selected jobs
+    in the 'Need to Apply' column. Pre-fills form fields, uploads tailored resumes,
+    and provides a floating HUD for instant review, 2FA detection, and auto-advancement.
+    """
+    from ..services.autopilot import (
+        ensure_candidate_profile,
+        get_or_create_autopilot_config,
+        prepare_job_application_materials,
+    )
+
+    if req and req.job_ids:
+        query = select(Job).where(Job.id.in_(req.job_ids), Job.is_expired.is_(False))
+    else:
+        query = (
+            select(Job)
+            .where(Job.status.in_(["TO_APPLY", "WISHLIST"]), Job.is_expired.is_(False))
+            .order_by(Job.fit_score.desc().nullslast(), Job.updated_at.desc())
+        )
+
+    res = await db.execute(query)
+    jobs = res.scalars().all()
+
+    jobs_with_url = [j for j in jobs if j.url and j.url.strip()]
+    if not jobs_with_url:
+        return {
+            "success": False,
+            "message": "No eligible jobs with application URLs found in 'Need to Apply'.",
+            "count": 0,
+        }
+
+    cfg = await get_or_create_autopilot_config(db)
+    profile_dict, skills = await ensure_candidate_profile(db)
+
+    queue_payload = []
+    for job in jobs_with_url:
+        try:
+            materials = await prepare_job_application_materials(
+                db=db,
+                job=job,
+                profile_dict=profile_dict,
+                skills=skills,
+                fast_batch_mode=True,
+            )
+            queue_payload.append({
+                "job_id": job.id,
+                "job_url": job.url,
+                "job_data": job.to_dict(),
+                "profile_data": profile_dict,
+                "candidate_skills": skills,
+                "app_kit": materials.get("app_kit"),
+                "files": materials.get("files"),
+            })
+        except Exception:
+            queue_payload.append({
+                "job_id": job.id,
+                "job_url": job.url,
+                "job_data": job.to_dict(),
+                "profile_data": profile_dict,
+                "candidate_skills": skills,
+            })
+
+    await db.commit()
+
+    imap_config = {
+        "imap_server": cfg.imap_server or "imap.gmail.com",
+        "imap_email": (cfg.imap_email or profile_dict.get("email") or "").strip(),
+        "imap_password": (cfg.imap_password or "").strip(),
+    }
+
+    result = await launch_speedrun_queue(
+        jobs_payload=queue_payload,
+        imap_config=imap_config,
+    )
+    return result
 
 @router.post("/{job_id}/match", response_model=MatchAnalysisResponse)
 async def analyze_job_match(job_id: int, db: AsyncSession = Depends(get_db)):

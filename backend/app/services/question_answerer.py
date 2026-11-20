@@ -308,7 +308,7 @@ def answer_single_question(
             "confidence": "high",
         }
     if "pronoun" in q:
-        opt = _match_option(options, ["he/him/his", "he/him", "he / him", "he", "prefer not to say"])
+        opt = _match_option(options, ["he/him/his", "he/him", "he / him", "he"])
         return {
             "question": q_raw,
             "answer": opt or "He/him/his",
@@ -658,7 +658,7 @@ def answer_single_question(
 
     # 12. EEO / Voluntary Self-Identification (Gender, Ethnicity, Veteran, Disability)
     if any(k in q for k in ("gender", "sex")) and "sexual orientation" not in q:
-        opt = _match_option(options, ["male", "man", "he/him", "prefer not to say"])
+        opt = _match_option(options, ["male", "man", "cisgender male", "he/him", "he/him/his"])
         return {
             "question": q_raw,
             "answer": opt or "Male",

@@ -1233,6 +1233,7 @@ async def launch_assisted_application(
     payload_path.write_text(
         json.dumps(
             {
+                "job_id": (job_data or {}).get("id"),
                 "job_url": job_url,
                 "job_data": job_data or {"url": job_url},
                 "profile_data": profile_data,
@@ -1279,4 +1280,76 @@ async def launch_assisted_application(
     return {
         "success": True,
         "message": f"Assisted browser session opened for {job_url}. Tailored resume, cover letter, and screening answers pre-filled for your review.",
+    }
+
+
+async def launch_speedrun_queue(
+    jobs_payload: List[Dict[str, Any]],
+    imap_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Launches the desktop browser in Speed-Run queue mode, processing each job
+    sequentially with a top-floating HUD for one-click verification and advancement.
+    """
+    if not jobs_payload:
+        return {"success": False, "message": "No jobs provided for Speed-Run queue.", "count": 0}
+
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return {
+            "success": False,
+            "message": "Playwright is not installed. Please run 'pip install playwright && playwright install chromium'.",
+            "count": 0,
+        }
+
+    PACKETS_DIR.mkdir(parents=True, exist_ok=True)
+    payload_path = PACKETS_DIR / "speedrun_launch.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "mode": "speed_run",
+                "jobs": jobs_payload,
+                "imap_config": imap_config or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner_script = Path(__file__).resolve().parent / "assisted_runner.py"
+
+    if os.name == "nt":
+        python_exe = sys.executable
+        pythonw_exe = Path(python_exe).parent / "pythonw.exe"
+        exe_to_use = str(pythonw_exe if pythonw_exe.exists() else python_exe)
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        CREATE_NO_WINDOW = 0x08000000
+        flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW
+        try:
+            subprocess.Popen(
+                [exe_to_use, str(runner_script), str(payload_path)],
+                cwd=str(runner_script.parents[2]),
+                creationflags=flags,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            return {
+                "success": True,
+                "message": f"⚡ Speed-Run started with {len(jobs_payload)} job(s)! Browser opened on desktop.",
+                "count": len(jobs_payload),
+            }
+        except Exception as e:
+            logger.warning(f"Detached Speed-Run launch error: {e}")
+
+    # Fallback: launch in background thread
+    from .assisted_runner import run_interactive_browser
+    asyncio.create_task(asyncio.to_thread(run_interactive_browser, str(payload_path)))
+
+    return {
+        "success": True,
+        "message": f"⚡ Speed-Run started with {len(jobs_payload)} job(s) in background task.",
+        "count": len(jobs_payload),
     }

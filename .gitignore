@@ -71,4 +71,6 @@ playwright/.cache/
 .coverage
 htmlcov/
 backend/generated_packets/
+backend/browser_data/
+scratch_*.py
 watchdog.log
