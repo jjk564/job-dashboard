@@ -59,10 +59,10 @@ async def start_speed_run(
             "count": 0,
         }
 
-    # If running speed-run on entire column, prioritize direct ATS postings over auth-gated/paywalled aggregator sites
-    from ..services.browser_assistant import classify_ats_url
+    # For speed-run on entire column, strictly queue direct ATS application forms
+    from ..services.browser_assistant import is_direct_ats_url, classify_ats_url
     if not (req and req.job_ids):
-        direct_jobs = [j for j in jobs_with_url if classify_ats_url(j.url).get("can_auto_attempt", True)]
+        direct_jobs = [j for j in jobs_with_url if is_direct_ats_url(j.url)]
         if direct_jobs:
             jobs_with_url = direct_jobs
 

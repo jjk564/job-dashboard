@@ -20,7 +20,7 @@ from .question_answerer import PACKETS_DIR, answer_single_question
 
 logger = logging.getLogger(__name__)
 
-# Portals that require candidate account authentication / SSO before an application form is accessible
+# Portals and aggregators that require candidate account authentication / SSO or lock listings behind registrations
 AUTH_GATED_DOMAINS = (
     "myworkdayjobs.com",
     "workday.com",
@@ -36,6 +36,12 @@ AUTH_GATED_DOMAINS = (
     "adp.com",
     "usajobs.gov",
     "weworkremotely.com",
+    "jobicy.com",
+    "remoteok.com",
+    "builtin.com",
+    "simplyhired.com",
+    "monster.com",
+    "dice.com",
 )
 
 # Direct ATS platforms that host public, single-page or direct-apply forms without login walls
@@ -54,7 +60,27 @@ DIRECT_ATS_DOMAINS = (
     "personio.de",
     "personio.com",
     "bamboohr.com",
+    "jobvite.com",
+    "eightfold.ai",
 )
+
+
+def is_direct_ats_url(job_url: Optional[str]) -> bool:
+    """
+    Returns True if the URL points directly to a supported single-page ATS form
+    (e.g. Greenhouse, Lever, Ashby, Workable, BambooHR, ApplyToJob).
+    """
+    if not job_url or not job_url.strip():
+        return False
+    u = job_url.strip().lower()
+    if "gh_jid=" in u:
+        return True
+    try:
+        parsed = urlparse(u)
+        host = (parsed.netloc or "").lower()
+        return any(d in host for d in DIRECT_ATS_DOMAINS)
+    except Exception:
+        return False
 
 
 def classify_ats_url(job_url: Optional[str]) -> Dict[str, Any]:

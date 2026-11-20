@@ -61,6 +61,8 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const isAuthGated = Boolean(
     job.url &&
       (job.url.includes('weworkremotely.com') ||
+        job.url.includes('jobicy.com') ||
+        job.url.includes('remoteok.com') ||
         job.url.includes('workday') ||
         job.url.includes('myworkdayjobs') ||
         job.url.includes('linkedin.com') ||
@@ -510,12 +512,20 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 <div className="p-3 bg-amber-950/40 border border-amber-600/40 rounded-xl space-y-1.5 text-xs text-amber-200">
                   <div className="flex items-center space-x-1.5 font-bold text-amber-300">
                     <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Account-Gated Portal ({job.url?.includes('weworkremotely.com') ? 'WeWorkRemotely' : 'Gated Portal'})</span>
+                    <span>
+                      {job.url?.includes('weworkremotely.com')
+                        ? 'WeWorkRemotely Aggregator'
+                        : job.url?.includes('jobicy.com')
+                        ? 'Jobicy Aggregator'
+                        : job.url?.includes('remoteok.com')
+                        ? 'RemoteOK Aggregator'
+                        : 'Account-Gated Portal'}
+                    </span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">
-                    {job.url?.includes('weworkremotely.com')
-                      ? 'WeWorkRemotely locks application links behind a mandatory account registration and paid plan gate rather than hosting an application form.'
-                      : 'This portal requires individual candidate account login / SSO before the application form can be accessed.'}
+                    {job.url?.includes('weworkremotely.com') || job.url?.includes('jobicy.com') || job.url?.includes('remoteok.com')
+                      ? 'This is a third-party job directory aggregator that prompts for an account rather than hosting the employer\'s direct ATS application form.'
+                      : 'This portal requires candidate account login / SSO before the application form can be accessed.'}
                   </p>
                   <div className="pt-1">
                     <a
