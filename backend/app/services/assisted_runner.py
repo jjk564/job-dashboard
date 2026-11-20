@@ -92,7 +92,7 @@ HUD_INJECTION_SCRIPT = """
       top: 14px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 2147483647;
+      z-index: 99999;
       background: #0f172a;
       color: #f8fafc;
       border: 1.5px solid #3b82f6;
@@ -299,7 +299,13 @@ def run_interactive_browser(payload_path: str) -> None:
                 context = browser.new_context(no_viewport=True)
 
             try:
-                context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                context.add_init_script("""
+                    delete Navigator.prototype.webdriver;
+                    Object.defineProperty(Navigator.prototype, 'webdriver', {
+                        get: () => undefined,
+                        configurable: true
+                    });
+                """)
             except Exception:
                 pass
 
@@ -345,7 +351,13 @@ def run_interactive_browser(payload_path: str) -> None:
 
                 # Anti-automation bypass script on page load
                 try:
-                    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                    page.add_init_script("""
+                        delete Navigator.prototype.webdriver;
+                        Object.defineProperty(Navigator.prototype, 'webdriver', {
+                            get: () => undefined,
+                            configurable: true
+                        });
+                    """)
                 except Exception:
                     pass
 

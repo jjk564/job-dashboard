@@ -385,14 +385,12 @@ def _fill_form_sync(
                             (best_sugg or suggs.first).click(timeout=1500)
                         else:
                             loc_input.fill(clean_location)
-                            loc_input.press("ArrowDown")
-                            time.sleep(0.1)
-                            loc_input.press("Enter")
+                            loc_input.dispatch_event("change")
+                            loc_input.blur()
                     except Exception:
                         try:
-                            loc_input.press("ArrowDown")
-                            time.sleep(0.1)
-                            loc_input.press("Enter")
+                            loc_input.dispatch_event("change")
+                            loc_input.blur()
                         except Exception:
                             pass
         except Exception as loc_err:
@@ -975,7 +973,13 @@ def _attempt_submission_sync(
         )
         page = context.new_page()
         try:
-            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            page.add_init_script("""
+                delete Navigator.prototype.webdriver;
+                Object.defineProperty(Navigator.prototype, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true
+                });
+            """)
         except Exception:
             pass
         try:
