@@ -9,7 +9,8 @@ import {
   RefreshCw, 
   ExternalLink,
   Bot,
-  HelpCircle
+  HelpCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { Job, FitBreakdown, AutofillPayload } from '../../types';
 import { api } from '../../api/client';
@@ -56,6 +57,17 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [customQuestionInput, setCustomQuestionInput] = useState('');
   const [answeringQuestion, setAnsweringQuestion] = useState(false);
   const [securityCodeInput, setSecurityCodeInput] = useState('');
+
+  const isAuthGated = Boolean(
+    job.url &&
+      (job.url.includes('weworkremotely.com') ||
+        job.url.includes('workday') ||
+        job.url.includes('myworkdayjobs') ||
+        job.url.includes('linkedin.com') ||
+        job.url.includes('indeed.com') ||
+        job.url.includes('glassdoor.com') ||
+        job.url.includes('ziprecruiter.com'))
+  );
 
   const handleSendSecurityCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -493,6 +505,31 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                   </p>
                 </div>
               </div>
+
+              {isAuthGated && (
+                <div className="p-3 bg-amber-950/40 border border-amber-600/40 rounded-xl space-y-1.5 text-xs text-amber-200">
+                  <div className="flex items-center space-x-1.5 font-bold text-amber-300">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Account-Gated Portal ({job.url?.includes('weworkremotely.com') ? 'WeWorkRemotely' : 'Gated Portal'})</span>
+                  </div>
+                  <p className="text-slate-300 leading-relaxed">
+                    {job.url?.includes('weworkremotely.com')
+                      ? 'WeWorkRemotely locks application links behind a mandatory account registration and paid plan gate rather than hosting an application form.'
+                      : 'This portal requires individual candidate account login / SSO before the application form can be accessed.'}
+                  </p>
+                  <div className="pt-1">
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg border border-slate-600 font-semibold transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Open in Regular Browser</span>
+                    </a>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button

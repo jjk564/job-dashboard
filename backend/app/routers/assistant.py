@@ -422,6 +422,16 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
     if not job or not job.url:
         raise HTTPException(status_code=400, detail="Job or job URL not found")
 
+    from ..services.browser_assistant import classify_ats_url
+    url_cls = classify_ats_url(job.url)
+    if not url_cls.get("can_auto_attempt", True):
+        portal = url_cls.get("portal") or "This portal"
+        return {
+            "success": False,
+            "is_gated": True,
+            "message": f"Cannot Auto-Fill: {url_cls['reason']}. {portal} requires candidate login / registration rather than providing a direct application form. Please open the link in your standard browser to log in or apply manually.",
+        }
+
     from ..services.autopilot import (
         ensure_candidate_profile,
         get_or_create_autopilot_config,
