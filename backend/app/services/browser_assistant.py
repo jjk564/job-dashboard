@@ -517,6 +517,11 @@ def _fill_form_sync(
             cover_inp = None
 
             if total_files > 0:
+                has_cover_textarea = target.locator(
+                    'textarea[id*="cover" i], textarea[name*="cover" i], '
+                    'textarea[placeholder*="cover" i], textarea[aria-label*="cover" i]'
+                ).count() > 0
+
                 # Inspect each input's attributes and surrounding DOM container text
                 meta_list = []
                 for idx in range(total_files):
@@ -525,43 +530,67 @@ def _fill_form_sync(
                         const id = (el.id || '').toLowerCase();
                         const name = (el.name || '').toLowerCase();
                         const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        const accept = (el.getAttribute('accept') || '').toLowerCase();
+
+                        // Detect image-only inputs (e.g. Workable candidate avatar or profile picture)
+                        const isImageOnly = Boolean(
+                            accept && !accept.includes('pdf') && !accept.includes('doc') && !accept.includes('text') &&
+                            (accept.includes('image') || accept.includes('.jpg') || accept.includes('.png') || accept.includes('.gif'))
+                        );
+
                         let container = '';
-                        const parent = el.closest('div, section, fieldset, li, tr, form') || el.parentElement;
-                        if (parent) {
-                            container = (parent.innerText || '').toLowerCase();
+                        const uiEl = el.closest('[data-ui], [data-testid], [class*="field"], [class*="upload"], section, form');
+                        if (uiEl) {
+                            container += ' ' + (uiEl.getAttribute('data-ui') || '');
+                            container += ' ' + (uiEl.getAttribute('data-testid') || '');
+                            container += ' ' + (uiEl.getAttribute('aria-label') || '');
+                            const lbl = uiEl.querySelector('label, h1, h2, h3, h4, h5, h6, legend, [class*="label"], [class*="title"]');
+                            if (lbl) container += ' ' + (lbl.innerText || '');
                         }
-                        return { id, name, aria, container };
+                        let cur = el.parentElement;
+                        for (let k = 0; k < 3 && cur; k++) {
+                            const t = (cur.innerText || '').slice(0, 150);
+                            if (t) container += ' ' + t;
+                            cur = cur.parentElement;
+                        }
+                        return { id, name, aria, accept, isImageOnly, container: container.toLowerCase() };
                     }""")
                     meta_list.append({"index": idx, "locator": el, **meta})
 
+                # Exclude image/avatar uploads from candidate document consideration
+                doc_inputs = [m for m in meta_list if not m["isImageOnly"] and not any(k in m["container"] for k in ("avatar", "headshot"))]
+                if not doc_inputs:
+                    doc_inputs = meta_list
+
                 # Phase 1: Semantic matching via keywords
-                for m in meta_list:
+                for m in doc_inputs:
                     haystack = f"{m['id']} {m['name']} {m['aria']} {m['container']}"
                     if any(w in haystack for w in ("cover letter", "cover_letter", "coverletter", "cover")):
-                        if cover_inp is None:
+                        if cover_inp is None and not has_cover_textarea:
                             cover_inp = m["locator"]
                     elif any(w in haystack for w in ("resume", "résumé", "cv", "curriculum")):
                         if resume_inp is None:
                             resume_inp = m["locator"]
 
                 # Phase 2: Positional / count fallback
-                if total_files == 1:
-                    if resume_inp is None and cover_inp is None:
-                        resume_inp = file_inputs.first
-                elif total_files >= 2:
+                if len(doc_inputs) == 1:
+                    if resume_inp is None:
+                        resume_inp = doc_inputs[0]["locator"]
+                elif len(doc_inputs) >= 2:
                     if resume_inp is None and cover_inp is not None:
-                        for m in meta_list:
+                        for m in doc_inputs:
                             if m["locator"] != cover_inp:
                                 resume_inp = m["locator"]
                                 break
-                    elif cover_inp is None and resume_inp is not None:
-                        for m in meta_list:
+                    elif cover_inp is None and resume_inp is not None and not has_cover_textarea:
+                        for m in doc_inputs:
                             if m["locator"] != resume_inp:
                                 cover_inp = m["locator"]
                                 break
                     elif resume_inp is None and cover_inp is None:
-                        resume_inp = file_inputs.nth(0)
-                        cover_inp = file_inputs.nth(1)
+                        resume_inp = doc_inputs[0]["locator"]
+                        if not has_cover_textarea:
+                            cover_inp = doc_inputs[1]["locator"]
 
             # Upload Resume PDF
             if resume_pdf and os.path.exists(resume_pdf) and resume_inp is not None:
@@ -574,7 +603,7 @@ def _fill_form_sync(
                 except Exception as e:
                     logger.debug(f"Resume upload error: {e}")
 
-            # Upload Cover Letter PDF
+            # Upload Cover Letter PDF (only if dedicated cover_inp exists and no cover letter textarea was present)
             if cover_pdf and os.path.exists(cover_pdf):
                 cl_uploaded = False
                 if cover_inp is not None:
@@ -588,19 +617,19 @@ def _fill_form_sync(
                     except Exception as e:
                         logger.debug(f"Cover letter initial upload error: {e}")
 
-                # If primary attempt failed (e.g. dynamic unmount shifted elements), re-query
-                if not cl_uploaded:
+                # If primary attempt failed (e.g. dynamic unmount shifted elements), re-query only if explicit cover input exists
+                if not cl_uploaded and not has_cover_textarea:
                     try:
                         remaining_inputs = target.locator('input[type="file"]')
                         rem_count = remaining_inputs.count()
-                        if rem_count > 0:
+                        if rem_count > 1:
                             for r_idx in range(rem_count):
                                 r_el = remaining_inputs.nth(r_idx)
                                 r_text = r_el.evaluate("""el => {
                                     const p = el.closest('div, section, fieldset, li, tr, form') || el.parentElement;
                                     return `${el.id} ${el.name} ${el.getAttribute('aria-label') || ''} ${p ? p.innerText : ''}`.toLowerCase();
                                 }""")
-                                if any(w in r_text for w in ("cover", "letter")) or (rem_count == 1 and resume_uploaded):
+                                if any(w in r_text for w in ("cover", "letter")):
                                     r_el.set_input_files(cover_pdf, timeout=3000)
                                     cover_letter_uploaded = True
                                     filled_count += 1
