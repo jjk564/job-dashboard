@@ -157,6 +157,21 @@ HUD_INJECTION_SCRIPT = """
     };
     right.appendChild(applyBtn);
 
+    // Open in Standard Browser Button (for sites where Turnstile or Cloudflare blocks automation)
+    const browserBtn = document.createElement('button');
+    browserBtn.id = 'jobpulse-hud-browser-btn';
+    browserBtn.style.cssText = 'background: #1e293b; color: #38bdf8; border: 1px solid #0284c7; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
+    browserBtn.innerText = '🌐 Open in Regular Browser';
+    browserBtn.title = 'Open this application form in your standard desktop browser if Cloudflare Turnstile CAPTCHA verification is looping';
+    browserBtn.onmouseover = () => { browserBtn.style.background = '#0369a1'; browserBtn.style.color = '#ffffff'; };
+    browserBtn.onmouseout = () => { browserBtn.style.background = '#1e293b'; browserBtn.style.color = '#38bdf8'; };
+    browserBtn.onclick = () => {
+      if (window.onJobPulseAction) {
+        window.onJobPulseAction({ action: 'open_standard_browser', jobId: config.jobId });
+      }
+    };
+    right.appendChild(browserBtn);
+
     // Skip Button (Speed-Run only)
     if (config.isSpeedRun) {
       const skipBtn = document.createElement('button');
@@ -300,11 +315,36 @@ def run_interactive_browser(payload_path: str) -> None:
 
             try:
                 context.add_init_script("""
-                    delete Navigator.prototype.webdriver;
-                    Object.defineProperty(Navigator.prototype, 'webdriver', {
-                        get: () => undefined,
-                        configurable: true
-                    });
+                    (() => {
+                        try {
+                            const proto = Object.getPrototypeOf(navigator);
+                            delete proto.webdriver;
+                            delete navigator.webdriver;
+                        } catch (e) {}
+                        try {
+                            if (!window.chrome) {
+                                window.chrome = {};
+                            }
+                            if (!window.chrome.runtime) {
+                                window.chrome.runtime = {
+                                    PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
+                                    PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
+                                    PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
+                                    RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
+                                    OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
+                                    OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }
+                                };
+                            }
+                        } catch (e) {}
+                        try {
+                            if (!navigator.languages || navigator.languages.length === 0) {
+                                Object.defineProperty(navigator, 'languages', {
+                                    get: () => ['en-US', 'en'],
+                                    configurable: true
+                                });
+                            }
+                        } catch (e) {}
+                    })()
                 """)
             except Exception:
                 pass
@@ -316,11 +356,23 @@ def run_interactive_browser(payload_path: str) -> None:
 
             def handle_hud_action(action_data):
                 log(f"HUD event received from browser: {action_data}")
+                action = None
+                act_job_id = None
                 if isinstance(action_data, dict):
-                    current_action["action"] = action_data.get("action")
-                    current_action["job_id"] = action_data.get("jobId")
+                    action = action_data.get("action")
+                    act_job_id = action_data.get("jobId")
                 elif isinstance(action_data, str):
-                    current_action["action"] = action_data
+                    action = action_data
+
+                if action == "open_standard_browser":
+                    import webbrowser
+                    target_url = getattr(page, "url", None) or "https://apply.workable.com"
+                    log(f"Opening target URL in standard desktop browser: {target_url}")
+                    webbrowser.open(target_url)
+                    return
+
+                current_action["action"] = action
+                current_action["job_id"] = act_job_id
 
             try:
                 context.expose_function("onJobPulseAction", handle_hud_action)
@@ -352,11 +404,13 @@ def run_interactive_browser(payload_path: str) -> None:
                 # Anti-automation bypass script on page load
                 try:
                     page.add_init_script("""
-                        delete Navigator.prototype.webdriver;
-                        Object.defineProperty(Navigator.prototype, 'webdriver', {
-                            get: () => undefined,
-                            configurable: true
-                        });
+                        (() => {
+                            try {
+                                const proto = Object.getPrototypeOf(navigator);
+                                delete proto.webdriver;
+                                delete navigator.webdriver;
+                            } catch (e) {}
+                        })()
                     """)
                 except Exception:
                     pass
