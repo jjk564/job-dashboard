@@ -634,6 +634,27 @@ def test_location_commute_radius_and_remote_filtering():
     ) is False
 
 
+def test_resolve_direct_ats_url_and_referral_qa():
+    from app.services.browser_assistant import resolve_direct_ats_url
+    from app.services.question_answerer import answer_single_question
+
+    # 1. Test direct ATS resolution via Greenhouse public boards API
+    fleetio_gh = resolve_direct_ats_url(company="Fleetio", title="Senior Software Engineer, Growth")
+    assert fleetio_gh is not None
+    assert "greenhouse.io" in fleetio_gh
+    assert "fleetio" in fleetio_gh
+
+    # 2. Test referral question handling
+    qa_referral = answer_single_question(
+        question_text='Did someone from Fleetio refer you? If so, share their name below. If not, list "N/A".',
+        job_data={"company": "Fleetio", "title": "Senior Software Engineer"},
+        profile_data={"full_name": "Justin Kilpatrick"},
+    )
+    assert qa_referral["confidence"] == "high"
+    assert qa_referral["answer"] == "N/A"
+
+
+
 
 
 

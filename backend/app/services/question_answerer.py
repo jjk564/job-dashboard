@@ -628,6 +628,15 @@ def answer_single_question(
         }
 
     # 10. Referral / How did you hear about us?
+    if any(k in q for k in ("refer you", "referred you", "referral name", "who referred", "were you referred")):
+        opt = _match_option(options, ["no", "none", "n/a", "neither"])
+        return {
+            "question": q_raw,
+            "answer": opt or "N/A",
+            "category": "referral",
+            "confidence": "high",
+        }
+
     if any(k in q for k in ("how did you hear", "where did you see", "source", "referred by")):
         src = job_data.get("source") or "Company Career Board"
         opt = _match_option(options, ["company website", "career page", "job board", "linkedin", "other"])

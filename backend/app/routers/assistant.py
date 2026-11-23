@@ -422,8 +422,20 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
     if not job or not job.url:
         raise HTTPException(status_code=400, detail="Job or job URL not found")
 
-    from ..services.browser_assistant import classify_ats_url
+    from ..services.browser_assistant import classify_ats_url, resolve_direct_ats_url
     url_cls = classify_ats_url(job.url)
+    if not url_cls.get("can_auto_attempt", True):
+        # Attempt to automatically discover the direct ATS form (Greenhouse, Lever, Ashby)
+        direct_url = resolve_direct_ats_url(
+            company=job.company,
+            title=job.title,
+            original_url=job.url,
+        )
+        if direct_url:
+            job.url = direct_url
+            await db.commit()
+            url_cls = classify_ats_url(job.url)
+
     if not url_cls.get("can_auto_attempt", True):
         portal = url_cls.get("portal") or "This portal"
         return {

@@ -140,6 +140,94 @@ def classify_ats_url(job_url: Optional[str]) -> Dict[str, Any]:
     }
 
 
+def resolve_direct_ats_url(company: str, title: str, original_url: Optional[str] = None) -> Optional[str]:
+    """
+    Attempts to discover the direct ATS job posting URL (Greenhouse, Ashby, Lever)
+    for a given company and job title when the posting was scraped from an aggregator or gated portal.
+    """
+    import urllib.request
+    import json
+    import re
+
+    if not company:
+        return None
+
+    raw_slug = company.lower().strip()
+    slug_clean = re.sub(r"[^a-z0-9]+", "-", raw_slug).strip("-")
+    slug_compact = re.sub(r"[^a-z0-9]+", "", raw_slug)
+    slugs = list(dict.fromkeys([slug_clean, slug_compact]))
+
+    title_words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
+    title_words.difference_update({"senior", "junior", "staff", "lead", "associate", "role", "position", "the", "and", "or", "in", "at", "for"})
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    for slug in slugs:
+        # 1. Check Greenhouse public board API
+        try:
+            req = urllib.request.Request(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs", headers=headers)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                    jobs = data.get("jobs", [])
+                    best_match = None
+                    best_score = 0
+                    for j in jobs:
+                        j_title = (j.get("title") or "").lower()
+                        j_words = set(re.findall(r"[a-z0-9]+", j_title))
+                        overlap = len(title_words.intersection(j_words))
+                        if overlap > best_score and overlap >= min(2, len(title_words)):
+                            best_score = overlap
+                            best_match = j.get("absolute_url")
+                    if best_match:
+                        return best_match
+        except Exception:
+            pass
+
+        # 2. Check Lever public postings API
+        try:
+            req = urllib.request.Request(f"https://api.lever.co/v0/postings/{slug}?mode=json", headers=headers)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    jobs = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                    best_match = None
+                    best_score = 0
+                    for j in jobs:
+                        j_title = (j.get("text") or "").lower()
+                        j_words = set(re.findall(r"[a-z0-9]+", j_title))
+                        overlap = len(title_words.intersection(j_words))
+                        if overlap > best_score and overlap >= min(2, len(title_words)):
+                            best_score = overlap
+                            best_match = j.get("hostedUrl") or j.get("applyUrl")
+                    if best_match:
+                        return best_match
+        except Exception:
+            pass
+
+        # 3. Check Ashby public job board API
+        try:
+            req = urllib.request.Request(f"https://api.ashbyhq.com/posting-api/job-board/{slug}", headers=headers)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                    jobs = data.get("jobs", [])
+                    best_match = None
+                    best_score = 0
+                    for j in jobs:
+                        j_title = (j.get("title") or "").lower()
+                        j_words = set(re.findall(r"[a-z0-9]+", j_title))
+                        overlap = len(title_words.intersection(j_words))
+                        if overlap > best_score and overlap >= min(2, len(title_words)):
+                            best_score = overlap
+                            best_match = j.get("jobUrl")
+                    if best_match:
+                        return best_match
+        except Exception:
+            pass
+
+    return None
+
+
 def _select_active_form_target(page: Any) -> Any:
     """
     If the page embeds a Greenhouse, Ashby, or Lever application form inside an iframe
@@ -688,13 +776,21 @@ def _fill_form_sync(
                     or el.get_attribute("aria-required") == "true"
                 )
 
-                if tag_name in ("input", "textarea"):
+                if tag_name in ("input", "textarea") and role_attr != "combobox":
                     existing_val = (el.input_value() or "").strip()
                     if existing_val:
                         continue
                 elif role_attr == "combobox":
                     existing_txt = (el.inner_text() or "").strip().lower()
-                    if existing_txt and existing_txt not in ("select", "choose", "--", "search"):
+                    if not existing_txt:
+                        try:
+                            existing_txt = el.evaluate("""el => {
+                                const c = el.closest('.select__value-container, [class*="value-container"]');
+                                return c ? (c.innerText || '').trim() : '';
+                            }""").lower()
+                        except Exception:
+                            pass
+                    if existing_txt and existing_txt not in ("select", "choose", "--", "search", ""):
                         continue
 
                 label_text = el.evaluate(
@@ -839,25 +935,49 @@ def _fill_form_sync(
                         logger.debug(f"[COMBOBOX OPEN ERR] {el_id}: {click_err}")
 
                     # 2. STRICTLY scope option search to THIS combobox's menu container!
-                    # Prevents unclosed or animating menus from prior questions from stealing the click
+                    # Put aria-controls FIRST as it references the exact opened listbox
                     opt_loc = None
                     aria_ctrl = el.get_attribute("aria-controls") or ""
                     menu_locators = []
-                    if el_id:
-                        menu_locators.append(target.locator(f"#{el_id}-list"))
                     if aria_ctrl:
                         menu_locators.append(target.locator(f"#{aria_ctrl}"))
+                    if el_id:
+                        menu_locators.append(target.locator(f"#{el_id}-list"))
                     if not menu_locators:
                         menu_locators.append(target.locator("[role='listbox']:visible, ul[data-testid='menuList']:visible").first)
 
                     for m_loc in menu_locators:
                         try:
                             candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
-                            candidate.wait_for(state="visible", timeout=1500)
+                            candidate.wait_for(state="visible", timeout=1200)
                             opt_loc = candidate
                             break
                         except Exception:
                             pass
+
+                    # 3. If no candidate found yet (e.g. async/filterable search input like candidate-location),
+                    # type sequential search term into the input to trigger option loading!
+                    if not opt_loc and tag_name == "input":
+                        try:
+                            # Use first component (e.g. "Boston" from "Boston, Massachusetts") for search
+                            search_term = str(ans_val).split(",")[0].strip()
+                            if search_term:
+                                el.press_sequentially(search_term, delay=35)
+                                time.sleep(0.4)
+                                if not aria_ctrl:
+                                    aria_ctrl = el.get_attribute("aria-controls") or ""
+                                    if aria_ctrl:
+                                        menu_locators.insert(0, target.locator(f"#{aria_ctrl}"))
+                                for m_loc in menu_locators:
+                                    try:
+                                        candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=search_term).first
+                                        candidate.wait_for(state="visible", timeout=1500)
+                                        opt_loc = candidate
+                                        break
+                                    except Exception:
+                                        pass
+                        except Exception as type_err:
+                            logger.debug(f"[COMBOBOX TYPE ERR] {el_id}: {type_err}")
 
                     # Fallback retry: click el again if menu was not open
                     if not opt_loc:
@@ -867,7 +987,7 @@ def _fill_form_sync(
                             time.sleep(0.35)
                             for m_loc in menu_locators:
                                 candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
-                                candidate.wait_for(state="visible", timeout=1500)
+                                candidate.wait_for(state="visible", timeout=1200)
                                 opt_loc = candidate
                                 break
                         except Exception:
