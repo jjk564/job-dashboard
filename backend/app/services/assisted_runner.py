@@ -172,6 +172,38 @@ HUD_INJECTION_SCRIPT = """
     };
     right.appendChild(browserBtn);
 
+    // Show Resume PDF in Windows Explorer
+    const folderBtn = document.createElement('button');
+    folderBtn.id = 'jobpulse-hud-folder-btn';
+    folderBtn.style.cssText = 'background: #1e293b; color: #a78bfa; border: 1px solid #7c3aed; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
+    folderBtn.innerText = '📂 Show Resume PDF';
+    folderBtn.title = 'Open Windows Explorer with your tailored Resume PDF selected so you can drag-and-drop it';
+    folderBtn.onmouseover = () => { folderBtn.style.background = '#6d28d9'; folderBtn.style.color = '#ffffff'; };
+    folderBtn.onmouseout = () => { folderBtn.style.background = '#1e293b'; folderBtn.style.color = '#a78bfa'; };
+    folderBtn.onclick = () => {
+      if (window.onJobPulseAction) {
+        window.onJobPulseAction({ action: 'open_resume_folder', jobId: config.jobId });
+      }
+    };
+    right.appendChild(folderBtn);
+
+    // Copy Cover Letter Button
+    const copyBtn = document.createElement('button');
+    copyBtn.id = 'jobpulse-hud-copy-btn';
+    copyBtn.style.cssText = 'background: #1e293b; color: #f59e0b; border: 1px solid #d97706; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
+    copyBtn.innerText = '📋 Copy Cover Letter';
+    copyBtn.title = 'Copy your tailored Cover Letter text to clipboard';
+    copyBtn.onmouseover = () => { copyBtn.style.background = '#b45309'; copyBtn.style.color = '#ffffff'; };
+    copyBtn.onmouseout = () => { copyBtn.style.background = '#1e293b'; copyBtn.style.color = '#f59e0b'; };
+    copyBtn.onclick = () => {
+      copyBtn.innerText = '✓ Copied!';
+      setTimeout(() => { copyBtn.innerText = '📋 Copy Cover Letter'; }, 2000);
+      if (window.onJobPulseAction) {
+        window.onJobPulseAction({ action: 'copy_cover_letter', jobId: config.jobId });
+      }
+    };
+    right.appendChild(copyBtn);
+
     // Skip Button (Speed-Run only)
     if (config.isSpeedRun) {
       const skipBtn = document.createElement('button');
@@ -353,6 +385,7 @@ def run_interactive_browser(payload_path: str) -> None:
 
             # Global action tracker received from browser HUD buttons
             current_action = {"action": None, "job_id": None}
+            current_context = {"item": None, "url": None}
 
             def handle_hud_action(action_data):
                 log(f"HUD event received from browser: {action_data}")
@@ -366,9 +399,35 @@ def run_interactive_browser(payload_path: str) -> None:
 
                 if action == "open_standard_browser":
                     import webbrowser
-                    target_url = getattr(page, "url", None) or "https://apply.workable.com"
+                    target_url = getattr(page, "url", None) or current_context.get("url") or "https://apply.workable.com"
                     log(f"Opening target URL in standard desktop browser: {target_url}")
                     webbrowser.open(target_url)
+                    return
+
+                if action == "open_resume_folder":
+                    cur_item = current_context.get("item") or {}
+                    cur_files = cur_item.get("files") or {}
+                    res_path = cur_files.get("resume_pdf") or cur_files.get("legacy_resume_pdf")
+                    if res_path and os.path.exists(res_path):
+                        import subprocess
+                        abs_res = os.path.abspath(res_path)
+                        log(f"Opening Windows Explorer with resume selected: {abs_res}")
+                        subprocess.Popen(f'explorer.exe /select,"{abs_res}"')
+                    return
+
+                if action == "copy_cover_letter":
+                    cur_item = current_context.get("item") or {}
+                    cur_files = cur_item.get("files") or {}
+                    cl_path = cur_files.get("cover_letter_txt") or cur_files.get("cover_letter_md")
+                    if cl_path and os.path.exists(cl_path):
+                        try:
+                            cl_text = Path(cl_path).read_text(encoding="utf-8").strip()
+                            if cl_text:
+                                import pyperclip
+                                pyperclip.copy(cl_text)
+                                log("Cover letter copied to Windows clipboard.")
+                        except Exception as cp_err:
+                            log(f"Error copying cover letter: {cp_err}")
                     return
 
                 current_action["action"] = action
@@ -400,6 +459,8 @@ def run_interactive_browser(payload_path: str) -> None:
 
                 current_action["action"] = None
                 current_action["job_id"] = job_id
+                current_context["item"] = item
+                current_context["url"] = job_url
 
                 # Anti-automation bypass script on page load
                 try:
