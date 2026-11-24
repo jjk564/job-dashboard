@@ -554,12 +554,27 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # Questions asking if the candidate is legally authorized to work (e.g. "...without the need for visa sponsorship")
-    if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work", "legally permitted to work", "permitted to work")):
-        opt = _match_option(options, ["yes", "authorized", "u.s. citizen", "us citizen", "citizen", "permanent resident"])
+    # Questions asking if the candidate is legally authorized/eligible to work (including "...without sponsorship")
+    is_work_without_sponsorship_q = (
+        "without" in q
+        and any(k in q for k in ("sponsorship", "visa"))
+        and any(k in q for k in ("work", "employ", "eligible", "authorized", "able"))
+    )
+    if is_work_without_sponsorship_q or any(k in q for k in (
+        "authorized to work", "legally authorized", "work authorization",
+        "right to work", "eligible to work", "legally eligible",
+        "legally permitted to work", "permitted to work",
+    )):
+        desired_auth = "No" if (is_work_without_sponsorship_q and needs_sponsorship) else "Yes"
+        opt = _match_option(
+            options,
+            ["yes", "authorized", "u.s. citizen", "us citizen", "citizen", "permanent resident"]
+            if desired_auth == "Yes"
+            else ["no", "require sponsorship"],
+        )
         return {
             "question": q_raw,
-            "answer": opt or ("Yes" if options is not None or "?" in q_raw or ftype in ("select", "combobox", "radio") else work_auth),
+            "answer": opt or (desired_auth if options is not None or "?" in q_raw or ftype in ("select", "combobox", "radio") else work_auth),
             "category": "work_authorization",
             "confidence": "high",
         }
@@ -858,7 +873,23 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 11. Previously employed / Applied before / Government / Non-compete / Interview Accommodations
+    # 11. Essential Job Functions (ADA) / Previously employed / Applied before / Government / Non-compete / Accommodations
+    # MUST be evaluated BEFORE the general "accommodation" rule so "Can you perform the essential functions
+    # with or without reasonable accommodation?" answers "Yes" (NOT "No"!).
+    if any(k in q for k in (
+        "essential functions", "essential duties", "essential job functions",
+        "essential requirements of the", "independently perform",
+        "perform the duties of the position", "perform the duties of this",
+        "perform the job functions", "perform the tasks",
+    )):
+        opt = _match_option(options, ["yes", "i am able", "able", "agree"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "compliance",
+            "confidence": "high",
+        }
+
     if any(k in q for k in ("accommodation", "accessible", "interview process more accessible", "accessible and inclusive")):
         opt = _match_option(options, ["i do not require accommodations", "no accommodations needed", "no", "none", "not require"])
         return {

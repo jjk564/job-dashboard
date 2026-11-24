@@ -607,6 +607,150 @@ async def test_smartrecruiters_redirect_url_matching_and_shadow_dom_extension(mo
     assert state["composedEventsCount"] >= 6
     assert state["hudPresent"] is True
 
+    # 3. Verify screening radio questions (both native shadow radios & [role="radio"] shadow radios)
+    #    AND in-place multi-step wizard transition at the SAME URL (like SmartRecruiters Step 1 -> Step 2)
+    def _run_multistep_screening_radios():
+        step_html = """<!doctype html><html><body>
+        <div id="wizard-root">
+          <form id="step1">
+            <spl-input data-test="first-name-input" label="First name"></spl-input>
+          </form>
+        </div>
+        <button id="next-step-btn" type="button">Next</button>
+        <script>
+          class SplInput extends HTMLElement {
+            connectedCallback() {
+              const sr = this.attachShadow({ mode: 'open' });
+              sr.innerHTML = `<label for="i1">${this.getAttribute('label')}</label><input id="i1" type="text" />`;
+            }
+          }
+          class SplRadioGroup extends HTMLElement {}
+          class SplRadioNative extends HTMLElement {
+            connectedCallback() {
+              const sr = this.attachShadow({ mode: 'open' });
+              sr.innerHTML = `<label><input type="radio" name="sr-opt" /><slot></slot></label>`;
+            }
+          }
+          class SplRadioRole extends HTMLElement {
+            connectedCallback() {
+              const sr = this.attachShadow({ mode: 'open' });
+              sr.innerHTML = `<div role="radio" aria-checked="false" tabindex="0"></div><slot></slot>`;
+              const r = sr.querySelector('[role="radio"]');
+              r.addEventListener('click', () => {
+                this.parentElement.querySelectorAll('spl-radio-role').forEach(el => {
+                  el.shadowRoot.querySelector('[role="radio"]').setAttribute('aria-checked', 'false');
+                });
+                r.setAttribute('aria-checked', 'true');
+              });
+            }
+          }
+          customElements.define('spl-input', SplInput);
+          customElements.define('spl-radio-group', SplRadioGroup);
+          customElements.define('spl-radio-native', SplRadioNative);
+          customElements.define('spl-radio-role', SplRadioRole);
+
+          document.getElementById('next-step-btn').addEventListener('click', () => {
+            document.getElementById('wizard-root').innerHTML = `
+              <form id="step2">
+                <div class="screening-q" id="q1">
+                  <div class="q-text">Are you currently legally eligible to work in the United States of America? *</div>
+                  <spl-radio-group>
+                    <spl-radio-native>Yes</spl-radio-native>
+                    <spl-radio-native>No</spl-radio-native>
+                  </spl-radio-group>
+                </div>
+                <div class="screening-q" id="q2">
+                  <div class="q-text">Are you eligible to work at M3USA without required sponsorship now or in the future? *</div>
+                  <spl-radio-group>
+                    <spl-radio-role>Yes</spl-radio-role>
+                    <spl-radio-role>No</spl-radio-role>
+                  </spl-radio-group>
+                </div>
+                <div class="screening-q" id="q3">
+                  <p>Are you able to independently perform the essential functions of the position for which you are applying? *</p>
+                  <label><input type="radio" name="q3_ef" value="yes" /> Yes</label>
+                  <label><input type="radio" name="q3_ef" value="no" /> No</label>
+                </div>
+              </form>
+            `;
+          });
+        </script></body></html>"""
+
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(step_html)
+
+            def handle_msg(msg):
+                t = msg.get("type")
+                if t == "GET_ACTIVE_AUTOFILL":
+                    return {"ok": True, "data": {"matched": True, "job": job, "queue": {"is_speed_run": False, "index": 0, "total": 1}}}
+                if t == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            question_text=f["label"],
+                            job_data=job,
+                            profile_data=profile,
+                            candidate_skills=["Python"],
+                            options=f.get("options"),
+                            field_type=f.get("field_type", "text"),
+                            required=f.get("required", False),
+                        )
+                        out.append({
+                            "id": f["id"],
+                            "label": f["label"],
+                            "answer": qa["answer"],
+                            "confidence": qa["confidence"],
+                            "category": qa["category"],
+                        })
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = {
+                    runtime: {
+                        lastError: null,
+                        sendMessage: (msg, cb) => { window.__pySendMsg(msg).then(cb); },
+                        onMessage: { addListener: () => {} },
+                    }
+                };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(1200)
+            # Advance to Step 2 WITHOUT changing URL
+            page.click("#next-step-btn")
+            page.wait_for_timeout(2400)
+            res = page.evaluate("""() => {
+                const q1Yes = document.querySelector('#q1 spl-radio-native').shadowRoot.querySelector('input').checked;
+                const q2Yes = document.querySelector('#q2 spl-radio-role').shadowRoot.querySelector('[role="radio"]').getAttribute('aria-checked') === 'true';
+                const q3Yes = document.querySelector('#q3 input[value="yes"]').checked;
+                return { q1Yes, q2Yes, q3Yes };
+            }""")
+            b.close()
+            return res
+
+    step2 = await asyncio.to_thread(_run_multistep_screening_radios)
+    assert step2 == {"q1Yes": True, "q2Yes": True, "q3Yes": True}
+
+    # 4. Also verify tricky work-auth & essential-functions phrasings never invert
+    qa_without = answer_single_question(
+        "Are you able to work without sponsorship now or in the future?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="radio",
+    )
+    assert qa_without["answer"] == "Yes"
+    qa_accomm = answer_single_question(
+        "Can you perform the essential functions of this job with or without reasonable accommodation?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="radio",
+    )
+    assert qa_accomm["answer"] == "Yes"
+    qa_need_accomm = answer_single_question(
+        "Do you require any reasonable accommodation during the interview process?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="radio",
+    )
+    assert qa_need_accomm["answer"] == "No"
+
 
 
 
