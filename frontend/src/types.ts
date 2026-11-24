@@ -181,6 +181,9 @@ export interface Profile {
   email: string;
   phone: string;
   location: string;
+  street_address?: string;
+  zip_code?: string;
+  current_company?: string;
   title: string;
   summary: string;
   linkedin_url: string;

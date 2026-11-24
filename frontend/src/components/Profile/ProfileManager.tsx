@@ -69,6 +69,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({ onJobsScored }) 
       (profile.email || '') !== (initialProfile.email || '') ||
       (profile.phone || '') !== (initialProfile.phone || '') ||
       (profile.location || '') !== (initialProfile.location || '') ||
+      (profile.street_address || '') !== (initialProfile.street_address || '') ||
+      (profile.zip_code || '') !== (initialProfile.zip_code || '') ||
+      (profile.current_company || '') !== (initialProfile.current_company || '') ||
       (profile.summary || '') !== (initialProfile.summary || '') ||
       (profile.linkedin_url || '') !== (initialProfile.linkedin_url || '') ||
       (profile.github_url || '') !== (initialProfile.github_url || '') ||
@@ -206,11 +209,45 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({ onJobsScored }) 
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Location / Residence</label>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">Location / City &amp; State</label>
                 <input
                   type="text"
+                  placeholder="e.g. Boston, MA"
                   value={profile.location}
                   onChange={(e) => handleProfileChange('location', e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">Street Address (for ATS Autofill)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 123 Main St"
+                  value={profile.street_address || ''}
+                  onChange={(e) => handleProfileChange('street_address', e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">ZIP / Postal Code</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 02108"
+                  value={profile.zip_code || ''}
+                  onChange={(e) => handleProfileChange('zip_code', e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">Current / Most Recent Company</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Hyperice"
+                  value={profile.current_company || ''}
+                  onChange={(e) => handleProfileChange('current_company', e.target.value)}
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>

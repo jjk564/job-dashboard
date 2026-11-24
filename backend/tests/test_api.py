@@ -752,6 +752,137 @@ async def test_smartrecruiters_redirect_url_matching_and_shadow_dom_extension(mo
     assert qa_need_accomm["answer"] == "No"
 
 
+@pytest.mark.asyncio
+async def test_ukg_ultipro_profile_fields_and_no_combobox_overlay_flicker():
+    import asyncio
+    from pathlib import Path
+    from playwright.sync_api import sync_playwright
+    from app.services.question_answerer import answer_single_question, _extract_current_company
+
+    # 1. Profile API persists street_address, zip_code, current_company
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        put_res = await ac.put(
+            "/api/profile",
+            json={
+                "full_name": "Justin Kilpatrick",
+                "email": "jkilpatrick50@gmail.com",
+                "phone": "781-879-4389",
+                "location": "Boston, Massachusetts (Remote)",
+                "street_address": "123 Beacon St",
+                "zip_code": "02108",
+                "current_company": "Hyperice",
+                "title": "Software Engineer",
+            },
+        )
+        assert put_res.status_code == 200
+        saved = put_res.json()
+        assert saved["street_address"] == "123 Beacon St"
+        assert saved["zip_code"] == "02108"
+        assert saved["current_company"] == "Hyperice"
+
+    # 2. _extract_current_company parses Company | City, ST instead of job title
+    resume_prof = {
+        "master_resume_text": (
+            "PROFESSIONAL EXPERIENCE\n"
+            "Hyperice | Watertown, MA\n"
+            "Product Service Technician | November 2025 – Present\n"
+        )
+    }
+    assert _extract_current_company(resume_prof) == "Hyperice"
+
+    # 3. UKG / UltiPro label variants
+    job = {"title": "AI Product Engineer", "company": "Milliman"}
+    assert answer_single_question("Address 1 Required", job, saved, ["Python"])["answer"] == "123 Beacon St"
+    assert answer_single_question("Address 2 (Optional)", job, saved, ["Python"], required=False)["confidence"] == "high"
+    assert answer_single_question("Address 2 (Optional)", job, saved, ["Python"], required=False)["answer"] == ""
+    assert answer_single_question("Zip", job, saved, ["Python"])["answer"] == "02108"
+    assert answer_single_question("Zip / Postal Code Required", job, saved, ["Python"])["answer"] == "02108"
+    assert answer_single_question("Company Required", job, saved, ["Python"])["answer"] == "Hyperice"
+    assert answer_single_question("Employer Name", job, saved, ["Python"])["answer"] == "Hyperice"
+    assert answer_single_question("Job Title Required", job, saved, ["Python"])["answer"] == "Software Engineer"
+    assert answer_single_question("Phone Device Type", job, saved, ["Python"], options=["Mobile", "Home", "Work"])["answer"] == "Mobile"
+
+    # 4. Real Chromium check: extension NEVER clicks header language picker or unknown comboboxes (no overlay flicker!)
+    content_js = (Path(__file__).resolve().parents[2] / "extension" / "content.js").read_text(encoding="utf-8")
+
+    def _run_no_flicker_check():
+        html = """<!doctype html><html><body>
+        <header>
+          <button id="lang-picker" aria-haspopup="listbox" aria-label="Language">U.S. English</button>
+        </header>
+        <main>
+          <form>
+            <div>
+              <label for="unknown-cb">Internal Milliman Cost Center Code *</label>
+              <button id="unknown-cb" type="button" role="combobox">Select...</button>
+            </div>
+            <div>
+              <label for="phone-type-cb">Phone Device Type *</label>
+              <button id="phone-type-cb" type="button" role="combobox" aria-controls="pt-menu">Select...</button>
+              <ul id="pt-menu" role="listbox" style="display:none">
+                <li role="option">Home</li>
+                <li role="option">Mobile</li>
+              </ul>
+            </div>
+          </form>
+        </main>
+        <script>
+          window.__clicks = [];
+          document.getElementById('lang-picker').addEventListener('click', () => window.__clicks.push('lang'));
+          document.getElementById('unknown-cb').addEventListener('click', () => window.__clicks.push('unknown'));
+          document.getElementById('phone-type-cb').addEventListener('click', () => {
+            window.__clicks.push('phone-type');
+            document.getElementById('pt-menu').style.display = 'block';
+          });
+          document.querySelectorAll('#pt-menu [role="option"]').forEach(li => {
+            li.addEventListener('click', () => {
+              document.getElementById('phone-type-cb').innerText = li.innerText;
+              document.getElementById('pt-menu').style.display = 'none';
+            });
+          });
+        </script></body></html>"""
+
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(html)
+
+            def handle_msg(msg):
+                if msg["type"] == "GET_ACTIVE_AUTOFILL":
+                    return {"ok": True, "data": {"matched": True, "job": job, "queue": {"is_speed_run": False, "index": 0, "total": 1}}}
+                if msg["type"] == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            f["label"], job, saved, ["Python"],
+                            options=f.get("options"), field_type=f.get("field_type", "text"), required=f.get("required", False),
+                        )
+                        out.append({"id": f["id"], "label": f["label"], "answer": qa["answer"], "confidence": qa["confidence"], "category": qa["category"]})
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = { runtime: { lastError: null, sendMessage: (m, cb) => window.__pySendMsg(m).then(cb), onMessage: { addListener: () => {} } } };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(1600)
+            res = page.evaluate("""() => ({
+                clicks: window.__clicks,
+                phoneTypeText: document.getElementById('phone-type-cb').innerText,
+                unknownOutlined: Boolean(document.getElementById('unknown-cb').style.outline),
+            })""")
+            b.close()
+            return res
+
+    res = await asyncio.to_thread(_run_no_flicker_check)
+    assert "lang" not in res["clicks"]
+    assert "unknown" not in res["clicks"]
+    assert "phone-type" in res["clicks"]
+    assert res["phoneTypeText"] == "Mobile"
+    assert res["unknownOutlined"] is True
+
+
 
 
 

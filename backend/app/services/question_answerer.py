@@ -279,19 +279,44 @@ def _parse_profile_location_parts(location: str) -> Tuple[str, str, str, str]:
     return (clean_display, city, state_full, state_abbr)
 
 
+_ROLE_TITLE_WORDS = {
+    "engineer", "developer", "technician", "agent", "analyst", "manager",
+    "specialist", "coordinator", "intern", "director", "architect", "consultant",
+    "administrator", "lead", "associate", "representative", "assistant", "scientist",
+    "support", "service", "field", "software", "product", "project", "systems",
+}
+
+
 def _extract_current_company(profile_data: Dict[str, Any]) -> str:
     """Determines the candidate's current/most-recent employer from profile or master resume."""
-    direct = (profile_data.get("company") or profile_data.get("current_company") or "").strip()
+    direct = (profile_data.get("current_company") or profile_data.get("company") or "").strip()
     if direct:
         return direct
     resume = (profile_data.get("master_resume_text") or "").strip()
     if resume:
-        # Look for lines like "Hyperice | ..." or "Software Engineer at Hyperice" or "Hyperice — ..."
-        m = re.search(r"(?:^|\n)\s*(?:#{1,4}\s*)?(?:\*\*)?([A-Z][A-Za-z0-9 .&-]{2,35})(?:\*\*)?\s*(?:\||—|–|-)\s*(?:.*?(?:202\d|Present|Current))", resume)
-        if m:
-            cand = m.group(1).strip()
-            if cand.lower() not in ("experience", "work experience", "education", "projects", "skills", "summary"):
-                return cand
+        lines = [ln.strip() for ln in resume.splitlines() if ln.strip()]
+        # 1. Look right below PROFESSIONAL EXPERIENCE / WORK EXPERIENCE for "Company | City, ST"
+        in_exp = False
+        for ln in lines:
+            up = ln.upper().strip("#* :")
+            if up in ("EXPERIENCE", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EMPLOYMENT", "EMPLOYMENT HISTORY"):
+                in_exp = True
+                continue
+            if in_exp and up in ("EDUCATION", "PROJECTS", "TECHNICAL PROJECTS", "SKILLS", "CERTIFICATIONS"):
+                break
+            if in_exp and any(sep in ln for sep in ("|", "—", "–")):
+                left = re.split(r"\s*(?:\||—|–)\s*", ln, maxsplit=1)[0].strip("#* ").strip()
+                left_words = {w.lower() for w in re.findall(r"[A-Za-z]+", left)}
+                if left and 2 <= len(left) <= 45 and not (left_words & _ROLE_TITLE_WORDS):
+                    return left
+        # 2. Fallback scan for lines with company | City, ST format anywhere
+        for ln in lines:
+            m = re.match(r"^(?:#{1,4}\s*)?(?:\*\*)?([A-Z][A-Za-z0-9 .&-]{1,40})(?:\*\*)?\s*(?:\||—|–)\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}\b", ln)
+            if m:
+                cand = m.group(1).strip()
+                cand_words = {w.lower() for w in re.findall(r"[A-Za-z]+", cand)}
+                if not (cand_words & _ROLE_TITLE_WORDS):
+                    return cand
         if "hyperice" in resume.lower():
             return "Hyperice"
     return "Hyperice"
@@ -332,6 +357,10 @@ def answer_single_question(
             if has_delim:
                 q_clean = re.sub(r"[-_]+", " ", q_clean)
     q = " ".join(q_clean.lower().split())
+    # Strip trailing ATS badge noise like "(required)", "(optional)", "required", "optional", "*", ":"
+    q = re.sub(r"\s*\((?:required|optional)\)\s*", " ", q)
+    q = re.sub(r"[\s*:]+(?:required|optional)\s*$", "", q)
+    q = re.sub(r"[\s*:]+$", "", q).strip()
     ftype = (field_type or "text").lower().strip()
 
     full_name = (profile_data.get("full_name") or "").strip()
@@ -496,6 +525,23 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high" if email else "manual_needed",
         }
+    if q in ("prefix", "salutation", "name prefix", "suffix", "name suffix", "middle name", "middle initial") or any(
+        k in q for k in ("phone extension", "phone ext", "extension number")
+    ):
+        return {
+            "question": q_raw,
+            "answer": "",
+            "category": "contact",
+            "confidence": "high" if not required else "manual_needed",
+        }
+    if any(k in q for k in ("phone type", "phone device type", "device type", "type of phone", "number type")):
+        opt = _match_option(options, ["mobile", "cell", "cellular", "personal", "home"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Mobile",
+            "category": "contact",
+            "confidence": "high",
+        }
     if ("country code" in q or "dial code" in q or "calling code" in q) or ("country" in q and "phone" in q):
         opt = _match_option(options, ["united states (+1)", "united states +1", "+1", "us +1", "united states", "usa"])
         return {
@@ -504,7 +550,7 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high",
         }
-    if any(k in q for k in ("phone", "mobile", "telephone", "cell")) and not any(x in q for x in ("refer", "manager", "supervisor", "emergency", "extension", "ext")):
+    if any(k in q for k in ("phone", "mobile", "telephone", "cell")) and not any(x in q for x in ("refer", "manager", "supervisor", "emergency", "extension", "ext", "type")):
         return {
             "question": q_raw,
             "answer": phone,
@@ -627,7 +673,7 @@ def answer_single_question(
         }
 
     # Separate Zip / Postal Code field (never paste location or essay if unknown)
-    if re.search(r"\b(?:zip|postal)\s*code\b|\bzipcode\b", q):
+    if re.search(r"\b(?:zip|postal)(?:\s*/\s*(?:zip|postal))?\s*code\b|\bzipcode\b|^zip$|^postal$|^zip\s*/\s*postal$|^postal\s*/\s*zip$", q):
         zip_val = (profile_data.get("zip_code") or profile_data.get("postal_code") or "").strip()
         return {
             "question": q_raw,
@@ -636,8 +682,18 @@ def answer_single_question(
             "confidence": "high" if zip_val else "manual_needed",
         }
 
+    # Optional Address Line 2 / Apt / Suite (skip silently if not required)
+    if re.search(r"\baddress\s*(?:line\s*)?2\b|\b(?:apt|apartment|suite|unit|bldg)\b", q):
+        addr2_val = (profile_data.get("address_line_2") or "").strip()
+        return {
+            "question": q_raw,
+            "answer": addr2_val,
+            "category": "location",
+            "confidence": "high" if (addr2_val or not required) else "manual_needed",
+        }
+
     # Separate Street / Mailing Address field (strict — avoids "address a problem" or "address gaps")
-    if re.search(r"\b(?:street|mailing|home|residential|physical|current)\s+address\b|^address(?:\s+line\s*\d)?$", q):
+    if re.search(r"\b(?:street|mailing|home|residential|physical|current)\s+address\b|^address(?:\s*(?:line\s*)?1)?$|^address\s*(?:line\s*)?1\b", q):
         addr_val = (profile_data.get("street_address") or "").strip()
         return {
             "question": q_raw,
@@ -648,7 +704,11 @@ def answer_single_question(
 
     # Separate State / Province field (strict — NEVER matches "please state your..." or "decline to state"!)
     if (
-        q in ("state", "state/province", "state / province", "province", "state of residence", "us state", "state or province", "home state", "current state")
+        q in (
+            "state", "state/province", "state / province", "state/province/region",
+            "state / province / region", "province", "state of residence", "us state",
+            "state or province", "home state", "current state", "region/state",
+        )
         or re.search(r"\b(?:which|what)\s+(?:u\.?s\.?\s+)?state\b|\bstate\s*/\s*province\b|\bstate\s+of\s+residence\b|\bstate\s+or\s+province\b", q)
     ):
         opt = _match_option(options, [state_full, state_abbr, "massachusetts", "ma"])
@@ -660,7 +720,7 @@ def answer_single_question(
         }
 
     # Separate City field
-    if q in ("city", "current city", "home city", "city of residence") or re.search(r"\b(?:which|what)\s+city\b", q):
+    if q in ("city", "city/town", "city / town", "town", "town/city", "current city", "home city", "city of residence") or re.search(r"\b(?:which|what)\s+city\b", q):
         opt = _match_option(options, [city_only, clean_location, "boston"])
         return {
             "question": q_raw,
@@ -858,14 +918,21 @@ def answer_single_question(
         }
 
     # 10. Current Company / Current Title
-    if any(k in q for k in ("current title", "current job title", "most recent title", "current role", "headline")) or q in ("job title", "title"):
+    if any(k in q for k in (
+        "current title", "current job title", "most recent title", "current role",
+        "headline", "position title", "role title", "job title",
+    )) or q in ("title", "position"):
         return {
             "question": q_raw,
             "answer": title,
             "category": "experience",
             "confidence": "high",
         }
-    if any(k in q for k in ("current company", "current employer", "most recent employer", "most recent company", "company name")) or q in ("company", "employer", "organization"):
+    if any(k in q for k in (
+        "current company", "current employer", "most recent employer", "most recent company",
+        "company name", "employer name", "organization name", "business name",
+        "name of employer", "name of company",
+    )) or q in ("company", "employer", "organization"):
         return {
             "question": q_raw,
             "answer": current_company,

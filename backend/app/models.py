@@ -135,6 +135,9 @@ class Profile(Base):
     email = Column(String(255), default="")
     phone = Column(String(50), default="")
     location = Column(String(255), default="")
+    street_address = Column(String(255), default="")
+    zip_code = Column(String(30), default="")
+    current_company = Column(String(255), default="")
     title = Column(String(255), default="")
     summary = Column(Text, default="")
     linkedin_url = Column(String(500), default="")
@@ -153,6 +156,9 @@ class Profile(Base):
             "email": self.email,
             "phone": self.phone,
             "location": self.location,
+            "street_address": self.street_address or "",
+            "zip_code": self.zip_code or "",
+            "current_company": self.current_company or "",
             "title": self.title,
             "summary": self.summary,
             "linkedin_url": self.linkedin_url,
