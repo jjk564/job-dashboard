@@ -790,17 +790,24 @@ async def test_ukg_ultipro_profile_fields_and_no_combobox_overlay_flicker():
     }
     assert _extract_current_company(resume_prof) == "Hyperice"
 
-    # 3. UKG / UltiPro label variants
+    # 3. UKG / UltiPro label variants (including leading '*' markers and optional personal fields)
     job = {"title": "AI Product Engineer", "company": "Milliman"}
+    assert answer_single_question("* Address 1", job, saved, ["Python"])["answer"] == "123 Beacon St"
     assert answer_single_question("Address 1 Required", job, saved, ["Python"])["answer"] == "123 Beacon St"
     assert answer_single_question("Address 2 (Optional)", job, saved, ["Python"], required=False)["confidence"] == "high"
     assert answer_single_question("Address 2 (Optional)", job, saved, ["Python"], required=False)["answer"] == ""
+    assert answer_single_question("* City", job, saved, ["Python"])["answer"] == "Boston"
     assert answer_single_question("Zip", job, saved, ["Python"])["answer"] == "02108"
+    assert answer_single_question("* Zip / Postal Code", job, saved, ["Python"])["answer"] == "02108"
     assert answer_single_question("Zip / Postal Code Required", job, saved, ["Python"])["answer"] == "02108"
     assert answer_single_question("Company Required", job, saved, ["Python"])["answer"] == "Hyperice"
     assert answer_single_question("Employer Name", job, saved, ["Python"])["answer"] == "Hyperice"
     assert answer_single_question("Job Title Required", job, saved, ["Python"])["answer"] == "Software Engineer"
     assert answer_single_question("Phone Device Type", job, saved, ["Python"], options=["Mobile", "Home", "Work"])["answer"] == "Mobile"
+    # Optional fields that should stay cleanly blank (no amber warning, no duplicate phone)
+    for opt_lbl in ("Middle", "Suffix", "Suffix Choose...", "Former Name", "Secondary Phone"):
+        opt_res = answer_single_question(opt_lbl, job, saved, ["Python"], required=False)
+        assert opt_res["confidence"] == "high" and opt_res["answer"] == "", f"Unexpected for {opt_lbl}: {opt_res}"
 
     # 4. Real Chromium check: extension NEVER clicks header language picker or unknown comboboxes (no overlay flicker!)
     content_js = (Path(__file__).resolve().parents[2] / "extension" / "content.js").read_text(encoding="utf-8")

@@ -357,10 +357,10 @@ def answer_single_question(
             if has_delim:
                 q_clean = re.sub(r"[-_]+", " ", q_clean)
     q = " ".join(q_clean.lower().split())
-    # Strip trailing ATS badge noise like "(required)", "(optional)", "required", "optional", "*", ":"
+    # Strip leading/trailing ATS badge noise like "* Address 1", "(required)", "(optional)", "required", "optional", "*", ":"
     q = re.sub(r"\s*\((?:required|optional)\)\s*", " ", q)
     q = re.sub(r"[\s*:]+(?:required|optional)\s*$", "", q)
-    q = re.sub(r"[\s*:]+$", "", q).strip()
+    q = re.sub(r"^[\s*:]+|[\s*:]+$", "", q).strip()
     ftype = (field_type or "text").lower().strip()
 
     full_name = (profile_data.get("full_name") or "").strip()
@@ -525,8 +525,15 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high" if email else "manual_needed",
         }
-    if q in ("prefix", "salutation", "name prefix", "suffix", "name suffix", "middle name", "middle initial") or any(
-        k in q for k in ("phone extension", "phone ext", "extension number")
+    if (
+        re.match(
+            r"^(?:name\s+)?(?:prefix|salutation|suffix|middle(?:\s+(?:name|initial))?|former\s+name|maiden\s+name|previous\s+name|other\s+name)\b",
+            q,
+        )
+        or any(k in q for k in (
+            "phone extension", "phone ext", "extension number",
+            "secondary phone", "alternate phone", "other phone", "additional phone", "second phone",
+        ))
     ):
         return {
             "question": q_raw,

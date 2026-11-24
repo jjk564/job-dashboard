@@ -166,7 +166,8 @@
       .replace(/\s+/g, ' ')
       .replace(/\s*\((?:required|optional)\)\s*/gi, ' ')
       .replace(/[\s*:]+(?:required|optional)\s*$/i, '')
-      .replace(/\s*\*\s*$/, '')
+      .replace(/\s+(?:choose\.\.\.|select\.\.\.|select one|select an option)$/i, '')
+      .replace(/^[\s*:]+|[\s*:]+$/g, '')
       .trim();
   }
 
@@ -181,8 +182,19 @@
 
   function isPageBusyWithOverlay() {
     if (document.body?.getAttribute('aria-busy') === 'true') return true;
-    const busyEls = querySelectorAllDeep('[aria-busy="true"], .blockUI, .blockOverlay, .loading-overlay, .ukg-spinner, [class*="loading-mask"], [class*="page-loader"]');
+    const busyEls = querySelectorAllDeep(
+      '[aria-busy="true"], .blockUI, .blockOverlay, .loading-overlay, .ukg-spinner, .us-loading, .k-loading-mask, .k-loading-image, [data-automation*="loading"], [class*="loading-mask"], [class*="page-loader"]'
+    );
     return busyEls.some(isVisible);
+  }
+
+  async function waitForOverlayToClear(maxMs = 3500) {
+    await sleep(300);
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      if (!isPageBusyWithOverlay()) return;
+      await sleep(250);
+    }
   }
 
   function isMeaningfulAttrLabel(val) {
@@ -694,6 +706,15 @@
     const elById = new Map();
     let seq = 0;
 
+    // 0. Attach tailored Resume & Cover Letter PDFs FIRST!
+    //    On ATS platforms with auto-resume parsers (UKG/UltiPro, Workday, SmartRecruiters), uploading the PDF
+    //    triggers a brief white loading scrim & auto-fills/re-renders fields; doing this FIRST prevents the
+    //    ATS parser from flashing over or overwriting the fields we fill next!
+    const filesAttached = await attachFiles(job);
+    if (filesAttached > 0) {
+      await waitForOverlayToClear(3500);
+    }
+
     // 1. Collect native & Shadow DOM inputs, textareas, selects
     const controls = collectVisibleFormControls();
     let totalControls = controls.length;
@@ -924,9 +945,15 @@
               return t && (t.includes(ansLow) || ansLow.includes(t));
             });
           if (match) {
-            meta.el.value = match.value;
-            meta.el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            meta.el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            if (meta.el.value !== match.value) {
+              meta.el.value = match.value;
+              meta.el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              meta.el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              // If changing Country triggered a cascading State/Address AJAX overlay (e.g. UKG/UltiPro), let it settle
+              if (meta.label.toLowerCase().includes('country')) {
+                await waitForOverlayToClear(2200);
+              }
+            }
             filledCount++;
           } else {
             manualFields.push(meta.label);
@@ -1119,8 +1146,7 @@
       }
     }
 
-    // 7. Attach tailored Resume & Cover Letter PDFs (including Shadow DOM dropzones)
-    const filesAttached = await attachFiles(job);
+    // Add files attached in Step 0 to total count
     filledCount += filesAttached;
 
     // Mark all currently mounted controls & groups as seen so multi-step wizard transitions only trigger on newly mounted steps
