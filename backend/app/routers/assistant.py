@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -638,7 +639,7 @@ async def stage_native_browser_queue(
     }
 
 
-def _urls_roughly_match(tab_url: str, job_url: str) -> bool:
+def _urls_roughly_match(tab_url: str, job_url: str, company: str = "") -> bool:
     if not tab_url or not job_url:
         return False
     t = tab_url.strip().lower()
@@ -647,8 +648,15 @@ def _urls_roughly_match(tab_url: str, job_url: str) -> bool:
         return True
     try:
         pt, pj = urlparse(t), urlparse(j)
-        if pt.netloc and pj.netloc and pt.netloc == pj.netloc:
-            # Match by path prefix (e.g. /apply suffix added after clicking Apply)
+        host_t = (pt.netloc or "").replace("www.", "")
+        host_j = (pj.netloc or "").replace("www.", "")
+        same_host = bool(host_t and host_j and host_t == host_j)
+        # SmartRecruiters redirects between jobs.smartrecruiters.com and smartr.me
+        sr_pair = (
+            ("smartrecruiters.com" in host_t or "smartr.me" in host_t)
+            and ("smartrecruiters.com" in host_j or "smartr.me" in host_j)
+        )
+        if same_host or sr_pair:
             p_t = pt.path.rstrip("/")
             p_j = pj.path.rstrip("/")
             if p_j and (p_t.startswith(p_j) or p_j.startswith(p_t)):
@@ -656,6 +664,23 @@ def _urls_roughly_match(tab_url: str, job_url: str) -> bool:
             # Match by Greenhouse gh_jid query param
             if "gh_jid=" in pt.query and "gh_jid=" in pj.query:
                 return pt.query == pj.query
+            # SmartRecruiters OneClick UI redirect:
+            # job_url: /M3USA/744000158547269-software-engineer-remote-
+            # tab_url: /oneclick-ui/company/M3USA/publication/<uuid>?dcr_ci=M3USA
+            j_segs = [s for s in p_j.split("/") if s]
+            t_segs = [s for s in p_t.split("/") if s]
+            company_slug = re.sub(r"[^a-z0-9]", "", (company or "").lower())
+            first_j_slug = re.sub(r"[^a-z0-9]", "", j_segs[0]) if j_segs else ""
+            t_haystack = f"{p_t} {pt.query}"
+            for slug in (first_j_slug, company_slug):
+                if slug and len(slug) >= 3 and slug not in ("jobs", "job", "careers", "apply", "company", "oneclickui"):
+                    if f"/{slug}/" in f"{p_t}/" or f"={slug}" in t_haystack or slug in [re.sub(r"[^a-z0-9]", "", s) for s in t_segs]:
+                        return True
+            # Shared numeric/UUID job identifier segment (5+ chars)
+            j_ids = {s for s in j_segs if len(s) >= 5 and re.search(r"\d", s)}
+            t_ids = {s for s in t_segs if len(s) >= 5 and re.search(r"\d", s)}
+            if j_ids and t_ids and (j_ids & t_ids):
+                return True
     except Exception:
         pass
     return False
@@ -664,6 +689,7 @@ def _urls_roughly_match(tab_url: str, job_url: str) -> bool:
 @router.get("/active-autofill")
 async def get_active_autofill(
     url: Optional[str] = Query(None),
+    force: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -682,12 +708,12 @@ async def get_active_autofill(
 
     # 1. Check if current tab URL matches active or any staged queue job
     if url and q_jobs:
-        if 0 <= q_idx < len(q_jobs) and _urls_roughly_match(url, q_jobs[q_idx].get("job_url", "")):
+        if 0 <= q_idx < len(q_jobs) and _urls_roughly_match(url, q_jobs[q_idx].get("job_url", ""), q_jobs[q_idx].get("company", "")):
             matched_entry = q_jobs[q_idx]
             matched_idx = q_idx
         else:
             for idx, entry in enumerate(q_jobs):
-                if _urls_roughly_match(url, entry.get("job_url", "")):
+                if _urls_roughly_match(url, entry.get("job_url", ""), entry.get("company", "")):
                     matched_entry = entry
                     matched_idx = idx
                     break
@@ -700,12 +726,12 @@ async def get_active_autofill(
     elif url:
         r = await db.execute(select(Job).where(Job.url.isnot(None)).order_by(Job.updated_at.desc()).limit(250))
         for cand in r.scalars().all():
-            if _urls_roughly_match(url, cand.url or ""):
+            if _urls_roughly_match(url, cand.url or "", cand.company or ""):
                 job_obj = cand
                 break
 
-    # 3. Fallback: return active staged job even if user hasn't navigated yet (for extension popup)
-    if job_obj is None and not url and 0 <= q_idx < len(q_jobs):
+    # 3. Fallback: return active staged job when popup asks without URL OR when user explicitly forces autofill
+    if job_obj is None and (not url or force) and 0 <= q_idx < len(q_jobs):
         matched_entry = q_jobs[q_idx]
         if matched_entry.get("job_id"):
             r = await db.execute(select(Job).where(Job.id == matched_entry["job_id"]))

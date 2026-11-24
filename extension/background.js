@@ -28,8 +28,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === 'GET_ACTIVE_AUTOFILL') {
-        const q = msg.url ? `?url=${encodeURIComponent(msg.url)}` : '';
-        const data = await apiJson(`/api/assistant/active-autofill${q}`);
+        const params = new URLSearchParams();
+        if (msg.url) params.set('url', msg.url);
+        if (msg.force) params.set('force', '1');
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        const data = await apiJson(`/api/assistant/active-autofill${qs}`);
         sendResponse({ ok: true, data });
       } else if (msg.type === 'ANSWER_FIELDS') {
         const data = await apiJson('/api/assistant/answer-fields', {

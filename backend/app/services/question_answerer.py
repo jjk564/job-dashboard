@@ -317,7 +317,21 @@ def answer_single_question(
       }
     """
     q_raw = (question_text or "").strip()
-    q = " ".join(q_raw.lower().split())
+    # Normalize identifier-style fallback labels like "first-name-input", "firstName", "last_name"
+    # Note: only split camelCase when starting with lowercase (e.g. firstName, confirmEmail) so
+    # capitalized brand names like "LinkedIn", "GitHub", "GitLab" are never split.
+    q_clean = q_raw
+    if q_clean and " " not in q_clean:
+        has_delim = any(ch in q_clean for ch in ("-", "_"))
+        is_lower_camel = bool(re.match(r"^[a-z]+[A-Z]", q_clean))
+        if has_delim or is_lower_camel:
+            q_clean = re.sub(r"\be-mail\b", "email", q_clean, flags=re.IGNORECASE)
+            q_clean = re.sub(r"\bh-1b\b", "h1b", q_clean, flags=re.IGNORECASE)
+            if is_lower_camel:
+                q_clean = re.sub(r"([a-z])([A-Z])", r"\1 \2", q_clean)
+            if has_delim:
+                q_clean = re.sub(r"[-_]+", " ", q_clean)
+    q = " ".join(q_clean.lower().split())
     ftype = (field_type or "text").lower().strip()
 
     full_name = (profile_data.get("full_name") or "").strip()
@@ -650,7 +664,12 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("city, state", "city/state", "current location", "location", "where are you based", "where do you live", "where are you located", "time zone", "timezone")):
+    if any(k in q for k in (
+        "city, state", "city/state", "current location", "location",
+        "place of residence", "residence", "where are you based",
+        "where do you live", "where you live", "where are you located",
+        "time zone", "timezone",
+    )):
         if "time zone" in q or "timezone" in q:
             opt = _match_option(options, ["eastern", "est", "edt", "et", "utc-5", "america/new_york"])
             return {"question": q_raw, "answer": opt or "Eastern Time (ET)", "category": "location", "confidence": "high"}
@@ -1024,7 +1043,12 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("cover letter", "additional information", "anything else", "note to hiring", "message to hiring", "hiring manager")) or (
+    if any(k in q for k in (
+        "cover letter", "additional information", "anything else",
+        "note to hiring", "message to hiring", "message to the hiring",
+        "hiring manager", "hiring team", "about your interest",
+        "interest working", "interest in working",
+    )) or (
         ftype == "textarea" and any(k in q for k in ("professional summary", "profile summary", "summary"))
     ):
         cl_ans = (

@@ -308,11 +308,13 @@ async def test_autopilot_config_and_pipeline_routing():
 
 
 @pytest.mark.asyncio
-async def test_bot_trap_api_and_native_extension_endpoints(monkeypatch):
+async def test_bot_trap_api_and_native_extension_endpoints(monkeypatch, tmp_path):
     import shutil
     from app.services import autopilot as ap_mod
     from app.services.question_answerer import PACKETS_DIR
-    from app.routers.assistant import NATIVE_QUEUE_PATH
+    from app.routers import assistant as assistant_mod
+
+    monkeypatch.setattr(assistant_mod, "NATIVE_QUEUE_PATH", tmp_path / "native_browser_queue.json")
 
     async def _fake_not_expired(url, deadline=None):
         return False, None
@@ -420,8 +422,191 @@ async def test_bot_trap_api_and_native_extension_endpoints(monkeypatch):
 
         for d in PACKETS_DIR.glob(f"job_{job_id}_*"):
             shutil.rmtree(d, ignore_errors=True)
-        if NATIVE_QUEUE_PATH.exists():
-            NATIVE_QUEUE_PATH.unlink()
+
+
+@pytest.mark.asyncio
+async def test_smartrecruiters_redirect_url_matching_and_shadow_dom_extension(monkeypatch, tmp_path):
+    import base64
+    from pathlib import Path
+    from playwright.sync_api import sync_playwright
+    from app.routers import assistant as assistant_mod
+    from app.services.question_answerer import answer_single_question
+
+    monkeypatch.setattr(assistant_mod, "NATIVE_QUEUE_PATH", tmp_path / "native_browser_queue.json")
+
+    # 1. Verify SmartRecruiters OneClick UI & smartr.me redirect URL matching
+    job_url = "https://jobs.smartrecruiters.com/M3USA/744000158547269-software-engineer-remote-"
+    oneclick_url = "https://jobs.smartrecruiters.com/oneclick-ui/company/M3USA/publication/cc594d71-901b-4886-a5df-a7c64f37aebf?dcr_ci=M3USA"
+    smartr_url = "https://www.smartr.me/oneclick-ui/company/M3USA/publication/cc594d71-901b-4886-a5df-a7c64f37aebf?dcr_ci=M3USA"
+    assert assistant_mod._urls_roughly_match(oneclick_url, job_url, "m3usa") is True
+    assert assistant_mod._urls_roughly_match(smartr_url, job_url, "m3usa") is True
+    assert assistant_mod._urls_roughly_match("https://jobs.smartrecruiters.com/OtherCo/99999", job_url, "m3usa") is False
+
+    # 2. Verify Shadow DOM SmartRecruiters form autofill via extension/content.js in real Chromium
+    content_js = (Path(__file__).resolve().parents[2] / "extension" / "content.js").read_text(encoding="utf-8")
+    profile = {
+        "full_name": "Justin Kilpatrick",
+        "email": "jkilpatrick50@gmail.com",
+        "phone": "781-879-4389",
+        "location": "Boston, Massachusetts (Remote)",
+        "title": "Software Engineer",
+        "linkedin_url": "https://www.linkedin.com/in/justin-kilpatrick-a05369110/",
+        "github_url": "https://github.com/jjk564",
+        "work_authorization": "Authorized to work in the US without sponsorship",
+        "desired_salary": "$65,000 - $100,000",
+        "notice_period": "Immediate / 2 weeks",
+    }
+    job = {
+        "id": 135,
+        "title": "Software Engineer (Remote)",
+        "company": "m3usa",
+        "cover_letter_text": "Dear M3USA Hiring Team, I am excited to apply!",
+    }
+
+    html = """<!doctype html><html><body>
+    <form id="sr-form">
+      <spl-input data-test="first-name-input" label="First name" required></spl-input>
+      <spl-input data-test="last-name-input" label="Last name" required></spl-input>
+      <spl-input data-test="email-input" label="Email" required></spl-input>
+      <spl-input data-test="confirm-email-input" label="Confirm your email" required></spl-input>
+      <spl-autocomplete data-test="city-input" label="Place of residence"></spl-autocomplete>
+      <spl-input data-test="phone-input" label="Phone number"></spl-input>
+      <spl-input data-test="linkedin-input" label="LinkedIn"></spl-input>
+      <spl-input data-test="twitter-input" label="Twitter"></spl-input>
+      <spl-textarea data-test="hiring-msg" label="Message to the Hiring Team"></spl-textarea>
+      <spl-dropzone data-test="resume-upload" label="Resume"></spl-dropzone>
+      <spl-checkbox data-test="privacy-consent" label="I agree to the Privacy Policy"></spl-checkbox>
+    </form>
+    <script>
+      window.__composedEvents = [];
+      class SplInput extends HTMLElement {
+        connectedCallback() {
+          const sr = this.attachShadow({ mode: 'open' });
+          sr.innerHTML = `<label for="spl-input-1">${this.getAttribute('label')}</label><input id="spl-input-1" type="text" />`;
+          this.addEventListener('input', () => window.__composedEvents.push(this.getAttribute('data-test')));
+        }
+      }
+      class SplAutocomplete extends HTMLElement {
+        connectedCallback() {
+          const sr = this.attachShadow({ mode: 'open' });
+          sr.innerHTML = `<input id="spl-ac-1" type="search" role="combobox" aria-autocomplete="list" />`;
+        }
+      }
+      class SplTextarea extends HTMLElement {
+        connectedCallback() {
+          const sr = this.attachShadow({ mode: 'open' });
+          sr.innerHTML = `<textarea id="spl-ta-1"></textarea>`;
+        }
+      }
+      class SplDropzone extends HTMLElement {
+        connectedCallback() {
+          const sr = this.attachShadow({ mode: 'open' });
+          sr.innerHTML = `<div class="dz">Drop resume here<input type="file" accept=".pdf,.doc,.docx" style="display:none" /></div>`;
+        }
+      }
+      class SplCheckbox extends HTMLElement {
+        connectedCallback() {
+          const sr = this.attachShadow({ mode: 'open' });
+          sr.innerHTML = `<label><input type="checkbox" /> <span>${this.getAttribute('label')}</span></label>`;
+        }
+      }
+      customElements.define('spl-input', SplInput);
+      customElements.define('spl-autocomplete', SplAutocomplete);
+      customElements.define('spl-textarea', SplTextarea);
+      customElements.define('spl-dropzone', SplDropzone);
+      customElements.define('spl-checkbox', SplCheckbox);
+    </script></body></html>"""
+
+    def _run_shadow_check():
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(html)
+
+            def handle_msg(msg):
+                t = msg.get("type")
+                if t == "GET_ACTIVE_AUTOFILL":
+                    return {
+                        "ok": True,
+                        "data": {
+                            "matched": True,
+                            "job": {**job, "resume_pdf_url": "/fake/resume.pdf", "resume_filename": "Resume.pdf", "bot_traps": []},
+                            "queue": {"is_speed_run": False, "index": 0, "total": 1},
+                        },
+                    }
+                if t == "FETCH_PDF":
+                    return {"ok": True, "base64": base64.b64encode(b"%PDF-1.4\n%%EOF").decode()}
+                if t == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            question_text=f["label"],
+                            job_data=job,
+                            profile_data=profile,
+                            candidate_skills=["Python", "TypeScript"],
+                            options=f.get("options"),
+                            field_type=f.get("field_type", "text"),
+                            required=f.get("required", False),
+                        )
+                        out.append({
+                            "id": f["id"],
+                            "label": f["label"],
+                            "answer": qa["answer"],
+                            "confidence": qa["confidence"],
+                            "category": qa["category"],
+                        })
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = {
+                    runtime: {
+                        lastError: null,
+                        sendMessage: (msg, cb) => { window.__pySendMsg(msg).then(cb); },
+                        onMessage: { addListener: () => {} },
+                    }
+                };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(1800)
+
+            res = page.evaluate("""() => {
+                const vals = {};
+                document.querySelectorAll('spl-input, spl-autocomplete, spl-textarea').forEach(el => {
+                    vals[el.getAttribute('data-test')] = el.shadowRoot.querySelector('input, textarea').value;
+                });
+                const fileInp = document.querySelector('spl-dropzone').shadowRoot.querySelector('input[type="file"]');
+                const cb = document.querySelector('spl-checkbox').shadowRoot.querySelector('input[type="checkbox"]');
+                return {
+                    vals,
+                    fileCount: fileInp.files.length,
+                    checkboxChecked: cb.checked,
+                    composedEventsCount: window.__composedEvents.length,
+                    twitterOutline: document.querySelector('spl-input[data-test="twitter-input"]').style.outline,
+                    hudPresent: Boolean(document.getElementById('jobpulse-native-hud')),
+                };
+            }""")
+            b.close()
+            return res
+
+    import asyncio
+    state = await asyncio.to_thread(_run_shadow_check)
+    assert state["vals"]["first-name-input"] == "Justin"
+    assert state["vals"]["last-name-input"] == "Kilpatrick"
+    assert state["vals"]["email-input"] == "jkilpatrick50@gmail.com"
+    assert state["vals"]["confirm-email-input"] == "jkilpatrick50@gmail.com"
+    assert state["vals"]["city-input"] == "Boston, MA"
+    assert state["vals"]["phone-input"] == "781-879-4389"
+    assert state["vals"]["linkedin-input"] == "https://www.linkedin.com/in/justin-kilpatrick-a05369110/"
+    assert state["vals"]["twitter-input"] == ""
+    assert state["twitterOutline"] == ""
+    assert "Dear M3USA Hiring Team" in state["vals"]["hiring-msg"]
+    assert state["fileCount"] == 1
+    assert state["checkboxChecked"] is True
+    assert state["composedEventsCount"] >= 6
+    assert state["hudPresent"] is True
+
 
 
 

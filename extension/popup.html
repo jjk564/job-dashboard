@@ -5,7 +5,7 @@
   <title>JobPulse Native Auto-Fill</title>
   <style>
     body {
-      width: 290px;
+      width: 310px;
       margin: 0;
       padding: 14px;
       background: #0f172a;
@@ -31,8 +31,19 @@
       border-radius: 8px;
       background: #1e293b;
       border: 1px solid #334155;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       font-size: 11.5px;
+      line-height: 1.4;
+    }
+    .active-job {
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      margin-bottom: 10px;
+      font-size: 11px;
+      color: #a7f3d0;
+      display: none;
     }
     button {
       width: 100%;
@@ -58,8 +69,9 @@
 </head>
 <body>
   <h1>⚡ JobPulse Native Auto-Fill</h1>
-  <p>Auto-fills job forms in your regular Chrome browser with zero Playwright or CAPTCHA interference.</p>
+  <p>Auto-fills ATS forms (including Shadow DOM) in regular Chrome with zero CAPTCHA interference.</p>
   <div id="status" class="status">Checking local JobPulse API...</div>
+  <div id="activeJob" class="active-job"></div>
   <button id="fillBtn" disabled>Auto-Fill Current Tab</button>
   <button id="openDashBtn" class="sub">Open JobPulse Dashboard</button>
   <script src="popup.js"></script>
