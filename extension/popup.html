@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JobPulse Native Auto-Fill</title>
+  <style>
+    body {
+      width: 290px;
+      margin: 0;
+      padding: 14px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 12px;
+    }
+    h1 {
+      font-size: 14px;
+      margin: 0 0 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #34d399;
+    }
+    p {
+      margin: 0 0 10px;
+      color: #94a3b8;
+      line-height: 1.45;
+    }
+    .status {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      margin-bottom: 10px;
+      font-size: 11.5px;
+    }
+    button {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: none;
+      background: #10b981;
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #059669; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sub {
+      margin-top: 8px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #38bdf8;
+    }
+    .sub:hover { background: #334155; }
+  </style>
+</head>
+<body>
+  <h1>⚡ JobPulse Native Auto-Fill</h1>
+  <p>Auto-fills job forms in your regular Chrome browser with zero Playwright or CAPTCHA interference.</p>
+  <div id="status" class="status">Checking local JobPulse API...</div>
+  <button id="fillBtn" disabled>Auto-Fill Current Tab</button>
+  <button id="openDashBtn" class="sub">Open JobPulse Dashboard</button>
+  <script src="popup.js"></script>
+</body>
+</html>

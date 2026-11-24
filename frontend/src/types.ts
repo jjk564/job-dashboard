@@ -74,6 +74,15 @@ export interface AnsweredQuestion {
   confidence: 'high' | 'medium' | 'manual_needed';
 }
 
+export interface BotTrap {
+  type: 'human_check' | 'ai_honeypot';
+  severity: 'high' | 'medium';
+  trigger_phrase?: string | null;
+  target_field?: string | null;
+  excerpt: string;
+  action_required: string;
+}
+
 export interface Job {
   id: number;
   title: string;
@@ -105,6 +114,7 @@ export interface Job {
   autopilot_status?: 'pending' | 'processing' | 'auto_applied' | 'needs_manual_apply' | 'skipped' | null;
   autopilot_reason?: string | null;
   answers?: AnsweredQuestion[];
+  bot_traps?: BotTrap[];
   created_at?: string;
   updated_at?: string;
   activities?: Activity[];
@@ -129,6 +139,7 @@ export interface AutopilotRunSummary {
   duration_seconds: number;
   search_profile_used: string;
   scraped_count: number;
+  sources_breakdown?: Record<string, number>;
   imported_count: number;
   processed_count: number;
   resumes_generated: number;
@@ -204,6 +215,7 @@ export interface DiscoveredJob {
   role_track?: RoleTrack;
   role_level?: RoleLevel | null;
   role_discipline?: RoleDiscipline;
+  bot_traps?: BotTrap[];
 }
 
 export interface Metrics {

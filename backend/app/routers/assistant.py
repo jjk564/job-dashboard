@@ -1,12 +1,19 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from pydantic import BaseModel
-from typing import Optional, List
 from ..database import get_db
-from ..models import Job, Profile, Skill, TailoredDocument
+from ..models import ApplicationActivity, Job, Profile, Skill, TailoredDocument
 from ..schemas import (
     MatchAnalysisResponse,
     GenerateDocumentRequest,
@@ -16,11 +23,60 @@ from ..schemas import (
 from ..services.matcher import analyze_job_fit
 from ..services.ai_generator import generate_ai_document
 from ..services.browser_assistant import launch_assisted_application, launch_speedrun_queue
+from ..services.bot_trap_detector import detect_bot_traps, merge_bot_traps
+from ..services.question_answerer import PACKETS_DIR, answer_single_question
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
 
+NATIVE_QUEUE_PATH = PACKETS_DIR / "native_browser_queue.json"
+
+
+def _load_native_queue() -> Dict[str, Any]:
+    if not NATIVE_QUEUE_PATH.exists():
+        return {"jobs": [], "index": 0, "updated_at": None}
+    try:
+        data = json.loads(NATIVE_QUEUE_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("jobs"), list):
+            return data
+    except Exception:
+        pass
+    return {"jobs": [], "index": 0, "updated_at": None}
+
+
+def _save_native_queue(state: Dict[str, Any]) -> None:
+    PACKETS_DIR.mkdir(parents=True, exist_ok=True)
+    state["updated_at"] = datetime.utcnow().isoformat()
+    NATIVE_QUEUE_PATH.write_text(json.dumps(state), encoding="utf-8")
+
+
 class SpeedRunRequest(BaseModel):
     job_ids: Optional[List[int]] = None
+    mode: Optional[str] = "playwright"  # "playwright" | "native_chrome"
+
+
+class StageBrowserQueueRequest(BaseModel):
+    job_ids: Optional[List[int]] = None
+    open_browser: bool = True
+
+
+class AnswerFieldsItem(BaseModel):
+    id: str
+    label: str
+    options: Optional[List[str]] = None
+    field_type: str = "text"
+    required: bool = False
+
+
+class AnswerFieldsRequest(BaseModel):
+    job_id: Optional[int] = None
+    url: Optional[str] = None
+    fields: List[AnswerFieldsItem]
+    page_text: Optional[str] = None
+
+
+class NativeQueueActionRequest(BaseModel):
+    action: str  # "mark_applied_next" | "skip" | "exit"
+    job_id: Optional[int] = None
 
 
 @router.post("/speed-run/start")
@@ -104,6 +160,33 @@ async def start_speed_run(
         "imap_email": (cfg.imap_email or profile_dict.get("email") or "").strip(),
         "imap_password": (cfg.imap_password or "").strip(),
     }
+
+    if req and (req.mode or "").lower() == "native_chrome":
+        _save_native_queue({
+            "jobs": [
+                {
+                    "job_id": item["job_id"],
+                    "job_url": item["job_url"],
+                    "company": (item.get("job_data") or {}).get("company", ""),
+                    "title": (item.get("job_data") or {}).get("title", ""),
+                    "files": item.get("files") or {},
+                }
+                for item in queue_payload
+            ],
+            "index": 0,
+        })
+        first_url = queue_payload[0]["job_url"]
+        try:
+            webbrowser.open(first_url)
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "mode": "native_chrome",
+            "count": len(queue_payload),
+            "active_url": first_url,
+            "message": f"Opened Speed-Run ({len(queue_payload)} jobs) in your regular browser! The JobPulse Chrome Extension will auto-fill each form with zero CAPTCHA interference.",
+        }
 
     result = await launch_speedrun_queue(
         jobs_payload=queue_payload,
@@ -476,3 +559,368 @@ async def trigger_browser_assistant(job_id: int, db: AsyncSession = Depends(get_
         imap_config=imap_config,
     )
     return result
+
+
+@router.post("/stage-browser-queue")
+async def stage_native_browser_queue(
+    req: Optional[StageBrowserQueueRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stages one or more jobs for the JobPulse Native Chrome Extension and optionally opens
+    the first URL directly in the user's regular desktop browser (zero Playwright / zero CAPTCHA loops).
+    """
+    from ..services.autopilot import ensure_candidate_profile, prepare_job_application_materials
+    from ..services.browser_assistant import is_direct_ats_url, resolve_direct_ats_url, classify_ats_url
+
+    if req and req.job_ids:
+        q = select(Job).where(Job.id.in_(req.job_ids))
+    else:
+        q = (
+            select(Job)
+            .where(Job.status.in_(["TO_APPLY", "WISHLIST"]), Job.is_expired.is_(False))
+            .order_by(Job.fit_score.desc().nullslast(), Job.updated_at.desc())
+        )
+    res = await db.execute(q)
+    jobs = [j for j in res.scalars().all() if j.url and j.url.strip()]
+    if not jobs:
+        return {"success": False, "count": 0, "message": "No eligible jobs with URLs found to stage."}
+
+    # When staging entire column, prioritize direct ATS postings first, then remaining jobs
+    if not (req and req.job_ids):
+        direct_jobs = [j for j in jobs if is_direct_ats_url(j.url)]
+        if direct_jobs:
+            jobs = direct_jobs
+
+    profile_dict, skills = await ensure_candidate_profile(db)
+    staged_items: List[Dict[str, Any]] = []
+    for job in jobs[:25]:
+        # Try resolving aggregator URL to direct ATS if single-job stage
+        if req and req.job_ids and not classify_ats_url(job.url).get("can_auto_attempt", True):
+            direct_url = resolve_direct_ats_url(company=job.company, title=job.title, original_url=job.url)
+            if direct_url:
+                job.url = direct_url
+        try:
+            materials = await prepare_job_application_materials(
+                db=db,
+                job=job,
+                profile_dict=profile_dict,
+                skills=skills,
+                fast_batch_mode=True,
+            )
+            files = materials.get("files") or {}
+        except Exception:
+            files = {}
+
+        staged_items.append({
+            "job_id": job.id,
+            "job_url": job.url,
+            "company": job.company,
+            "title": job.title,
+            "files": files,
+        })
+
+    await db.commit()
+    _save_native_queue({"jobs": staged_items, "index": 0})
+
+    first_url = staged_items[0]["job_url"]
+    if not req or req.open_browser:
+        try:
+            webbrowser.open(first_url)
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "count": len(staged_items),
+        "active_url": first_url,
+        "message": f"Staged {len(staged_items)} job(s) for Regular Chrome auto-fill. Install/enable the JobPulse Chrome Extension (extension/ folder) to auto-fill with zero CAPTCHA friction!",
+    }
+
+
+def _urls_roughly_match(tab_url: str, job_url: str) -> bool:
+    if not tab_url or not job_url:
+        return False
+    t = tab_url.strip().lower()
+    j = job_url.strip().lower()
+    if t == j or t.split("?")[0] == j.split("?")[0]:
+        return True
+    try:
+        pt, pj = urlparse(t), urlparse(j)
+        if pt.netloc and pj.netloc and pt.netloc == pj.netloc:
+            # Match by path prefix (e.g. /apply suffix added after clicking Apply)
+            p_t = pt.path.rstrip("/")
+            p_j = pj.path.rstrip("/")
+            if p_j and (p_t.startswith(p_j) or p_j.startswith(p_t)):
+                return True
+            # Match by Greenhouse gh_jid query param
+            if "gh_jid=" in pt.query and "gh_jid=" in pj.query:
+                return pt.query == pj.query
+    except Exception:
+        pass
+    return False
+
+
+@router.get("/active-autofill")
+async def get_active_autofill(
+    url: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Used by the JobPulse Native Chrome Extension to retrieve candidate profile,
+    active job context, Bot Trap alerts, cover letter text, and tailored PDF download URLs.
+    """
+    from ..services.autopilot import ensure_candidate_profile, prepare_job_application_materials
+
+    profile_dict, skills = await ensure_candidate_profile(db)
+    queue_state = _load_native_queue()
+    q_jobs = queue_state.get("jobs") or []
+    q_idx = int(queue_state.get("index") or 0)
+
+    matched_entry: Optional[Dict[str, Any]] = None
+    matched_idx = q_idx
+
+    # 1. Check if current tab URL matches active or any staged queue job
+    if url and q_jobs:
+        if 0 <= q_idx < len(q_jobs) and _urls_roughly_match(url, q_jobs[q_idx].get("job_url", "")):
+            matched_entry = q_jobs[q_idx]
+            matched_idx = q_idx
+        else:
+            for idx, entry in enumerate(q_jobs):
+                if _urls_roughly_match(url, entry.get("job_url", "")):
+                    matched_entry = entry
+                    matched_idx = idx
+                    break
+
+    # 2. If no URL match in queue, check if current tab URL matches any job in the pipeline DB
+    job_obj: Optional[Job] = None
+    if matched_entry and matched_entry.get("job_id"):
+        r = await db.execute(select(Job).where(Job.id == matched_entry["job_id"]))
+        job_obj = r.scalars().first()
+    elif url:
+        r = await db.execute(select(Job).where(Job.url.isnot(None)).order_by(Job.updated_at.desc()).limit(250))
+        for cand in r.scalars().all():
+            if _urls_roughly_match(url, cand.url or ""):
+                job_obj = cand
+                break
+
+    # 3. Fallback: return active staged job even if user hasn't navigated yet (for extension popup)
+    if job_obj is None and not url and 0 <= q_idx < len(q_jobs):
+        matched_entry = q_jobs[q_idx]
+        if matched_entry.get("job_id"):
+            r = await db.execute(select(Job).where(Job.id == matched_entry["job_id"]))
+            job_obj = r.scalars().first()
+
+    job_payload: Optional[Dict[str, Any]] = None
+    if job_obj is not None:
+        files = (matched_entry or {}).get("files") or {}
+        if not files or not (files.get("resume_pdf") and os.path.exists(files["resume_pdf"])):
+            try:
+                materials = await prepare_job_application_materials(
+                    db=db,
+                    job=job_obj,
+                    profile_dict=profile_dict,
+                    skills=skills,
+                    fast_batch_mode=True,
+                )
+                files = materials.get("files") or {}
+                await db.commit()
+            except Exception:
+                files = {}
+
+        cover_text = ""
+        cl_path = files.get("cover_letter_txt") or files.get("cover_letter_md")
+        if cl_path and os.path.exists(cl_path):
+            try:
+                cover_text = Path(cl_path).read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+        if not cover_text:
+            doc_res = await db.execute(
+                select(TailoredDocument)
+                .where(TailoredDocument.job_id == job_obj.id, TailoredDocument.doc_type == "cover_letter")
+                .order_by(TailoredDocument.created_at.desc())
+                .limit(1)
+            )
+            cl_doc = doc_res.scalars().first()
+            if cl_doc:
+                cover_text = cl_doc.content
+
+        j_dict = job_obj.to_dict()
+        res_pdf_path = files.get("resume_pdf") or files.get("legacy_resume_pdf")
+        cl_pdf_path = files.get("cover_letter_pdf") or files.get("legacy_cover_letter_pdf")
+        job_payload = {
+            "id": job_obj.id,
+            "title": job_obj.title,
+            "company": job_obj.company,
+            "url": job_obj.url,
+            "location": job_obj.location,
+            "workplace_type": job_obj.workplace_type,
+            "source": job_obj.source,
+            "status": job_obj.status,
+            "bot_traps": j_dict.get("bot_traps") or [],
+            "answers": j_dict.get("answers") or [],
+            "cover_letter_text": cover_text,
+            "resume_filename": os.path.basename(res_pdf_path) if res_pdf_path else "Resume.pdf",
+            "cover_letter_filename": os.path.basename(cl_pdf_path) if cl_pdf_path else "Cover_Letter.pdf",
+            "resume_pdf_url": f"/api/assistant/jobs/{job_obj.id}/packet-file/resume_pdf" if res_pdf_path and os.path.exists(res_pdf_path) else None,
+            "cover_letter_pdf_url": f"/api/assistant/jobs/{job_obj.id}/packet-file/cover_letter_pdf" if cl_pdf_path and os.path.exists(cl_pdf_path) else None,
+        }
+
+    return {
+        "matched": job_payload is not None,
+        "profile": profile_dict,
+        "skills": skills,
+        "job": job_payload,
+        "queue": {
+            "is_speed_run": len(q_jobs) > 1,
+            "index": matched_idx,
+            "total": len(q_jobs),
+            "active_url": q_jobs[q_idx]["job_url"] if 0 <= q_idx < len(q_jobs) else None,
+        },
+    }
+
+
+@router.post("/answer-fields")
+async def answer_form_fields_batch(
+    req: AnswerFieldsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Batch-answers discovered ATS form fields using the hardened Python Q&A engine
+    and scans live page text for Bot Traps. Powers the Native Chrome Extension.
+    """
+    from ..services.autopilot import ensure_candidate_profile
+
+    profile_dict, skills = await ensure_candidate_profile(db)
+    job_obj: Optional[Job] = None
+    if req.job_id:
+        r = await db.execute(select(Job).where(Job.id == req.job_id))
+        job_obj = r.scalars().first()
+    job_dict = job_obj.to_dict() if job_obj else {"url": req.url or "", "title": "", "company": ""}
+
+    # Scan live page text for bot traps & merge with stored traps
+    live_traps = detect_bot_traps(description=job_dict.get("description") or "", page_text=req.page_text or "")
+    merged_traps = merge_bot_traps(job_dict.get("bot_traps"), live_traps)
+    if job_obj and merged_traps and len(merged_traps) != len(job_dict.get("bot_traps") or []):
+        job_obj.bot_traps_json = json.dumps(merged_traps)
+        job_obj.updated_at = datetime.utcnow()
+        await db.commit()
+
+    results = []
+    for fld in req.fields:
+        qa = answer_single_question(
+            question_text=fld.label,
+            job_data=job_dict,
+            profile_data=profile_dict,
+            candidate_skills=skills,
+            options=fld.options,
+            field_type=fld.field_type,
+            required=fld.required,
+        )
+        results.append({
+            "id": fld.id,
+            "label": fld.label,
+            "answer": qa.get("answer", ""),
+            "confidence": qa.get("confidence", "manual_needed"),
+            "category": qa.get("category", "custom"),
+        })
+
+    return {
+        "answers": results,
+        "bot_traps": merged_traps,
+    }
+
+
+@router.post("/active-autofill/action")
+async def handle_native_queue_action(
+    req: NativeQueueActionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Handles Mark Applied & Next, Skip, or Exit from the Native Chrome Extension HUD."""
+    state = _load_native_queue()
+    q_jobs = state.get("jobs") or []
+    idx = int(state.get("index") or 0)
+    target_job_id = req.job_id
+    if not target_job_id and 0 <= idx < len(q_jobs):
+        target_job_id = q_jobs[idx].get("job_id")
+
+    if req.action in ("mark_applied_next", "mark_applied") and target_job_id:
+        r = await db.execute(select(Job).where(Job.id == target_job_id))
+        job = r.scalars().first()
+        if job:
+            job.status = "APPLIED"
+            job.autopilot_status = "auto_applied"
+            job.autopilot_reason = "Applied via Regular Chrome Extension"
+            if not job.applied_at:
+                job.applied_at = datetime.utcnow()
+            job.updated_at = datetime.utcnow()
+            db.add(ApplicationActivity(
+                job_id=job.id,
+                activity_type="status_change",
+                title="Moved to APPLIED",
+                details="Marked applied via JobPulse Chrome Extension",
+            ))
+            await db.commit()
+
+    if req.action == "exit":
+        _save_native_queue({"jobs": [], "index": 0})
+        return {"success": True, "done": True, "next_url": None, "remaining": 0}
+
+    # Advance index past the completed/skipped job
+    next_idx = idx + 1
+    if target_job_id:
+        for i, it in enumerate(q_jobs):
+            if it.get("job_id") == target_job_id:
+                next_idx = i + 1
+                break
+
+    if next_idx < len(q_jobs):
+        state["index"] = next_idx
+        _save_native_queue(state)
+        return {
+            "success": True,
+            "done": False,
+            "next_url": q_jobs[next_idx].get("job_url"),
+            "remaining": len(q_jobs) - next_idx,
+        }
+
+    _save_native_queue({"jobs": [], "index": 0})
+    return {"success": True, "done": True, "next_url": None, "remaining": 0}
+
+
+@router.get("/jobs/{job_id}/packet-file/{file_type}")
+async def download_job_packet_file(
+    job_id: int,
+    file_type: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serves a job's exported tailored PDF (resume_pdf or cover_letter_pdf) to the local Chrome Extension."""
+    if file_type not in ("resume_pdf", "cover_letter_pdf"):
+        raise HTTPException(status_code=400, detail="Unsupported file_type")
+
+    r = await db.execute(select(Job).where(Job.id == job_id))
+    job = r.scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    from ..services.autopilot import ensure_candidate_profile, prepare_job_application_materials
+    profile_dict, skills = await ensure_candidate_profile(db)
+    materials = await prepare_job_application_materials(
+        db=db,
+        job=job,
+        profile_dict=profile_dict,
+        skills=skills,
+        fast_batch_mode=True,
+    )
+    await db.commit()
+    files = materials.get("files") or {}
+    path_str = files.get(file_type) or files.get(f"legacy_{file_type}")
+    if not path_str or not os.path.exists(path_str):
+        raise HTTPException(status_code=404, detail="Exported PDF file not found")
+
+    return FileResponse(
+        path=path_str,
+        media_type="application/pdf",
+        filename=os.path.basename(path_str),
+    )

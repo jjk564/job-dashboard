@@ -4,6 +4,7 @@ from ..schemas import URLImportRequest, URLImportResponse
 from ..services.job_fetcher import search_aggregated_jobs
 from ..services.job_extractor import extract_job_from_url
 from ..services.role_classifier import classify_role
+from ..services.bot_trap_detector import detect_bot_traps
 
 router = APIRouter(prefix="/api/discovery", tags=["Discovery"])
 
@@ -43,6 +44,7 @@ async def search_jobs(
         j_copy["role_track"] = classified["track"]
         j_copy["role_level"] = classified["level"]
         j_copy["role_discipline"] = classified["discipline"]
+        j_copy["bot_traps"] = detect_bot_traps(j.get("description", ""))
         if track and track in ("ic", "manager") and classified["track"] != track:
             continue
         enriched.append(j_copy)
@@ -53,6 +55,7 @@ async def import_job_from_url(req: URLImportRequest):
     """Scrapes structured details (title, company, description, salary) from any job URL."""
     try:
         extracted = await extract_job_from_url(req.url)
+        extracted["bot_traps"] = detect_bot_traps(extracted.get("description", ""))
         return extracted
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract job from URL: {str(e)}")

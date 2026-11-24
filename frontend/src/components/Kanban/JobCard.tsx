@@ -12,7 +12,8 @@ import {
   AlertTriangle,
   Archive,
   Bot,
-  FileCheck2
+  FileCheck2,
+  ShieldAlert
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 
@@ -64,6 +65,29 @@ export const JobCard: React.FC<JobCardProps> = ({
   };
 
   const salaryStr = formatSalary();
+  const botTraps = job.bot_traps || [];
+  const hasBotTrap = botTraps.length > 0;
+  const hasHoneypot = botTraps.some((t) => t.type === 'ai_honeypot');
+
+  const SOURCE_LABELS: Record<string, string> = {
+    indeed: 'Indeed',
+    linkedin: 'LinkedIn',
+    glassdoor: 'Glassdoor',
+    ziprecruiter: 'ZipRecruiter',
+    bigtech: 'Big Tech',
+    company_boards: 'Direct ATS',
+    simplify: 'Simplify',
+    hadoku: 'Hadoku ATS',
+    themuse: 'The Muse',
+    himalayas: 'Himalayas',
+    remoteok: 'RemoteOK',
+    weworkremotely: 'WWR',
+    jobicy: 'Jobicy',
+  };
+  const sourceLabel = job.source ? (SOURCE_LABELS[job.source.toLowerCase()] || job.source) : null;
+  const isMainstreamSource = Boolean(
+    job.source && ['indeed', 'linkedin', 'glassdoor', 'ziprecruiter', 'bigtech'].includes(job.source.toLowerCase())
+  );
 
   return (
     <div 
@@ -121,6 +145,31 @@ export const JobCard: React.FC<JobCardProps> = ({
       <h3 className="font-semibold text-slate-100 text-sm leading-snug group-hover:text-emerald-400 transition-colors line-clamp-2 mb-2">
         {job.title}
       </h3>
+
+      {/* Bot Trap / Human Verification Warning Banner */}
+      {!job.is_expired && hasBotTrap && (
+        <div
+          className={`mb-2.5 px-2 py-1.5 rounded-md border text-[11px] space-y-0.5 ${
+            hasHoneypot
+              ? 'bg-rose-950/60 border-rose-500/60 text-rose-200'
+              : 'bg-amber-950/60 border-amber-500/60 text-amber-200'
+          }`}
+          title={botTraps[0].action_required}
+        >
+          <div className="flex items-center space-x-1.5 font-bold">
+            <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${hasHoneypot ? 'text-rose-400' : 'text-amber-400'}`} />
+            <span>{hasHoneypot ? 'AI Honeypot Trap' : `Bot Trap (${botTraps.length})`}</span>
+            {botTraps[0].trigger_phrase && !hasHoneypot && (
+              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-400/50 text-amber-100 font-mono text-[10px] truncate max-w-[110px]">
+                "{botTraps[0].trigger_phrase}"
+              </span>
+            )}
+          </div>
+          <div className="text-[10px] opacity-90 line-clamp-2 leading-snug">
+            {botTraps[0].action_required}
+          </div>
+        </div>
+      )}
 
       {/* Expired Reason Banner */}
       {job.is_expired && job.expired_reason && (
@@ -183,6 +232,19 @@ export const JobCard: React.FC<JobCardProps> = ({
           >
             {job.role_track === 'manager' ? 'MGR' : 'IC'}
             {job.role_level ? ` · ${job.role_level.replace('_', ' ')}` : ''}
+          </span>
+        )}
+
+        {sourceLabel && (
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+              isMainstreamSource
+                ? 'bg-sky-950/60 text-sky-300 border-sky-700/60'
+                : 'bg-slate-900/50 text-slate-400 border-slate-700/50'
+            }`}
+            title={`Discovered via ${sourceLabel}`}
+          >
+            {sourceLabel}
           </span>
         )}
       </div>

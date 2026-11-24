@@ -14,7 +14,10 @@ import {
   RefreshCw,
   Archive,
   Bot,
-  CheckCircle2
+  CheckCircle2,
+  ShieldAlert,
+  Copy,
+  Check
 } from 'lucide-react';
 import { Job, JobStatus } from '../../types';
 import { AICopilot } from './AICopilot';
@@ -50,6 +53,7 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
   const [addingActivity, setAddingActivity] = useState(false);
   const [checkingExpiration, setCheckingExpiration] = useState(false);
   const [runningAutopilot, setRunningAutopilot] = useState(false);
+  const [copiedTrapIdx, setCopiedTrapIdx] = useState<number | null>(null);
 
   // Run Autopilot on this single job
   const handleRunJobAutopilot = async () => {
@@ -296,6 +300,79 @@ export const JobDetailDrawer: React.FC<JobDetailDrawerProps> = ({
                 </div>
               </div>
             ) : null}
+
+            {/* Bot Trap / Human Verification Alert Banner */}
+            {job.bot_traps && job.bot_traps.length > 0 && (
+              <div className="space-y-2.5">
+                {job.bot_traps.map((trap, tIdx) => {
+                  const isHoneypot = trap.type === 'ai_honeypot';
+                  return (
+                    <div
+                      key={tIdx}
+                      className={`rounded-xl p-4 border text-xs space-y-2 ${
+                        isHoneypot
+                          ? 'bg-rose-950/50 border-rose-500/60 text-rose-100'
+                          : 'bg-amber-950/50 border-amber-500/60 text-amber-100'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start space-x-2.5">
+                          <ShieldAlert
+                            className={`w-5 h-5 shrink-0 mt-0.5 ${
+                              isHoneypot ? 'text-rose-400' : 'text-amber-400'
+                            }`}
+                          />
+                          <div className="space-y-1">
+                            <div className="font-bold text-sm flex items-center flex-wrap gap-2">
+                              <span>
+                                {isHoneypot
+                                  ? 'AI / LLM Honeypot Trap Detected'
+                                  : 'Bot Trap / Human-Read Check Detected'}
+                              </span>
+                              {trap.target_field && (
+                                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-900/70 border border-amber-500/40 text-amber-200">
+                                  Where: {trap.target_field}
+                                </span>
+                              )}
+                            </div>
+                            <p className="font-semibold text-white leading-relaxed">
+                              What to do: {trap.action_required}
+                            </p>
+                          </div>
+                        </div>
+
+                        {trap.trigger_phrase && !isHoneypot && (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(trap.trigger_phrase || '');
+                              setCopiedTrapIdx(tIdx);
+                              setTimeout(() => setCopiedTrapIdx(null), 2000);
+                            }}
+                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1 transition"
+                            title="Copy required phrase to clipboard"
+                          >
+                            {copiedTrapIdx === tIdx ? (
+                              <Check className="w-3.5 h-3.5" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                            <span>
+                              {copiedTrapIdx === tIdx ? 'Copied!' : `Copy "${trap.trigger_phrase}"`}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+
+                      {trap.excerpt && (
+                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg px-3 py-2 text-[11px] italic text-amber-200/90 leading-relaxed">
+                          &ldquo;{trap.excerpt}&rdquo;
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Autopilot Status & Routing Banner */}
             {job.autopilot_status && (

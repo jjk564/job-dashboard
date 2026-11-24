@@ -22,11 +22,50 @@ logger = logging.getLogger(__name__)
 # Use realistic browser header profile instead of bot-identifying User-Agent
 HEADERS = get_stealth_headers()
 
-# Per-domain rate-limiter state & ETag delta cache for anti-bot evasion
+# Per-domain rate-limiter state, polite backoff cooldowns & ETag delta cache
 _DOMAIN_LOCKS: Dict[str, asyncio.Lock] = {}
 _DOMAIN_LAST_HIT: Dict[str, float] = {}
 _BOARD_ETAG_CACHE: Dict[str, Dict[str, Any]] = {}
 _LINKEDIN_DELTA_CACHE: Dict[str, Dict[str, Any]] = {}
+_BOARD_COOLDOWN_UNTIL: Dict[str, float] = {}
+_BOARD_RESULT_CACHE: Dict[str, Dict[str, Any]] = {}
+_BOARD_CACHE_TTL = 300.0
+
+
+def _is_board_cooling_down(board: str) -> bool:
+    return time.monotonic() < _BOARD_COOLDOWN_UNTIL.get(board, 0.0)
+
+
+def _trigger_board_cooldown(board: str, seconds: float = 120.0) -> None:
+    _BOARD_COOLDOWN_UNTIL[board] = time.monotonic() + seconds
+    logger.warning(f"Polite backoff triggered for {board} ({int(seconds)}s cooldown to avoid anti-bot limits).")
+
+
+def _unwrap_direct_job_url(direct_url: Optional[str], fallback_url: str) -> str:
+    """
+    Prefer JobSpy's `job_url_direct` (employer ATS link) over aggregator wrapper URLs
+    when clean, unwrapping common redirect wrappers (e.g. Recruitics `rx_url=`).
+    """
+    from urllib.parse import parse_qs, unquote
+    raw = str(direct_url or "").strip()
+    if not raw or raw.lower() in ("nan", "none", "null") or not raw.startswith(("http://", "https://")):
+        return fallback_url
+    try:
+        parsed = urlparse(raw)
+        qs = parse_qs(parsed.query)
+        for param in ("rx_url", "redirect_url", "dest", "target"):
+            if param in qs and qs[param]:
+                cand = unquote(qs[param][0]).strip()
+                if cand.startswith(("http://", "https://")):
+                    raw = cand
+                    break
+        # Strip noisy tracking query params from direct employer URLs while keeping ATS params like gh_jid
+        p2 = urlparse(raw)
+        if p2.scheme in ("http", "https") and p2.netloc:
+            return raw
+    except Exception:
+        pass
+    return fallback_url
 
 
 async def _domain_jitter_wait(domain: str, min_delay: float = 0.25, max_delay: float = 0.85) -> None:
@@ -874,14 +913,16 @@ def _scrape_indeed_sync(
             title = str(row.get("title") or "").strip()
             company = str(row.get("company") or "").strip()
             loc = str(row.get("location") or "USA").strip()
-            url = str(row.get("job_url") or "").strip()
-            if not title or not url or title.lower() == "nan" or url.lower() == "nan":
+            raw_url = str(row.get("job_url") or "").strip()
+            if not title or not raw_url or title.lower() == "nan" or raw_url.lower() == "nan":
                 continue
+
+            # Prefer employer's direct ATS URL when JobSpy provides job_url_direct!
+            direct_url = _unwrap_direct_job_url(row.get("job_url_direct"), raw_url)
 
             desc = clean_html(str(row.get("description") or ""))
             min_sal = float(row.get("min_amount")) if row.get("min_amount") is not None and str(row.get("min_amount")) != "nan" else None
             max_sal = float(row.get("max_amount")) if row.get("max_amount") is not None and str(row.get("max_amount")) != "nan" else None
-            # Convert hourly wages (< $200) to approximate annual salary so salary filters work consistently
             if min_sal and min_sal < 200:
                 min_sal = round(min_sal * 2080, 2)
             if max_sal and max_sal < 200:
@@ -897,7 +938,8 @@ def _scrape_indeed_sync(
                 "company": company or "Indeed Employer",
                 "location": "Remote" if job_is_remote and loc in ("", "USA") else loc,
                 "workplace_type": "remote" if job_is_remote else "hybrid",
-                "url": url,
+                "url": direct_url,
+                "source_url": raw_url,
                 "salary_min": min_sal,
                 "salary_max": max_sal,
                 "salary_currency": str(row.get("currency") or "USD") if str(row.get("currency")) != "nan" else "USD",
@@ -907,6 +949,9 @@ def _scrape_indeed_sync(
             })
         return jobs_list
     except Exception as e:
+        err_s = str(e).lower()
+        if "429" in err_s or "403" in err_s or "rate" in err_s:
+            _trigger_board_cooldown("indeed", 120.0)
         logger.warning(f"Error in Indeed JobSpy scraper: {e}")
         return []
 
@@ -914,20 +959,27 @@ async def fetch_indeed_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    include_remote: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Fetch live US listings directly from Indeed with entry-level synonym expansion and location/radius filtering."""
+    """Fetch live US listings directly from Indeed with polite jittered pacing, local + remote coverage, and caching."""
+    if _is_board_cooling_down("indeed"):
+        return []
+
+    cache_key = f"indeed|{(query or '').lower().strip()}|{us_only}|{(location or '').lower().strip()}|{radius}|{include_remote}"
+    cached = _BOARD_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached["ts"]) < _BOARD_CACHE_TTL:
+        return list(cached["jobs"])
+
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
     is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
 
-    # Clean query for search_term: remove the word 'remote' so Indeed gets the pure job title
     clean_term = re.sub(r"\b(remote|wfh|work from home)\b", "", q_lower, flags=re.I).strip()
     clean_term = re.sub(r"[/,()+-]", " ", clean_term)
     clean_term = " ".join(clean_term.split())
     search_term = clean_term if clean_term else "Software Developer"
 
-    # Strip junior tokens to isolate the core role/tech discipline
     core_term = re.sub(
         r"\b(junior|jr|entry\s+level|entry|associate|new\s+grad|early\s+career|intern|internship|level)\b",
         "",
@@ -936,12 +988,14 @@ async def fetch_indeed_jobs(
     )
     core_term = " ".join(core_term.split()).strip()
     if not core_term:
-        core_term = "software developer"
+        core_term = "software engineer"
 
-    # User-specified target location
-    target_loc = location.strip() if location and location.strip() else None
+    target_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").strip() if location and location.strip() else None
+    if target_loc and target_loc.lower() in ("remote", "united states", "us", "usa"):
+        target_loc = None
+
     if is_remote_query:
-        loc_str = "Remote"
+        loc_str = "United States"
     elif target_loc:
         loc_str = target_loc
     else:
@@ -950,35 +1004,31 @@ async def fetch_indeed_jobs(
     distance_val = radius if (target_loc and radius) else (50 if target_loc else None)
 
     try:
-        if is_junior_query:
-            # Quoted "entry level" and targeted junior/associate queries dramatically boost genuine entry-level results on Indeed
-            if core_term.lower() in ("developer", "software developer", "software engineer", "engineer"):
-                q1 = '"entry level" software developer'
-                q2 = 'junior software engineer'
-                q3 = 'associate software engineer'
-            else:
-                q1 = f'"entry level" {core_term}'
-                q2 = f'junior {core_term}'
-                q3 = f'associate {core_term}'
+        # Polite sequential staggered queries (never hammer Indeed with 3 simultaneous bursts!)
+        primary_q = (
+            f"entry level {core_term}"
+            if is_junior_query and core_term.lower() not in ("developer", "software developer", "software engineer", "engineer")
+            else ("entry level software engineer" if is_junior_query else search_term)
+        )
+        raw_jobs: List[Dict[str, Any]] = []
 
-            t1 = asyncio.to_thread(_scrape_indeed_sync, q1, loc_str, is_remote_query, 55, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, q2, loc_str, is_remote_query, 55, distance_val)
-            t3 = asyncio.to_thread(_scrape_indeed_sync, q3, loc_str, is_remote_query, 45, distance_val)
-            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
-            raw_jobs = []
-            for r in res:
-                if isinstance(r, list):
-                    raw_jobs.extend(r)
-        else:
-            # Include concurrent entry-level and associate batches so general searches also surface entry-level opportunities
-            t1 = asyncio.to_thread(_scrape_indeed_sync, search_term, loc_str, is_remote_query, 65, distance_val)
-            t2 = asyncio.to_thread(_scrape_indeed_sync, f"associate {search_term}", loc_str, is_remote_query, 35, distance_val)
-            t3 = asyncio.to_thread(_scrape_indeed_sync, f"junior {search_term}", loc_str, is_remote_query, 25, distance_val)
-            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
-            raw_jobs = []
-            for r in res:
-                if isinstance(r, list):
-                    raw_jobs.extend(r)
+        await _domain_jitter_wait("indeed.com", min_delay=0.4, max_delay=1.0)
+        batch1 = await asyncio.to_thread(_scrape_indeed_sync, primary_q, loc_str, is_remote_query, 30, distance_val)
+        if isinstance(batch1, list):
+            raw_jobs.extend(batch1)
+
+        # If searching a specific city AND remote is enabled, politely fetch a US Remote batch as well
+        if include_remote and target_loc and not is_remote_query and not _is_board_cooling_down("indeed"):
+            await _domain_jitter_wait("indeed.com", min_delay=0.6, max_delay=1.3)
+            remote_q = f"junior {core_term}" if is_junior_query else search_term
+            batch2 = await asyncio.to_thread(_scrape_indeed_sync, remote_q, "United States", True, 25, None)
+            if isinstance(batch2, list):
+                raw_jobs.extend(batch2)
+        elif not target_loc and is_junior_query and len(raw_jobs) < 15 and not _is_board_cooling_down("indeed"):
+            await _domain_jitter_wait("indeed.com", min_delay=0.6, max_delay=1.3)
+            batch2 = await asyncio.to_thread(_scrape_indeed_sync, f"junior {core_term}", loc_str, is_remote_query, 25, distance_val)
+            if isinstance(batch2, list):
+                raw_jobs.extend(batch2)
 
         filtered = []
         seen = set()
@@ -996,6 +1046,7 @@ async def fetch_indeed_jobs(
             ):
                 continue
             filtered.append(j)
+        _BOARD_RESULT_CACHE[cache_key] = {"ts": time.monotonic(), "jobs": list(filtered)}
         return filtered
     except Exception as e:
         logger.warning(f"Error fetching Indeed jobs: {e}")
@@ -1038,8 +1089,13 @@ def _scrape_ziprecruiter_sync(
         seen_keys = set()
 
         for page in range(1, max_pages + 1):
+            if page > 1:
+                time.sleep(random.uniform(0.65, 1.35))
             url = f"https://www.ziprecruiter.com/jobs-search?search={encoded_q}&location={loc_param}{radius_query}&page={page}"
             r = s.get(url, timeout=12)
+            if r.status_code in (403, 429):
+                _trigger_board_cooldown("ziprecruiter", 120.0)
+                break
             if r.status_code != 200:
                 break
 
@@ -1181,9 +1237,18 @@ async def fetch_ziprecruiter_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    include_remote: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Fetch live US listings directly from ZipRecruiter with multi-query & multi-page expansion and location/radius filtering."""
+    """Fetch live US listings from ZipRecruiter with polite sequential pacing and TTL caching."""
+    if _is_board_cooling_down("ziprecruiter"):
+        return []
+
+    cache_key = f"ziprecruiter|{(query or '').lower().strip()}|{us_only}|{(location or '').lower().strip()}|{radius}|{include_remote}"
+    cached = _BOARD_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached["ts"]) < _BOARD_CACHE_TTL:
+        return list(cached["jobs"])
+
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
     is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
@@ -1200,37 +1265,26 @@ async def fetch_ziprecruiter_jobs(
     )
     core_term = " ".join(core_term.split()).strip()
     if not core_term:
-        core_term = "software developer"
+        core_term = "software engineer"
+
+    clean_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").strip() if location and location.strip() else None
+    if clean_loc and clean_loc.lower() in ("remote", "united states", "us", "usa"):
+        clean_loc = None
 
     try:
-        if is_junior_query:
-            if core_term.lower() in ("developer", "software developer", "software engineer", "engineer"):
-                q1 = "junior software developer"
-                q2 = "entry level software engineer"
-                q3 = "associate software engineer"
-            else:
-                q1 = f"junior {core_term}"
-                q2 = f"entry level {core_term}"
-                q3 = f"associate {core_term}"
+        raw_jobs: List[Dict[str, Any]] = []
+        primary_q = f"entry level {core_term}" if is_junior_query else (clean_term or "software engineer")
+        await _domain_jitter_wait("ziprecruiter.com", min_delay=0.5, max_delay=1.2)
+        b1 = await asyncio.to_thread(_scrape_ziprecruiter_sync, primary_q, us_only, is_remote_query, 2, clean_loc, radius)
+        if isinstance(b1, list):
+            raw_jobs.extend(b1)
 
-            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, q1, us_only, is_remote_query, 3, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, q2, us_only, is_remote_query, 3, location, radius)
-            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, q3, us_only, is_remote_query, 2, location, radius)
-            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
-            raw_jobs = []
-            for r in res:
-                if isinstance(r, list):
-                    raw_jobs.extend(r)
-        else:
-            search_term = clean_term if clean_term else "Software Developer"
-            t1 = asyncio.to_thread(_scrape_ziprecruiter_sync, search_term, us_only, is_remote_query, 4, location, radius)
-            t2 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"associate {search_term}", us_only, is_remote_query, 2, location, radius)
-            t3 = asyncio.to_thread(_scrape_ziprecruiter_sync, f"junior {search_term}", us_only, is_remote_query, 2, location, radius)
-            res = await asyncio.gather(t1, t2, t3, return_exceptions=True)
-            raw_jobs = []
-            for r in res:
-                if isinstance(r, list):
-                    raw_jobs.extend(r)
+        if include_remote and clean_loc and not is_remote_query and not _is_board_cooling_down("ziprecruiter"):
+            await _domain_jitter_wait("ziprecruiter.com", min_delay=0.8, max_delay=1.5)
+            rem_q = f"junior {core_term}" if is_junior_query else primary_q
+            b2 = await asyncio.to_thread(_scrape_ziprecruiter_sync, rem_q, us_only, True, 1, None, None)
+            if isinstance(b2, list):
+                raw_jobs.extend(b2)
 
         filtered = []
         seen = set()
@@ -1248,6 +1302,7 @@ async def fetch_ziprecruiter_jobs(
             ):
                 continue
             filtered.append(j)
+        _BOARD_RESULT_CACHE[cache_key] = {"ts": time.monotonic(), "jobs": list(filtered)}
         return filtered
     except Exception as e:
         logger.warning(f"Error fetching ZipRecruiter jobs: {e}")
@@ -1369,9 +1424,10 @@ def _scrape_jobspy_board_sync(
             title = str(row.get("title") or "").strip()
             company = str(row.get("company") or "").strip()
             loc = str(row.get("location") or "USA").strip()
-            url = str(row.get("job_url") or "").strip()
-            if not title or not url or title.lower() == "nan" or url.lower() == "nan":
+            raw_url = str(row.get("job_url") or "").strip()
+            if not title or not raw_url or title.lower() == "nan" or raw_url.lower() == "nan":
                 continue
+            direct_url = _unwrap_direct_job_url(row.get("job_url_direct"), raw_url)
             if company.lower() == "nan" or not company:
                 company = f"{site_name.capitalize()} Employer"
             if loc.lower() == "nan" or not loc:
@@ -1406,7 +1462,8 @@ def _scrape_jobspy_board_sync(
                 "company": company,
                 "location": "Remote" if job_is_remote and loc in ("", "USA") else loc,
                 "workplace_type": "remote" if job_is_remote else "hybrid",
-                "url": url,
+                "url": direct_url,
+                "source_url": raw_url,
                 "salary_min": min_sal,
                 "salary_max": max_sal,
                 "salary_currency": str(row.get("currency") or "USD") if str(row.get("currency")) != "nan" else "USD",
@@ -1416,6 +1473,9 @@ def _scrape_jobspy_board_sync(
             })
         return jobs_list
     except Exception as e:
+        err_s = str(e).lower()
+        if "429" in err_s or "403" in err_s or "rate" in err_s:
+            _trigger_board_cooldown(site_name, 120.0)
         logger.warning(f"Error in {site_name} JobSpy scraper: {e}")
         return []
 
@@ -1424,9 +1484,18 @@ async def _fetch_jobspy_board_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    include_remote: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Generic async wrapper for LinkedIn and Glassdoor JobSpy scrapers with entry-level query expansion."""
+    """Generic async wrapper for LinkedIn and Glassdoor JobSpy scrapers with polite sequential pacing & caching."""
+    if _is_board_cooling_down(site_name):
+        return []
+
+    cache_key = f"jobspy_{site_name}|{(query or '').lower().strip()}|{us_only}|{(location or '').lower().strip()}|{radius}|{include_remote}"
+    cached = _BOARD_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached["ts"]) < _BOARD_CACHE_TTL:
+        return list(cached["jobs"])
+
     q_lower = (query or "").lower().strip()
     is_remote_query = any(w in q_lower for w in ("remote", "wfh", "work from home"))
     is_junior_query = any(w in q_lower for w in ("junior", "jr", "entry", "entry-level", "associate", "intern", "new grad"))
@@ -1444,7 +1513,10 @@ async def _fetch_jobspy_board_jobs(
     )
     core_term = " ".join(core_term.split()).strip() or "software engineer"
 
-    target_loc = location.strip() if location and location.strip() else None
+    target_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").strip() if location and location.strip() else None
+    if target_loc and target_loc.lower() in ("remote", "united states", "us", "usa"):
+        target_loc = None
+
     if is_remote_query:
         loc_str = "United States"
     elif target_loc:
@@ -1455,21 +1527,20 @@ async def _fetch_jobspy_board_jobs(
     distance_val = radius if (target_loc and radius) else (50 if target_loc else None)
 
     try:
-        if is_junior_query:
-            q1 = f"entry level {core_term}"
-            q2 = f"junior {core_term}"
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q1, loc_str, is_remote_query, 45, distance_val)
-            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, q2, loc_str, is_remote_query, 45, distance_val)
-            res = await asyncio.gather(t1, t2, return_exceptions=True)
-        else:
-            t1 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, search_term, loc_str, is_remote_query, 60, distance_val)
-            t2 = asyncio.to_thread(_scrape_jobspy_board_sync, site_name, f"associate {search_term}", loc_str, is_remote_query, 35, distance_val)
-            res = await asyncio.gather(t1, t2, return_exceptions=True)
+        primary_q = f"entry level {core_term}" if is_junior_query else search_term
+        raw_jobs: List[Dict[str, Any]] = []
 
-        raw_jobs = []
-        for r in res:
-            if isinstance(r, list):
-                raw_jobs.extend(r)
+        await _domain_jitter_wait(f"{site_name}.com", min_delay=0.5, max_delay=1.2)
+        b1 = await asyncio.to_thread(_scrape_jobspy_board_sync, site_name, primary_q, loc_str, is_remote_query, 30, distance_val)
+        if isinstance(b1, list):
+            raw_jobs.extend(b1)
+
+        if include_remote and target_loc and not is_remote_query and not _is_board_cooling_down(site_name):
+            await _domain_jitter_wait(f"{site_name}.com", min_delay=0.7, max_delay=1.4)
+            rem_q = f"junior {core_term}" if is_junior_query else search_term
+            b2 = await asyncio.to_thread(_scrape_jobspy_board_sync, site_name, rem_q, "United States", True, 20, None)
+            if isinstance(b2, list):
+                raw_jobs.extend(b2)
 
         filtered = []
         seen = set()
@@ -1487,6 +1558,7 @@ async def _fetch_jobspy_board_jobs(
             ):
                 continue
             filtered.append(j)
+        _BOARD_RESULT_CACHE[cache_key] = {"ts": time.monotonic(), "jobs": list(filtered)}
         return filtered
     except Exception as e:
         logger.warning(f"Error fetching {site_name} jobs: {e}")
@@ -1511,11 +1583,18 @@ async def _fetch_linkedin_guest_api(
     clean_term = re.sub(r"[/,()+-]", " ", clean_term)
     clean_term = " ".join(clean_term.split()) or "software engineer"
 
-    loc_str = location.strip() if (location and location.strip()) else ("United States" if us_only else "Worldwide")
+    clean_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").strip() if (location and location.strip()) else ""
+    if clean_loc.lower() in ("remote", "united states", "us", "usa"):
+        clean_loc = ""
+    loc_str = clean_loc if clean_loc else ("United States" if us_only else "Worldwide")
     base_url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 
+    # Strip junior words from LinkedIn keywords when f_E=1,2,3 handles experience level natively
+    li_keywords = re.sub(r"\b(entry\s+level|junior|jr)\b", "", clean_term, flags=re.I).strip() or "software engineer"
+    li_keywords = " ".join(li_keywords.split())
+
     params: Dict[str, Any] = {
-        "keywords": clean_term,
+        "keywords": li_keywords,
         "location": loc_str,
         "start": 0,
     }
@@ -1523,11 +1602,14 @@ async def _fetch_linkedin_guest_api(
         params["f_WT"] = "2"  # LinkedIn Remote workplace code
     if is_junior_query:
         params["f_E"] = "1,2,3"  # Internship, Entry level, Associate
-    if radius and location and location.strip():
+    if radius and clean_loc:
         params["distance"] = radius
 
     results: List[Dict[str, Any]] = []
     seen_ids = set()
+
+    if _is_board_cooling_down("linkedin"):
+        return []
 
     try:
         from curl_cffi.requests import AsyncSession
@@ -1542,18 +1624,14 @@ async def _fetch_linkedin_guest_api(
             session_kwargs["proxies"] = {"http": proxy, "https": proxy}
 
         async with AsyncSession(**session_kwargs) as session:
-            for start_offset in (0, 25):
-                await _domain_jitter_wait("linkedin.com", min_delay=0.35, max_delay=1.15)
-                page_params = dict(params, start=start_offset)
-                resp = await session.get(base_url, params=page_params, allow_redirects=True)
-                if resp.status_code != 200 or not resp.text.strip():
-                    break
-
+            # Fetch a single polite page (up to 25 cards) per call to avoid triggering LinkedIn Guest API 429 limits
+            await _domain_jitter_wait("linkedin.com", min_delay=1.1, max_delay=2.0)
+            resp = await session.get(base_url, params=params, allow_redirects=True)
+            if resp.status_code in (429, 403):
+                _trigger_board_cooldown("linkedin", 90.0)
+            elif resp.status_code == 200 and resp.text.strip():
                 soup = BeautifulSoup(resp.text, "html.parser")
                 cards = soup.find_all("li") or soup.find_all("div", class_=re.compile(r"base-card", re.I))
-                if not cards:
-                    break
-
                 for card in cards:
                     urn_div = card.find(attrs={"data-entity-urn": True})
                     urn = urn_div["data-entity-urn"] if urn_div else ""
@@ -1578,7 +1656,6 @@ async def _fetch_linkedin_guest_api(
                     if job_id:
                         seen_ids.add(job_id)
 
-                    # Check delta cache so known job IDs reuse previously parsed metadata
                     if job_id and job_id in _LINKEDIN_DELTA_CACHE:
                         cached_item = dict(_LINKEDIN_DELTA_CACHE[job_id])
                         results.append(cached_item)
@@ -1590,8 +1667,13 @@ async def _fetch_linkedin_guest_api(
                     tags = ["linkedin", "guest-api", "direct-hire"]
                     if card_remote:
                         tags.append("remote")
+                    if is_junior_query and not _is_senior_or_mid_title(title):
+                        tags.append("entry-level")
 
-                    desc = f"{title} ({loc}) at {company}. Matched search criteria: {clean_term}."
+                    desc = (
+                        f"{'Entry-Level ' if (is_junior_query and not _is_senior_or_mid_title(title)) else ''}"
+                        f"{title} ({loc}) at {company}. Matched LinkedIn criteria: {clean_term}."
+                    )
                     item = {
                         "title": title,
                         "company": company or "LinkedIn Employer",
@@ -1618,21 +1700,40 @@ async def fetch_linkedin_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    include_remote: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     Fetch live US listings from LinkedIn using the zero-auth TLS-impersonated Guest API
-    with JobSpy fallback, deduplicated and filtered for US & query eligibility.
+    (local + remote when applicable), falling back to JobSpy ONLY if Guest API returns <5 results
+    so we never hit LinkedIn with redundant parallel bursts.
     """
-    guest_task = _fetch_linkedin_guest_api(query=query, us_only=us_only, location=location, radius=radius)
-    jobspy_task = _fetch_jobspy_board_jobs("linkedin", query=query, us_only=us_only, location=location, radius=radius)
-    guest_jobs, jobspy_jobs = await asyncio.gather(guest_task, jobspy_task, return_exceptions=True)
+    if _is_board_cooling_down("linkedin"):
+        return []
+
+    cache_key = f"linkedin|{(query or '').lower().strip()}|{us_only}|{(location or '').lower().strip()}|{radius}|{include_remote}"
+    cached = _BOARD_RESULT_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached["ts"]) < _BOARD_CACHE_TTL:
+        return list(cached["jobs"])
 
     combined: List[Dict[str, Any]] = []
+    guest_jobs = await _fetch_linkedin_guest_api(query=query, us_only=us_only, location=location, radius=radius)
     if isinstance(guest_jobs, list):
         combined.extend(guest_jobs)
-    if isinstance(jobspy_jobs, list):
-        combined.extend(jobspy_jobs)
+
+    # If a local city was provided and remote is enabled, also do one polite US-Remote guest fetch
+    clean_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").strip() if location else ""
+    if include_remote and clean_loc and "remote" not in (query or "").lower() and not _is_board_cooling_down("linkedin"):
+        remote_q = f"{query or 'software engineer'} remote"
+        remote_guest = await _fetch_linkedin_guest_api(query=remote_q, us_only=us_only, location="United States", radius=None)
+        if isinstance(remote_guest, list):
+            combined.extend(remote_guest)
+
+    # Only fall back to JobSpy if Guest API yielded very few listings
+    if len(combined) < 5 and not _is_board_cooling_down("linkedin"):
+        jobspy_jobs = await _fetch_jobspy_board_jobs("linkedin", query=query, us_only=us_only, location=location, radius=radius, include_remote=include_remote)
+        if isinstance(jobspy_jobs, list):
+            combined.extend(jobspy_jobs)
 
     filtered = []
     seen = set()
@@ -1650,16 +1751,18 @@ async def fetch_linkedin_jobs(
             continue
         seen.add(key)
         filtered.append(j)
+    _BOARD_RESULT_CACHE[cache_key] = {"ts": time.monotonic(), "jobs": list(filtered)}
     return filtered
 
 async def fetch_glassdoor_jobs(
     query: Optional[str] = None,
     us_only: bool = True,
     location: Optional[str] = None,
-    radius: Optional[int] = None
+    radius: Optional[int] = None,
+    include_remote: bool = True,
 ) -> List[Dict[str, Any]]:
     """Fetch live US listings with salary data from Glassdoor via JobSpy."""
-    return await _fetch_jobspy_board_jobs("glassdoor", query=query, us_only=us_only, location=location, radius=radius)
+    return await _fetch_jobspy_board_jobs("glassdoor", query=query, us_only=us_only, location=location, radius=radius, include_remote=include_remote)
 
 
 # 11. The Muse Public API (Zero-Auth JSON API with Native Experience Level & Tech Categories)
@@ -2709,13 +2812,13 @@ async def search_aggregated_jobs(
     if source_lower in ("all", "simplify"):
         tasks.append(fetch_simplify_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "indeed"):
-        tasks.append(fetch_indeed_jobs(query, us_only=us_only, location=location, radius=radius))
+        tasks.append(fetch_indeed_jobs(query, us_only=us_only, location=location, radius=radius, include_remote=include_remote))
     if source_lower in ("all", "linkedin"):
-        tasks.append(fetch_linkedin_jobs(query, us_only=us_only, location=location, radius=radius))
+        tasks.append(fetch_linkedin_jobs(query, us_only=us_only, location=location, radius=radius, include_remote=include_remote))
     if source_lower in ("all", "glassdoor"):
-        tasks.append(fetch_glassdoor_jobs(query, us_only=us_only, location=location, radius=radius))
+        tasks.append(fetch_glassdoor_jobs(query, us_only=us_only, location=location, radius=radius, include_remote=include_remote))
     if source_lower in ("all", "ziprecruiter"):
-        tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only, location=location, radius=radius))
+        tasks.append(fetch_ziprecruiter_jobs(query, us_only=us_only, location=location, radius=radius, include_remote=include_remote))
     if source_lower in ("all", "themuse"):
         tasks.append(fetch_themuse_jobs(query, us_only=us_only, location=location, include_remote=include_remote))
     if source_lower in ("all", "adzuna"):

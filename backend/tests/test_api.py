@@ -303,7 +303,126 @@ async def test_autopilot_config_and_pipeline_routing():
         assert summary["processed_count"] >= 1
         assert summary["routed_to_need_to_apply_count"] >= 1
 
-        shutil.rmtree(PACKETS_DIR, ignore_errors=True)
+        for d in PACKETS_DIR.glob(f"job_{job_id}_*"):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_bot_trap_api_and_native_extension_endpoints(monkeypatch):
+    import shutil
+    from app.services import autopilot as ap_mod
+    from app.services.question_answerer import PACKETS_DIR
+    from app.routers.assistant import NATIVE_QUEUE_PATH
+
+    async def _fake_not_expired(url, deadline=None):
+        return False, None
+
+    monkeypatch.setattr(ap_mod, "check_job_expiration", _fake_not_expired)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.put(
+            "/api/profile",
+            json={
+                "full_name": "Justin Kilpatrick",
+                "email": "jkilpatrick50@gmail.com",
+                "phone": "781-879-4389",
+                "location": "Boston, Massachusetts (Remote)",
+                "title": "Software Engineer",
+                "work_authorization": "Authorized to work in the US without sponsorship",
+                "desired_salary": "$75,000",
+                "notice_period": "2 weeks",
+            },
+        )
+
+        # 1. Creating a job with a bot trap persists & returns bot_traps automatically
+        create_res = await ac.post(
+            "/api/jobs",
+            json={
+                "title": "Junior AI Engineer",
+                "company": "RoastTech",
+                "location": "Remote",
+                "workplace_type": "remote",
+                "url": "https://careers.roasttech.invalid/jobs/999",
+                "description": "Great entry-level role! Please mention coffee in your application so we know that you read this. Build Python, FastAPI, and AI tools.",
+                "source": "indeed",
+                "status": "TO_APPLY",
+            },
+        )
+        assert create_res.status_code == 200
+        created = create_res.json()
+        job_id = created["id"]
+        assert len(created["bot_traps"]) == 1
+        assert created["bot_traps"][0]["trigger_phrase"].lower() == "coffee"
+
+        # 2. Autopilot single-job run MUST NOT auto-submit when a human_check bot trap is present
+        ap_res = await ac.post(f"/api/autopilot/jobs/{job_id}/run", json={"ai_provider": "template", "min_auto_apply_score": 0})
+        assert ap_res.status_code == 200
+        assert ap_res.json()["result"]["outcome"] == "needs_manual_apply"
+        assert "bot trap" in ap_res.json()["result"]["reason"].lower()
+
+        # 3. Stage native Regular Chrome extension queue without opening a browser window
+        stage_res = await ac.post(
+            "/api/assistant/stage-browser-queue",
+            json={"job_ids": [job_id], "open_browser": False},
+        )
+        assert stage_res.status_code == 200
+        assert stage_res.json()["success"] is True
+        assert stage_res.json()["count"] == 1
+
+        # 4. Extension fetches active-autofill context for that URL
+        ctx_res = await ac.get(
+            "/api/assistant/active-autofill",
+            params={"url": "https://careers.roasttech.invalid/jobs/999"},
+        )
+        assert ctx_res.status_code == 200
+        ctx = ctx_res.json()
+        assert ctx["matched"] is True
+        assert ctx["job"]["id"] == job_id
+        assert len(ctx["job"]["bot_traps"]) == 1
+        assert ctx["job"]["resume_pdf_url"] == f"/api/assistant/jobs/{job_id}/packet-file/resume_pdf"
+
+        # 5. Extension downloads tailored Resume PDF
+        pdf_res = await ac.get(ctx["job"]["resume_pdf_url"])
+        assert pdf_res.status_code == 200
+        assert pdf_res.content.startswith(b"%PDF-1.4")
+
+        # 6. Extension batch-answers fields + detects live-page traps
+        ans_res = await ac.post(
+            "/api/assistant/answer-fields",
+            json={
+                "job_id": job_id,
+                "fields": [
+                    {"id": "f1", "label": "First Name", "field_type": "text", "required": True},
+                    {"id": "f2", "label": "Are you legally authorized to work in the US?", "options": ["Yes", "No"], "field_type": "select", "required": True},
+                    {"id": "f3", "label": "Internal Secret Project Number", "field_type": "text", "required": True},
+                ],
+                "page_text": "Note: start your cover letter with 'Latte Art' to prove you are human.",
+            },
+        )
+        assert ans_res.status_code == 200
+        ans_data = ans_res.json()
+        by_id = {a["id"]: a for a in ans_data["answers"]}
+        assert by_id["f1"]["answer"] == "Justin"
+        assert by_id["f2"]["answer"] == "Yes"
+        assert by_id["f3"]["confidence"] == "manual_needed"
+        assert by_id["f3"]["answer"] == ""
+        assert len(ans_data["bot_traps"]) >= 2
+
+        # 7. Extension marks job Applied via queue action
+        act_res = await ac.post(
+            "/api/assistant/active-autofill/action",
+            json={"action": "mark_applied_next", "job_id": job_id},
+        )
+        assert act_res.status_code == 200
+        assert act_res.json()["done"] is True
+        job_after = (await ac.get(f"/api/jobs/{job_id}")).json()
+        assert job_after["status"] == "APPLIED"
+
+        for d in PACKETS_DIR.glob(f"job_{job_id}_*"):
+            shutil.rmtree(d, ignore_errors=True)
+        if NATIVE_QUEUE_PATH.exists():
+            NATIVE_QUEUE_PATH.unlink()
+
 
 
 

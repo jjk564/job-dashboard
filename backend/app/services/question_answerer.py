@@ -10,8 +10,9 @@ Intelligent Application Question Answering & Document Export Engine for JobPulse
 import os
 import re
 import logging
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,68 @@ def _match_option(options: Optional[List[str]], preferred_patterns: List[str]) -
     return None
 
 
+_US_STATE_FULL_TO_ABBR = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO",
+    "montana": "MT", "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
+    "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", "ohio": "OH",
+    "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+    "virginia": "VA", "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "district of columbia": "DC",
+}
+_US_ABBR_TO_FULL = {v.lower(): k.title() for k, v in _US_STATE_FULL_TO_ABBR.items()}
+
+
+def _parse_profile_location_parts(location: str) -> Tuple[str, str, str, str]:
+    """
+    Splits a profile location like 'Boston, Massachusetts (Remote)' or 'Austin, TX'
+    into (clean_full, city, state_full, state_abbr).
+    """
+    clean_loc = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location or "").split("-")[0].strip()
+    if not clean_loc or clean_loc.lower() in ("remote", "united states", "us", "usa"):
+        return ("Boston, MA", "Boston", "Massachusetts", "MA")
+    parts = [p.strip() for p in clean_loc.split(",") if p.strip()]
+    city = parts[0] if parts else "Boston"
+    state_full = ""
+    state_abbr = ""
+    if len(parts) >= 2:
+        raw_st = parts[1].strip()
+        raw_st_low = raw_st.lower()
+        if raw_st_low in _US_STATE_FULL_TO_ABBR:
+            state_full = raw_st.title()
+            state_abbr = _US_STATE_FULL_TO_ABBR[raw_st_low]
+        elif raw_st_low in _US_ABBR_TO_FULL:
+            state_abbr = raw_st.upper()
+            state_full = _US_ABBR_TO_FULL[raw_st_low]
+        else:
+            state_full = raw_st
+            state_abbr = raw_st
+    clean_display = f"{city}, {state_abbr}" if state_abbr else clean_loc
+    return (clean_display, city, state_full, state_abbr)
+
+
+def _extract_current_company(profile_data: Dict[str, Any]) -> str:
+    """Determines the candidate's current/most-recent employer from profile or master resume."""
+    direct = (profile_data.get("company") or profile_data.get("current_company") or "").strip()
+    if direct:
+        return direct
+    resume = (profile_data.get("master_resume_text") or "").strip()
+    if resume:
+        # Look for lines like "Hyperice | ..." or "Software Engineer at Hyperice" or "Hyperice — ..."
+        m = re.search(r"(?:^|\n)\s*(?:#{1,4}\s*)?(?:\*\*)?([A-Z][A-Za-z0-9 .&-]{2,35})(?:\*\*)?\s*(?:\||—|–|-)\s*(?:.*?(?:202\d|Present|Current))", resume)
+        if m:
+            cand = m.group(1).strip()
+            if cand.lower() not in ("experience", "work experience", "education", "projects", "skills", "summary"):
+                return cand
+        if "hyperice" in resume.lower():
+            return "Hyperice"
+    return "Hyperice"
+
+
 def answer_single_question(
     question_text: str,
     job_data: Dict[str, Any],
@@ -254,7 +317,8 @@ def answer_single_question(
       }
     """
     q_raw = (question_text or "").strip()
-    q = q_raw.lower()
+    q = " ".join(q_raw.lower().split())
+    ftype = (field_type or "text").lower().strip()
 
     full_name = (profile_data.get("full_name") or "").strip()
     name_parts = full_name.split()
@@ -263,8 +327,9 @@ def answer_single_question(
     email = (profile_data.get("email") or "").strip()
     phone = (profile_data.get("phone") or "").strip()
     location = (profile_data.get("location") or "Remote, US").strip()
-    clean_location = re.sub(r"[\(\[\{].*?[\)\]\}]", "", location).split("-")[0].strip() or "Boston, MA"
+    clean_location, city_only, state_full, state_abbr = _parse_profile_location_parts(location)
     title = (profile_data.get("title") or "Software Engineer").strip()
+    current_company = _extract_current_company(profile_data)
     summary = (profile_data.get("summary") or "").strip()
     linkedin = (profile_data.get("linkedin_url") or "").strip()
     github = (profile_data.get("github_url") or "").strip()
@@ -296,29 +361,106 @@ def answer_single_question(
         matched_skills = list(skill_map.keys())[:5]
     skills_str = ", ".join(matched_skills[:4]) if matched_skills else "Python, TypeScript, SQL, and modern systems"
 
-    # 1. Standard Contact / Identity Fields
-    if any(k in q for k in ("first name", "given name", "firstname")):
+    # Helper to determine if options look like a Yes/No choice
+    is_yes_no_options = bool(
+        options
+        and len(options) <= 4
+        and any(re.search(r"\byes\b", o.lower()) for o in options)
+        and any(re.search(r"\bno\b", o.lower()) for o in options)
+    )
+
+    # 0. Consent / SMS / Email Communication Opt-In / Privacy Policy / Certification
+    # Evaluated BEFORE contact/email/OPT rules so "receive email updates" or "opt out" never triggers email/visa rules!
+    if any(k in q for k in (
+        "text message", "text messages", "sms opt", "sms updates", "receive text message",
+        "receive text", "text messaging", "email updates", "receive emails", "contact you via email",
+        "contact you by email", "job alerts", "future opportunities", "talent network",
+    )):
+        opt = _match_option(options, ["yes - i consent to receiving text messages", "yes - i consent", "i consent", "yes", "true", "agree", "accept"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "consent",
+            "confidence": "high",
+        }
+    if any(k in q for k in (
+        "privacy policy", "privacy notice", "acknowledge", "certify that", "consent to",
+        "terms and conditions", "terms of service", "agree to", "data processing",
+        "gdpr", "candidate privacy", "i confirm that", "true and accurate",
+    )):
+        opt = _match_option(options, ["yes", "i agree", "i acknowledge", "i consent", "accept", "agree", "confirm"])
+        return {
+            "question": q_raw,
+            "answer": opt or "Yes",
+            "category": "consent",
+            "confidence": "high",
+        }
+
+    # 1. Referral & "How did you hear about us?" (evaluated BEFORE LinkedIn/Website/Email/Name rules!)
+    if any(k in q for k in (
+        "refer you", "referred you", "referral name", "who referred", "were you referred",
+        "employee referral", "referred by an employee", "referrer",
+    )):
+        if is_yes_no_options:
+            opt = _match_option(options, ["no", "none", "neither"])
+            return {"question": q_raw, "answer": opt or "No", "category": "referral", "confidence": "high"}
+        opt = _match_option(options, ["no", "none", "n/a", "neither", "not applicable"])
+        return {
+            "question": q_raw,
+            "answer": opt or "N/A",
+            "category": "referral",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in (
+        "how did you hear", "how did you learn about", "how did you find", "where did you see",
+        "where did you hear", "where did you find", "referred by", "application source", "job source",
+    )) or (q in ("source", "referral source", "lead source") and "open source" not in q):
+        src = job_data.get("source") or "Company Career Board"
+        preferred = ["job board", "company website", "career page", "careers page", "linkedin", "indeed", "online job board", "other"]
+        if src.lower() in ("linkedin", "indeed", "glassdoor", "ziprecruiter"):
+            preferred.insert(0, src.lower())
+        opt = _match_option(options, preferred)
+        return {
+            "question": q_raw,
+            "answer": opt or (f"{src.title()}" if src.lower() in ("linkedin", "indeed", "glassdoor", "ziprecruiter") else "Company Career Page"),
+            "category": "referral",
+            "confidence": "high",
+        }
+
+    # 2. Standard Contact / Identity Fields
+    if any(k in q for k in ("first name", "given name", "firstname")) and not any(x in q for x in ("refer", "manager", "supervisor", "emergency")):
         return {
             "question": q_raw,
             "answer": first_name,
             "category": "contact",
             "confidence": "high" if first_name else "manual_needed",
         }
-    if any(k in q for k in ("last name", "family name", "surname", "lastname")):
+    if any(k in q for k in ("last name", "family name", "surname", "lastname")) and not any(x in q for x in ("refer", "manager", "supervisor", "emergency")):
         return {
             "question": q_raw,
             "answer": last_name or first_name,
             "category": "contact",
             "confidence": "high" if (last_name or first_name) else "manual_needed",
         }
-    if q in ("name", "full name", "your name", "legal name", "candidate name") or "legal name" in q:
+    if any(k in q for k in ("middle name", "middle initial")):
+        return {
+            "question": q_raw,
+            "answer": "",
+            "category": "contact",
+            "confidence": "high",
+        }
+    if (
+        q in ("name", "full name", "your name", "legal name", "candidate name", "applicant name")
+        or any(k in q for k in ("legal name", "full name", "your full name", "candidate's name", "signature"))
+    ) and not any(x in q for x in ("refer", "company", "employer", "school", "university", "manager", "supervisor", "emergency")):
         return {
             "question": q_raw,
             "answer": full_name,
             "category": "contact",
             "confidence": "high" if full_name else "manual_needed",
         }
-    if "preferred name" in q:
+    if "preferred name" in q or "nickname" in q:
         return {
             "question": q_raw,
             "answer": first_name or full_name,
@@ -333,14 +475,22 @@ def answer_single_question(
             "category": "contact",
             "confidence": "high",
         }
-    if "email" in q:
+    if "email" in q and not any(x in q for x in ("refer", "manager", "supervisor", "emergency", "receive", "consent", "subscribe", "alert")):
         return {
             "question": q_raw,
             "answer": email,
             "category": "contact",
             "confidence": "high" if email else "manual_needed",
         }
-    if any(k in q for k in ("phone", "mobile", "telephone", "cell")):
+    if ("country code" in q or "dial code" in q or "calling code" in q) or ("country" in q and "phone" in q):
+        opt = _match_option(options, ["united states (+1)", "united states +1", "+1", "us +1", "united states", "usa"])
+        return {
+            "question": q_raw,
+            "answer": opt or "+1",
+            "category": "contact",
+            "confidence": "high",
+        }
+    if any(k in q for k in ("phone", "mobile", "telephone", "cell")) and not any(x in q for x in ("refer", "manager", "supervisor", "emergency", "extension", "ext")):
         return {
             "question": q_raw,
             "answer": phone,
@@ -348,22 +498,29 @@ def answer_single_question(
             "confidence": "high" if phone else "manual_needed",
         }
 
-    # 2. Links & Profiles
-    if "linkedin" in q:
+    # 3. Links & Profiles (avoid matching open-ended questions that merely mention a platform)
+    if "linkedin" in q and (len(q) <= 80 or any(w in q for w in ("url", "link", "profile", "account", "page"))):
         return {
             "question": q_raw,
             "answer": linkedin,
             "category": "links",
             "confidence": "high" if linkedin else ("medium" if not required else "manual_needed"),
         }
-    if "github" in q:
+    if any(k in q for k in ("github", "gitlab", "bitbucket")) and (len(q) <= 85 or any(w in q for w in ("url", "link", "profile", "handle", "username", "repo"))):
         return {
             "question": q_raw,
             "answer": github,
             "category": "links",
             "confidence": "high" if github else ("medium" if not required else "manual_needed"),
         }
-    if any(k in q for k in ("portfolio", "personal website", "website", "blog", "other url")):
+    if any(k in q for k in ("twitter", "x url", "x profile", "x handle", "dribbble", "behance", "instagram", "facebook", "stackoverflow", "stack overflow", "kaggle")):
+        return {
+            "question": q_raw,
+            "answer": "",
+            "category": "links",
+            "confidence": "high" if not required else "manual_needed",
+        }
+    if any(k in q for k in ("portfolio", "personal website", "personal site", "other website", "other url", "website url", "blog")) or q in ("website", "url", "portfolio"):
         return {
             "question": q_raw,
             "answer": portfolio,
@@ -371,7 +528,7 @@ def answer_single_question(
             "confidence": "high" if portfolio else "medium",
         }
 
-    # 3. Work Authorization & Visa Sponsorship (evaluated before country/location so 'authorized to work in the United States' matches work auth)
+    # 4. Work Authorization & Visa Sponsorship (evaluated before country/location so 'authorized to work in the United States' matches work auth)
     needs_sponsorship = "require sponsorship" in work_auth.lower() and "without" not in work_auth.lower()
 
     if any(k in q for k in ("export control", "export controls", "itar", "u.s. export", "us export", "u.s. person under", "us person under", "eligible under u.s. law to receive information")):
@@ -383,22 +540,12 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # Check for SMS / text message agreement upfront so 'opt out' in SMS disclosures doesn't match visa OPT
-    if any(k in q for k in ("text message", "text messages", "sms opt", "sms updates", "receive text message", "receive text", "text messaging")):
-        opt = _match_option(options, ["yes - i consent to receiving text messages", "yes - i consent", "i consent", "yes", "true", "agree"])
-        return {
-            "question": q_raw,
-            "answer": opt or "Yes - I consent to receiving text messages",
-            "category": "consent",
-            "confidence": "high",
-        }
-
     # Questions asking if the candidate is legally authorized to work (e.g. "...without the need for visa sponsorship")
-    if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work")):
-        opt = _match_option(options, ["yes", "authorized", "citizen", "permanent resident", "u.s. citizen", "us citizen"])
+    if any(k in q for k in ("authorized to work", "legally authorized", "work authorization", "right to work", "eligible to work", "legally permitted to work", "permitted to work")):
+        opt = _match_option(options, ["yes", "authorized", "u.s. citizen", "us citizen", "citizen", "permanent resident"])
         return {
             "question": q_raw,
-            "answer": opt or ("Yes" if options is not None or "?" in q_raw else work_auth),
+            "answer": opt or ("Yes" if options is not None or "?" in q_raw or ftype in ("select", "combobox", "radio") else work_auth),
             "category": "work_authorization",
             "confidence": "high",
         }
@@ -435,31 +582,80 @@ def answer_single_question(
             "confidence": "high" if has_clearance else "medium",
         }
 
-    # 4. Location / Address / Relocation / Remote / Workplace Arrangement
+    # 5. Location / Relocation / Country / City / State / Postal / Street
     if any(k in q for k in (
         "relocat", "willing to move", "commute to", "work on-site", "work onsite",
         "work in the office", "days a week", "in-office", "in office", "residing in",
-        "hybrid schedule", "workplace arrangement", "work arrangement", "remote / hybrid"
+        "hybrid schedule", "workplace arrangement", "work arrangement", "remote / hybrid",
     )):
         wp = (job_data.get("workplace_type") or "remote").lower()
         opt = _match_option(options, ["yes", "open", "willing"])
         return {
             "question": q_raw,
-            "answer": opt or ("Yes" if wp in ("remote", "hybrid") else "Yes, open to relocation / hybrid schedule"),
+            "answer": opt or ("Yes" if wp in ("remote", "hybrid") or options is not None or "?" in q_raw else "Yes, open to relocation / hybrid schedule"),
             "category": "location",
             "confidence": "high",
         }
-    if any(k in q for k in ("country", "united states", "reside in the us", "based in the us", "located in the us")):
-        opt = _match_option(options, ["united states", "usa", "us", "yes"])
+
+    # Separate Zip / Postal Code field (never paste location or essay if unknown)
+    if re.search(r"\b(?:zip|postal)\s*code\b|\bzipcode\b", q):
+        zip_val = (profile_data.get("zip_code") or profile_data.get("postal_code") or "").strip()
         return {
             "question": q_raw,
-            "answer": opt or ("Yes" if "reside" in q or "based" in q or "located" in q else "United States"),
+            "answer": zip_val,
+            "category": "location",
+            "confidence": "high" if zip_val else "manual_needed",
+        }
+
+    # Separate Street / Mailing Address field (strict — avoids "address a problem" or "address gaps")
+    if re.search(r"\b(?:street|mailing|home|residential|physical|current)\s+address\b|^address(?:\s+line\s*\d)?$", q):
+        addr_val = (profile_data.get("street_address") or "").strip()
+        return {
+            "question": q_raw,
+            "answer": addr_val,
+            "category": "location",
+            "confidence": "high" if addr_val else "manual_needed",
+        }
+
+    # Separate State / Province field (strict — NEVER matches "please state your..." or "decline to state"!)
+    if (
+        q in ("state", "state/province", "state / province", "province", "state of residence", "us state", "state or province", "home state", "current state")
+        or re.search(r"\b(?:which|what)\s+(?:u\.?s\.?\s+)?state\b|\bstate\s*/\s*province\b|\bstate\s+of\s+residence\b|\bstate\s+or\s+province\b", q)
+    ):
+        opt = _match_option(options, [state_full, state_abbr, "massachusetts", "ma"])
+        return {
+            "question": q_raw,
+            "answer": opt or state_full or state_abbr or "Massachusetts",
             "category": "location",
             "confidence": "high",
         }
-    if any(k in q for k in ("city", "current location", "location", "where are you based", "where do you live", "address", "state")):
+
+    # Separate City field
+    if q in ("city", "current city", "home city", "city of residence") or re.search(r"\b(?:which|what)\s+city\b", q):
+        opt = _match_option(options, [city_only, clean_location, "boston"])
+        return {
+            "question": q_raw,
+            "answer": opt or city_only or "Boston",
+            "category": "location",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("country", "united states", "reside in the us", "based in the us", "located in the us")):
+        opt = _match_option(options, ["united states of america", "united states", "usa", "u.s.", "us", "yes"])
+        is_yn_q = any(k in q for k in ("reside in", "based in", "located in", "are you in", "do you live in"))
+        return {
+            "question": q_raw,
+            "answer": opt or ("Yes" if is_yn_q else "United States"),
+            "category": "location",
+            "confidence": "high",
+        }
+
+    if any(k in q for k in ("city, state", "city/state", "current location", "location", "where are you based", "where do you live", "where are you located", "time zone", "timezone")):
+        if "time zone" in q or "timezone" in q:
+            opt = _match_option(options, ["eastern", "est", "edt", "et", "utc-5", "america/new_york"])
+            return {"question": q_raw, "answer": opt or "Eastern Time (ET)", "category": "location", "confidence": "high"}
         loc_val = clean_location or "Boston, MA"
-        opt = _match_option(options, [loc_val, "boston", "massachusetts", "remote", "united states"])
+        opt = _match_option(options, [loc_val, city_only, state_full, state_abbr, "boston", "massachusetts", "remote", "united states"])
         return {
             "question": q_raw,
             "answer": opt or loc_val,
@@ -471,7 +667,7 @@ def answer_single_question(
     if any(k in q for k in (
         "internet connection", "high-speed internet", "download and", "upload speeds",
         "mbps", "working remotely?", "meet this requirement while working remotely",
-        "reliable high-speed", "vpn access", "home office"
+        "reliable high-speed", "vpn access", "home office",
     )):
         opt = _match_option(options, ["yes", "meet requirement", "agree", "i am able"])
         return {
@@ -481,9 +677,8 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 5. Compensation & Salary Expectations
-    # Check for salary alignment first (e.g. "Do your salary expectations align with the posted salary range?")
-    if any(k in q for k in ("salary expectations align", "align with the posted salary", "within the posted salary", "posted salary range", "salary expectations within")):
+    # 6. Compensation & Salary Expectations
+    if any(k in q for k in ("salary expectations align", "align with the posted salary", "within the posted salary", "posted salary range", "salary expectations within", "comfortable with the salary", "comfortable with the compensation")):
         opt = _match_option(options, ["yes", "align", "agree"])
         return {
             "question": q_raw,
@@ -492,16 +687,11 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("salary", "compensation", "pay expectation", "desired pay", "hourly rate", "annual base")):
-        # If question is asking a Yes/No comfort question about salary
-        opt_yn = _match_option(options, ["yes", "acceptable", "agree"])
-        if opt_yn and options and len(options) <= 3 and any("yes" in o.lower() for o in options):
-            return {
-                "question": q_raw,
-                "answer": opt_yn,
-                "category": "compensation",
-                "confidence": "high",
-            }
+    if any(k in q for k in ("salary", "compensation", "pay expectation", "desired pay", "hourly rate", "annual base", "expected pay", "base pay")):
+        if is_yes_no_options:
+            opt_yn = _match_option(options, ["yes", "acceptable", "agree"])
+            if opt_yn:
+                return {"question": q_raw, "answer": opt_yn, "category": "compensation", "confidence": "high"}
 
         sal_ans = desired_salary
         if not sal_ans:
@@ -515,9 +705,12 @@ def answer_single_question(
                 sal_ans = app_kit["salary_line"]
             else:
                 sal_ans = "$70,000"
-        if field_type == "number":
-            nums = re.findall(r"\d+", sal_ans.replace(",", ""))
-            num_val = nums[0] if nums else "70000"
+        if ftype == "number" or "hourly" in q:
+            nums = [int(n) for n in re.findall(r"\d+", sal_ans.replace(",", "")) if int(n) >= 1000]
+            if "hourly" in q:
+                hr_val = str(round((nums[0] if nums else 70000) / 2080))
+                return {"question": q_raw, "answer": hr_val if ftype == "number" else f"${hr_val}/hr", "category": "compensation", "confidence": "high"}
+            num_val = str(nums[0]) if nums else "70000"
             return {"question": q_raw, "answer": num_val, "category": "compensation", "confidence": "high"}
         return {
             "question": q_raw,
@@ -526,26 +719,34 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 6. Notice Period / Start Date / Availability
-    if any(k in q for k in ("notice period", "when can you start", "start date", "earliest start", "availability", "available to start", "available for")):
-        opt = _match_option(options, ["yes", notice_period, "2 weeks", "two weeks", "immediately", "immediate", "1-2 weeks"])
+    # 7. Notice Period / Start Date / Availability
+    if any(k in q for k in ("notice period", "when can you start", "start date", "earliest start", "availability", "available to start", "available for", "date available")):
+        if ftype == "date":
+            iso_date = (date.today() + timedelta(days=14)).isoformat()
+            return {"question": q_raw, "answer": iso_date, "category": "availability", "confidence": "high"}
+        opt = _match_option(options, ["yes", notice_period, "2 weeks", "two weeks", "immediately", "immediate", "1-2 weeks", "less than 2 weeks"])
         return {
             "question": q_raw,
-            "answer": opt or ("Yes" if "available for" in q else notice_period),
+            "answer": opt or ("Yes" if "available for" in q or is_yes_no_options else notice_period),
             "category": "availability",
             "confidence": "high",
         }
 
-    # 7. Years of Experience
-    if any(k in q for k in ("years of experience", "how many years", "years working with", "experience level")):
-        # Check if a specific technology is mentioned
+    if ftype == "date" and any(k in q for k in ("today", "date signed", "signature date", "current date")):
+        return {"question": q_raw, "answer": date.today().isoformat(), "category": "compliance", "confidence": "high"}
+
+    # 8. Years of Experience
+    if any(k in q for k in ("years of experience", "how many years", "years working with", "years of professional", "years have you", "experience level")):
         years = "3"
         for sk_name, prof in skill_map.items():
-            if sk_name and sk_name in q:
+            if sk_name and len(sk_name) >= 2 and re.search(r"\b" + re.escape(sk_name) + r"\b", q):
                 years = "5" if prof == "expert" else ("3" if prof == "intermediate" else "1")
                 break
-        opt = _match_option(options, [f"{years}", "3-5", "2-4", "3+", "2+"])
-        ans = opt or (years if field_type == "number" else f"{years}+ years")
+        if is_yes_no_options:
+            opt_yn = _match_option(options, ["yes"])
+            return {"question": q_raw, "answer": opt_yn or "Yes", "category": "experience", "confidence": "high"}
+        opt = _match_option(options, [f"{years}", f"{years} years", "3-5", "2-4", "1-3", "3+", "2+", "entry", "junior"])
+        ans = opt or (years if ftype == "number" else f"{years}+ years")
         return {
             "question": q_raw,
             "answer": ans,
@@ -553,8 +754,14 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 8. Education / Degree / University / School / Discipline / Graduation Date
-    if q in ("school", "university", "college") or "school" in q or "university" in q:
+    # 9. Education / Degree / University / School / Discipline / Graduation Date
+    if any(k in q for k in ("high school", "ged", "high-school")):
+        opt = _match_option(options, ["yes", "completed", "graduated"])
+        return {"question": q_raw, "answer": opt or "Yes", "category": "education", "confidence": "high"}
+
+    if q in ("school", "university", "college", "school name", "university name", "institution") or (
+        any(k in q for k in ("school", "university", "institution")) and not is_yes_no_options and "do you have" not in q
+    ):
         opt = _match_option(options, ["university of massachusetts lowell", "umass lowell", "university of massachusetts", "other"])
         return {
             "question": q_raw,
@@ -562,8 +769,8 @@ def answer_single_question(
             "category": "education",
             "confidence": "high",
         }
-    if q in ("discipline", "major", "field of study") or any(k in q for k in ("discipline", "field of study", "major")):
-        opt = _match_option(options, ["computer science", "mathematics", "math", "information technology", "software engineering", "other"])
+    if q in ("discipline", "major", "field of study", "area of study") or any(k in q for k in ("discipline", "field of study", "area of study", "major")):
+        opt = _match_option(options, ["computer science", "mathematics", "math", "information technology", "software engineering", "engineering", "other"])
         return {
             "question": q_raw,
             "answer": opt or "Mathematics & Computer Science",
@@ -571,6 +778,8 @@ def answer_single_question(
             "confidence": "high",
         }
     if any(k in q for k in ("graduation date", "grad date", "when did you graduate", "expected graduation", "date of graduation")):
+        if ftype == "date":
+            return {"question": q_raw, "answer": "2024-05-15", "category": "education", "confidence": "high"}
         opt = _match_option(options, ["may 2024", "2024", "may 2025", "2025", "graduated", "already graduated"])
         return {
             "question": q_raw,
@@ -595,15 +804,18 @@ def answer_single_question(
             "confidence": "high",
         }
     if any(k in q for k in ("end date year", "graduation year", "year of graduation", "start date year")):
-        opt = _match_option(options, ["2025", "2026", "2024"])
+        opt = _match_option(options, ["2024", "2025", "2026"])
         return {
             "question": q_raw,
-            "answer": opt or "2025",
+            "answer": opt or "2024",
             "category": "education",
             "confidence": "high",
         }
     if any(k in q for k in ("highest level of education", "degree", "education level", "bachelor", "college")):
-        opt = _match_option(options, ["bachelor", "b.a.", "b.s.", "bs", "ba", "4-year", "college", "yes"])
+        if is_yes_no_options or q.startswith(("do you have", "have you completed", "have you earned", "have you obtained")):
+            opt = _match_option(options, ["yes"])
+            return {"question": q_raw, "answer": opt or "Yes", "category": "education", "confidence": "high"}
+        opt = _match_option(options, ["bachelor's degree", "bachelor", "b.s.", "b.a.", "bs", "ba", "4-year", "college", "yes"])
         return {
             "question": q_raw,
             "answer": opt or "Bachelor's Degree",
@@ -611,39 +823,19 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 9. Current Company / Current Title
-    if any(k in q for k in ("current title", "job title", "current role")):
+    # 10. Current Company / Current Title
+    if any(k in q for k in ("current title", "current job title", "most recent title", "current role", "headline")) or q in ("job title", "title"):
         return {
             "question": q_raw,
             "answer": title,
             "category": "experience",
             "confidence": "high",
         }
-    if any(k in q for k in ("current company", "current employer", "most recent employer")):
+    if any(k in q for k in ("current company", "current employer", "most recent employer", "most recent company", "company name")) or q in ("company", "employer", "organization"):
         return {
             "question": q_raw,
-            "answer": "Hyperice",
+            "answer": current_company,
             "category": "experience",
-            "confidence": "high",
-        }
-
-    # 10. Referral / How did you hear about us?
-    if any(k in q for k in ("refer you", "referred you", "referral name", "who referred", "were you referred")):
-        opt = _match_option(options, ["no", "none", "n/a", "neither"])
-        return {
-            "question": q_raw,
-            "answer": opt or "N/A",
-            "category": "referral",
-            "confidence": "high",
-        }
-
-    if any(k in q for k in ("how did you hear", "where did you see", "source", "referred by")):
-        src = job_data.get("source") or "Company Career Board"
-        opt = _match_option(options, ["company website", "career page", "job board", "linkedin", "other"])
-        return {
-            "question": q_raw,
-            "answer": opt or f"Company Careers Board ({src})",
-            "category": "referral",
             "confidence": "high",
         }
 
@@ -656,7 +848,12 @@ def answer_single_question(
             "category": "accommodations",
             "confidence": "high",
         }
-    if any(k in q for k in ("previously worked", "ever worked for", "worked for", "former employee", "applied before", "non-compete", "restrictive covenant", "government official", "related to anyone", "history with", "affiliated with", "relationship with")):
+    if any(k in q for k in (
+        "previously worked", "ever worked for", "ever been employed", "previously employed",
+        "former employee", "applied before", "previously applied", "non-compete", "noncompete",
+        "restrictive covenant", "government official", "related to anyone", "family member working",
+        "relative working", "conflict of interest", "affiliated with", "worked for us",
+    )):
         opt = _match_option(options, ["no", "never", "none", "n/a", "neither"])
         return {
             "question": q_raw,
@@ -664,7 +861,7 @@ def answer_single_question(
             "category": "compliance",
             "confidence": "high",
         }
-    if any(k in q for k in ("at least 18", "18 years of age", "legal age")):
+    if any(k in q for k in ("at least 18", "18 years of age", "18 years old", "legal age")):
         opt = _match_option(options, ["yes"])
         return {
             "question": q_raw,
@@ -674,7 +871,7 @@ def answer_single_question(
         }
 
     # Background Check / Drug Screening / Criminal History
-    if any(k in q for k in ("background check", "background screening", "drug test", "drug screen", "substance test", "criminal history", "pre-employment background")):
+    if any(k in q for k in ("background check", "background screening", "drug test", "drug screen", "substance test", "pre-employment background")):
         opt = _match_option(options, ["yes", "i agree", "willing", "consent", "accept"])
         return {
             "question": q_raw,
@@ -682,10 +879,18 @@ def answer_single_question(
             "category": "background_check",
             "confidence": "high",
         }
+    if any(k in q for k in ("convicted of a felony", "criminal conviction", "criminal history")):
+        opt = _match_option(options, ["no", "decline", "prefer not"])
+        return {
+            "question": q_raw,
+            "answer": opt or "No",
+            "category": "background_check",
+            "confidence": "high",
+        }
 
     # 12. EEO / Voluntary Self-Identification (Gender, Race, Ethnicity, Veteran, Disability)
-    if any(k in q for k in ("gender", "sex")) and "sexual orientation" not in q:
-        opt = _match_option(options, ["male", "man", "cisgender male", "he/him", "he/him/his"])
+    if (re.search(r"\b(?:gender|sex)\b", q)) and "sexual orientation" not in q:
+        opt = _match_option(options, ["male", "man", "cisgender male", "he/him", "he/him/his", "decline to self-identify", "prefer not to say"])
         return {
             "question": q_raw,
             "answer": opt or "Male",
@@ -711,7 +916,7 @@ def answer_single_question(
         }
 
     # Hispanic / Latino ethnicity check (standalone question)
-    if any(k in q for k in ("hispanic", "latino")):
+    if any(k in q for k in ("hispanic", "latino", "latinx")):
         opt = _match_option(
             options,
             [
@@ -731,8 +936,9 @@ def answer_single_question(
         opt = _match_option(
             options,
             [
-                "i am not a protected veteran", "not a veteran", "no", "not a protected veteran",
-                "i am not a veteran", "decline to self-identify", "i do not wish to answer", "prefer not to say",
+                "i am not a protected veteran", "no, i am not a protected veteran", "not a protected veteran",
+                "not a veteran", "i am not a veteran", "no",
+                "decline to self-identify", "i do not wish to answer", "prefer not to say",
             ],
         )
         return {
@@ -747,9 +953,10 @@ def answer_single_question(
         opt = _match_option(
             options,
             [
-                "no, i do not have a disability", "no, i don't have a disability", "no",
-                "i do not have a disability", "no disability",
-                "i do not wish to answer", "decline to self-identify", "prefer not to say",
+                "no, i do not have a disability", "no, i don't have a disability",
+                "no, i do not have a disability and have not had one in the past",
+                "i do not have a disability", "no disability", "no",
+                "i do not wish to answer", "i don't wish to answer", "decline to self-identify", "prefer not to say",
             ],
         )
         return {
@@ -759,11 +966,11 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("sexual orientation", "self-identify")):
+    if any(k in q for k in ("sexual orientation", "lgbtq", "transgender")):
         opt = _match_option(
             options,
             [
-                "heterosexual", "straight",
+                "no", "heterosexual", "straight",
                 "decline to self-identify", "i do not wish to answer", "prefer not to say",
             ],
         )
@@ -774,25 +981,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 13. Privacy Policy / Terms & Certification Checkboxes / SMS Consent
-    if any(k in q for k in ("text message", "text messages", "sms opt", "sms updates", "receive text message")):
-        opt = _match_option(options, ["yes - i consent to receiving text messages", "yes - i consent", "i consent", "yes", "agree"])
-        return {
-            "question": q_raw,
-            "answer": opt or "Yes - I consent to receiving text messages",
-            "category": "consent",
-            "confidence": "high",
-        }
-    if any(k in q for k in ("privacy policy", "acknowledge", "certify that", "consent to", "terms and conditions", "agree to")):
-        opt = _match_option(options, ["yes", "i agree", "i acknowledge", "accept"])
-        return {
-            "question": q_raw,
-            "answer": opt or "Yes",
-            "category": "consent",
-            "confidence": "high",
-        }
-
-    # 14. Motivation / Why This Company / Why This Role / Cover Letter / Summary
+    # 13. Motivation / Why This Company / Why This Role / Cover Letter / Summary
     if any(k in q for k in ("passionate about testing", "passionate about qa", "quality assurance", "passion for qa", "passion for testing", "testing and qa", "why qa", "why testing")):
         qa_ans = (
             "I am passionate about Testing and QA because robust quality engineering is what transforms complex software into reliable, trustworthy systems. "
@@ -809,7 +998,7 @@ def answer_single_question(
 
     if any(k in q for k in (
         "not obvious from your resume", "isn't obvious from your resume", "not on your resume",
-        "share about yourself", "tell us something about yourself", "outside of your resume", "more about yourself"
+        "share about yourself", "tell us something about yourself", "outside of your resume", "more about yourself",
     )):
         share_ans = (
             "Outside of my resume bullets, I have an innate curiosity for reverse-engineering complex systems and removing friction through automated tooling. "
@@ -835,7 +1024,9 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    if any(k in q for k in ("cover letter", "additional information", "anything else", "note to hiring", "summary")):
+    if any(k in q for k in ("cover letter", "additional information", "anything else", "note to hiring", "message to hiring", "hiring manager")) or (
+        ftype == "textarea" and any(k in q for k in ("professional summary", "profile summary", "summary"))
+    ):
         cl_ans = (
             (app_kit or {}).get("why_hook")
             or f"Thank you for considering my application for {job_title} at {company}. With strong experience in {skills_str}, I am excited to help deliver reliable, high-impact solutions for your team."
@@ -847,8 +1038,11 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 15. Technical Project / Experience Open-Ended Prompts
-    if any(k in q for k in ("describe a project", "challenging problem", "technical challenge", "tell us about", "experience with", "proud of", "built")):
+    # 14. Technical Project / Experience Open-Ended Prompts (only for textareas or explicit prompt questions, NOT Yes/No radios)
+    if any(k in q for k in (
+        "describe a project", "technical project", "relevant project", "project or system",
+        "challenging problem", "technical challenge", "tell us about", "proud of", "have you built",
+    )):
         proj_ans = (
             f"In my work as a {title}, I architected and delivered production systems leveraging {skills_str}—"
             f"focusing on reliability, automated testing, and clean API design. {summary}".strip()
@@ -860,7 +1054,23 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 16. Specific Cultural / Ranking / Short Stints Custom Prompts
+    if "experience with" in q:
+        if is_yes_no_options:
+            # Check if any candidate skill matches the question
+            has_skill = any(sk and len(sk) >= 2 and re.search(r"\b" + re.escape(sk) + r"\b", q) for sk in skill_map.keys())
+            if has_skill:
+                opt = _match_option(options, ["yes"])
+                return {"question": q_raw, "answer": opt or "Yes", "category": "experience", "confidence": "high"}
+            # Unknown skill Yes/No: don't guess!
+            return {"question": q_raw, "answer": "", "category": "custom", "confidence": "manual_needed"}
+        if ftype == "textarea":
+            proj_ans = (
+                f"In my work as a {title}, I have hands-on experience leveraging {skills_str} to design, test, "
+                f"and ship reliable production software. {summary}".strip()
+            )
+            return {"question": q_raw, "answer": proj_ans, "category": "technical_open_ended", "confidence": "medium"}
+
+    # 15. Specific Cultural / Ranking / Short Stints Custom Prompts
     if any(k in q for k in ("coffee", "wi-fi", "wifi")) and any(k in q for k in ("coworkers", "snacks", "being right")):
         ranking_ans = (
             "1. Wi-Fi: High-speed, reliable connectivity is foundational for remote engineering, team collaboration, and shipping code.\n"
@@ -888,7 +1098,7 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # 17. Check pre-drafted screening_answers from Hadoku application_kit
+    # 16. Check pre-drafted screening_answers from Hadoku application_kit
     if app_kit and app_kit.get("screening_answers"):
         for item in app_kit["screening_answers"]:
             kit_q = (item.get("q") or "").lower()
@@ -901,16 +1111,25 @@ def answer_single_question(
                     "confidence": "high",
                 }
 
-    # 17. Unrecognized custom question: provide a grounded draft answer but flag confidence appropriately
-    if options:
-        # If there are explicit options we don't recognize and it's required, mark manual_needed
+    # 17. Unrecognized custom question: NEVER paste generic essays into short inputs or pick options[0] blindly!
+    if options is not None or ftype in ("select", "combobox", "radio", "checkbox", "number", "date", "tel", "email", "url"):
         return {
             "question": q_raw,
-            "answer": options[0] if options else "",
+            "answer": "",
             "category": "custom",
-            "confidence": "manual_needed" if required else "medium",
+            "confidence": "manual_needed",
         }
 
+    # For unrecognized short single-line text inputs, leave empty and flag manual_needed so we never put wrong info in a box!
+    if ftype != "textarea":
+        return {
+            "question": q_raw,
+            "answer": "",
+            "category": "custom",
+            "confidence": "manual_needed",
+        }
+
+    # For unrecognized open-ended textareas, provide a draft in Q&A bank but mark manual_needed so autofill flags it cleanly
     fallback_ans = (
         f"As a {title} with experience in {skills_str}, I have consistently delivered scalable, well-tested solutions "
         f"that align with {company}'s requirements for the {job_title} position."
@@ -919,7 +1138,7 @@ def answer_single_question(
         "question": q_raw,
         "answer": fallback_ans,
         "category": "custom",
-        "confidence": "manual_needed" if required else "medium",
+        "confidence": "manual_needed",
     }
 
 

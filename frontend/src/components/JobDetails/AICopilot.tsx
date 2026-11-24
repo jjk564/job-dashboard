@@ -10,7 +10,8 @@ import {
   ExternalLink,
   Bot,
   HelpCircle,
-  AlertTriangle
+  AlertTriangle,
+  ShieldAlert
 } from 'lucide-react';
 import { Job, FitBreakdown, AutofillPayload } from '../../types';
 import { api } from '../../api/client';
@@ -52,6 +53,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [launchingBrowser, setLaunchingBrowser] = useState(false);
+  const [launchingNativeChrome, setLaunchingNativeChrome] = useState(false);
   const [browserMessage, setBrowserMessage] = useState<string | null>(null);
 
   const [customQuestionInput, setCustomQuestionInput] = useState('');
@@ -197,7 +199,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
     }
   };
 
-  // Launch Assisted Browser
+  // Launch Assisted Browser (Playwright)
   const handleLaunchBrowser = async () => {
     setLaunchingBrowser(true);
     setBrowserMessage(null);
@@ -208,6 +210,20 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
       setBrowserMessage(err.message || 'Failed to start browser assistant.');
     } finally {
       setLaunchingBrowser(false);
+    }
+  };
+
+  // Stage & Open in Regular Chrome (Native Extension — Zero CAPTCHA Loops)
+  const handleLaunchRegularChrome = async () => {
+    setLaunchingNativeChrome(true);
+    setBrowserMessage(null);
+    try {
+      const res = await api.stageNativeBrowserQueue([job.id], true);
+      setBrowserMessage(res.message);
+    } catch (err: any) {
+      setBrowserMessage(err.message || 'Failed to open in Regular Chrome.');
+    } finally {
+      setLaunchingNativeChrome(false);
     }
   };
 
@@ -541,25 +557,60 @@ export const AICopilot: React.FC<AICopilotProps> = ({ job, onJobUpdated }) => {
                 </div>
               )}
 
+              {job.bot_traps && job.bot_traps.length > 0 && (
+                <div className="p-3 bg-amber-950/50 border border-amber-500/60 rounded-xl space-y-1.5 text-xs text-amber-100">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center space-x-1.5 font-bold text-amber-300">
+                      <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>
+                        {job.bot_traps[0].type === 'ai_honeypot'
+                          ? 'AI Honeypot Trap — Do NOT Follow'
+                          : `Bot Trap Detected (${job.bot_traps.length})`}
+                      </span>
+                    </div>
+                    {job.bot_traps[0].trigger_phrase && job.bot_traps[0].type !== 'ai_honeypot' && (
+                      <button
+                        onClick={() => copyToClipboard(job.bot_traps![0].trigger_phrase!, 'trap_phrase')}
+                        className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center space-x-1"
+                      >
+                        {copiedKey === 'trap_phrase' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedKey === 'trap_phrase' ? 'Copied' : `Copy "${job.bot_traps[0].trigger_phrase}"`}</span>
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-white font-medium leading-relaxed">{job.bot_traps[0].action_required}</p>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={handleLaunchRegularChrome}
+                  disabled={launchingNativeChrome || !job.url}
+                  className="py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+                  title="Opens in your standard Chrome browser with the JobPulse Extension — zero CAPTCHA loops!"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>{launchingNativeChrome ? 'Opening Chrome...' : 'Regular Chrome (No CAPTCHA)'}</span>
+                </button>
+
                 <button
                   onClick={handleLaunchBrowser}
                   disabled={launchingBrowser || !job.url}
                   className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>{launchingBrowser ? 'Launching Session...' : 'Open with Auto-Fill'}</span>
-                </button>
-
-                <button
-                  onClick={handleLoadApplicationKit}
-                  disabled={loadingKit}
-                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
-                >
-                  <Sparkles className={`w-3.5 h-3.5 ${loadingKit ? 'animate-spin' : ''}`} />
-                  <span>{loadingKit ? 'Drafting Answers...' : 'Draft Screening Answers'}</span>
+                  <span>{launchingBrowser ? 'Launching Session...' : 'Open with Playwright'}</span>
                 </button>
               </div>
+
+              <button
+                onClick={handleLoadApplicationKit}
+                disabled={loadingKit}
+                className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${loadingKit ? 'animate-spin' : ''}`} />
+                <span>{loadingKit ? 'Drafting Answers...' : 'Draft Screening Answers'}</span>
+              </button>
 
               {browserMessage && (
                 <div className="text-xs p-2 rounded bg-slate-900 text-slate-300 border border-slate-700">

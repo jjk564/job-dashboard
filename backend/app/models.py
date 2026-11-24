@@ -37,6 +37,7 @@ class Job(Base):
     autopilot_status = Column(String(50), nullable=True)  # pending, processing, auto_applied, needs_manual_apply, skipped
     autopilot_reason = Column(String(500), nullable=True)
     answers_json = Column(Text, nullable=True)  # JSON list of {"question": str, "answer": str, "category": str, "confidence": str}
+    bot_traps_json = Column(Text, nullable=True)  # JSON list of detected human_check / ai_honeypot traps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -59,6 +60,21 @@ class Job(Base):
                     answers = parsed_ans
             except Exception:
                 answers = []
+
+        bot_traps = []
+        if self.bot_traps_json is not None:
+            try:
+                parsed_traps = json.loads(self.bot_traps_json)
+                if isinstance(parsed_traps, list):
+                    bot_traps = parsed_traps
+            except Exception:
+                bot_traps = []
+        elif self.description:
+            try:
+                from .services.bot_trap_detector import detect_bot_traps
+                bot_traps = detect_bot_traps(self.description)
+            except Exception:
+                bot_traps = []
 
         r_track = self.role_track
         r_level = self.role_level
@@ -104,6 +120,7 @@ class Job(Base):
             "autopilot_status": self.autopilot_status,
             "autopilot_reason": self.autopilot_reason,
             "answers": answers,
+            "bot_traps": bot_traps,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "activities": [a.to_dict() for a in (self.activities or [])] if "activities" in self.__dict__ else [],

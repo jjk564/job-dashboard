@@ -105,6 +105,7 @@ class JobUpdate(BaseModel):
     autopilot_status: Optional[str] = None
     autopilot_reason: Optional[str] = None
     answers: Optional[List[Dict[str, Any]]] = None
+    bot_traps: Optional[List[Dict[str, Any]]] = None
 
 class JobResponse(BaseModel):
     id: int
@@ -137,6 +138,7 @@ class JobResponse(BaseModel):
     autopilot_status: Optional[str] = None
     autopilot_reason: Optional[str] = None
     answers: Optional[List[Dict[str, Any]]] = []
+    bot_traps: Optional[List[Dict[str, Any]]] = []
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     activities: Optional[List[ActivityResponse]] = []
@@ -186,6 +188,7 @@ class URLImportResponse(BaseModel):
     description: str
     requirements: Optional[str] = None
     source: str = "url_import"
+    bot_traps: Optional[List[Dict[str, Any]]] = []
 
 # Match & Tailor Schemas
 class MatchAnalysisResponse(BaseModel):

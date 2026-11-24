@@ -17,9 +17,41 @@ import {
   Zap,
   Mail,
   KeyRound,
+  Globe
 } from 'lucide-react';
 import { AutopilotConfig, AutopilotRunSummary, Job, SearchProfile } from '../../types';
 import { api } from '../../api/client';
+
+const AUTOPILOT_BOARD_GROUPS: {
+  group: string;
+  boards: { id: string; label: string; mainstream?: boolean }[];
+}[] = [
+  {
+    group: 'Mainstream Boards',
+    boards: [
+      { id: 'indeed', label: 'Indeed', mainstream: true },
+      { id: 'linkedin', label: 'LinkedIn', mainstream: true },
+      { id: 'glassdoor', label: 'Glassdoor', mainstream: true },
+      { id: 'ziprecruiter', label: 'ZipRecruiter', mainstream: true },
+      { id: 'bigtech', label: 'Big Tech', mainstream: true },
+    ],
+  },
+  {
+    group: 'Direct ATS & Curated',
+    boards: [
+      { id: 'company_boards', label: 'Company ATS (GH/Ashby/Lever)' },
+      { id: 'simplify', label: 'SimplifyJobs' },
+      { id: 'hadoku', label: 'Hadoku 200+ ATS' },
+      { id: 'themuse', label: 'The Muse' },
+      { id: 'himalayas', label: 'Himalayas' },
+      { id: 'remoteok', label: 'RemoteOK' },
+      { id: 'weworkremotely', label: 'WeWorkRemotely' },
+      { id: 'jobicy', label: 'Jobicy' },
+    ],
+  },
+];
+
+const ALL_BOARD_IDS = AUTOPILOT_BOARD_GROUPS.flatMap((g) => g.boards.map((b) => b.id));
 
 interface AutopilotDashboardProps {
   jobs: Job[];
@@ -150,6 +182,29 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
     } finally {
       setSaving(false);
     }
+  };
+
+  const activeSources = config?.sources?.length ? config.sources : ['all'];
+  const isAllSources = activeSources.includes('all');
+
+  const handleToggleBoardSource = (boardId: string) => {
+    if (!config) return;
+    let next: string[];
+    if (boardId === 'all') {
+      next = ['all'];
+    } else if (isAllSources) {
+      // Switching from All -> deselect this single board
+      next = ALL_BOARD_IDS.filter((id) => id !== boardId);
+    } else if (activeSources.includes(boardId)) {
+      next = activeSources.filter((id) => id !== boardId);
+      if (next.length === 0) next = ['all'];
+    } else {
+      next = [...activeSources, boardId];
+      if (ALL_BOARD_IDS.every((id) => next.includes(id))) {
+        next = ['all'];
+      }
+    }
+    handleSaveConfig({ sources: next });
   };
 
   const handleRunCycle = async (scrapeNew: boolean) => {
@@ -417,6 +472,59 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
             </p>
           </div>
 
+          {/* Job Board Sources (Mainstream + Direct ATS) */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
+                <Globe className="w-3.5 h-3.5 text-sky-400" />
+                <span>Job Board Sources</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => handleToggleBoardSource('all')}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
+                  isAllSources
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                {isAllSources ? '✓ All Boards Enabled' : 'Select All'}
+              </button>
+            </div>
+
+            {AUTOPILOT_BOARD_GROUPS.map((grp) => (
+              <div key={grp.group} className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block">
+                  {grp.group}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {grp.boards.map((b) => {
+                    const selected = isAllSources || activeSources.includes(b.id);
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => handleToggleBoardSource(b.id)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${
+                          selected
+                            ? b.mainstream
+                              ? 'bg-sky-500/20 text-sky-200 border-sky-500/50'
+                              : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                            : 'bg-slate-800/70 text-slate-500 border-slate-700/70 hover:text-slate-300'
+                        }`}
+                      >
+                        {b.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <p className="text-[10px] text-slate-500">
+              Mainstream boards (Indeed, LinkedIn, Glassdoor, ZipRecruiter) use polite jittered pacing and automatically unwrap direct employer ATS links when available.
+            </p>
+          </div>
+
           {/* Fit Score Thresholds */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -552,8 +660,19 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 flex items-start space-x-2">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <span>
-              <strong className="text-slate-200">Safety & Routing Guarantee:</strong> Portals with login walls (Workday, LinkedIn, iCIMS), CAPTCHA challenges, or custom required questions that cannot be verified are never forced — they are automatically placed in <strong className="text-blue-300">Need to Apply</strong> with tailored resumes, cover letters, and draft answers attached.
+              <strong className="text-slate-200">Safety & Bot Trap Guarantee:</strong> Portals with login walls, CAPTCHA challenges, unrecognized required questions, or <strong className="text-amber-300">Bot Traps</strong> (e.g. &ldquo;mention coffee in your application&rdquo;) are never blindly submitted — they route to <strong className="text-blue-300">Need to Apply</strong> with a clear alert and tailored kit.
             </span>
+          </div>
+
+          {/* Native Regular-Chrome Extension Setup Card */}
+          <div className="p-3 rounded-xl bg-sky-950/30 border border-sky-700/40 text-[11px] text-sky-200/90 space-y-1">
+            <div className="font-bold text-sky-300 flex items-center space-x-1.5">
+              <Globe className="w-3.5 h-3.5 text-sky-400" />
+              <span>Zero-CAPTCHA Regular Chrome Auto-Fill Extension</span>
+            </div>
+            <p className="text-slate-300 leading-relaxed">
+              For pages where Turnstile or reCAPTCHA blocks Playwright, load the included <code className="px-1 py-0.5 rounded bg-slate-900 text-sky-300">extension/</code> folder in Chrome (<code className="text-sky-300">chrome://extensions</code> → Developer mode → Load unpacked). Then use <strong>Speed-Run (Chrome Ext)</strong> or <strong>Regular Chrome</strong> for 1-click auto-fill + native CAPTCHAs!
+            </p>
           </div>
 
           {/* Automatic Email Verification Code Reader (Greenhouse 8-Char Security Code) */}
@@ -669,6 +788,34 @@ export const AutopilotDashboard: React.FC<AutopilotDashboardProps> = ({
               </span>
             )}
           </div>
+
+          {/* Scraped Source Breakdown Chips */}
+          {lastSummary?.sources_breakdown && Object.keys(lastSummary.sources_breakdown).length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5 pb-3 border-b border-slate-800/70">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-1">
+                Hits by Board:
+              </span>
+              {Object.entries(lastSummary.sources_breakdown)
+                .sort((a, b) => b[1] - a[1])
+                .map(([src, count]) => {
+                  const isMainstream = ['indeed', 'linkedin', 'glassdoor', 'ziprecruiter', 'bigtech'].includes(src.toLowerCase());
+                  return (
+                    <span
+                      key={src}
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                        count > 0
+                          ? isMainstream
+                            ? 'bg-sky-500/20 text-sky-200 border-sky-500/40'
+                            : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                          : 'bg-slate-900 text-slate-500 border-slate-800'
+                      }`}
+                    >
+                      {src}: {count}
+                    </span>
+                  );
+                })}
+            </div>
+          )}
 
           {(!lastSummary || lastSummary.job_results.length === 0) ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 text-center space-y-3">

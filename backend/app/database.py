@@ -62,6 +62,8 @@ async def init_db():
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN autopilot_reason VARCHAR(500)"))
         if "answers_json" not in existing_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN answers_json TEXT"))
+        if "bot_traps_json" not in existing_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN bot_traps_json TEXT"))
         # Migrate columns for autopilot_configs table if not present
         ac_res = await conn.execute(text("PRAGMA table_info(autopilot_configs)"))
         ac_cols = {row[1] for row in ac_res.fetchall()}

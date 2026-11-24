@@ -13,6 +13,7 @@ from ..schemas import JobCreate, JobUpdate, JobResponse, ActivityCreate, Activit
 from ..services.matcher import analyze_job_fit
 from ..services.expiration_checker import check_job_expiration
 from ..services.role_classifier import classify_role
+from ..services.bot_trap_detector import detect_bot_traps
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 
@@ -74,6 +75,7 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
         fit_breakdown_json = json.dumps(fit_data)
 
     classified = classify_role(job_in.title, desc)
+    detected_traps = detect_bot_traps(desc)
     job_data = job_in.model_dump()
     job_data["description"] = desc
     job_data["salary_min"] = salary_min
@@ -86,6 +88,7 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
         role_track=classified["track"],
         role_level=classified["level"],
         role_discipline=classified["discipline"],
+        bot_traps_json=json.dumps(detected_traps) if detected_traps else None,
     )
     db.add(job)
     await db.commit()
@@ -226,8 +229,18 @@ async def update_job(job_id: int, job_update: JobUpdate, db: AsyncSession = Depe
         if ans_val is not None:
             update_data["answers_json"] = json.dumps(ans_val)
 
+    if "bot_traps" in update_data:
+        traps_val = update_data.pop("bot_traps")
+        if traps_val is not None:
+            update_data["bot_traps_json"] = json.dumps(traps_val)
+
     for k, v in update_data.items():
         setattr(job, k, v)
+
+    # Re-scan bot traps whenever description changes (unless explicitly overridden)
+    if "description" in update_data and "bot_traps_json" not in update_data:
+        re_traps = detect_bot_traps(job.description or "")
+        job.bot_traps_json = json.dumps(re_traps) if re_traps else None
 
     # Log status change
     if "status" in update_data and update_data["status"] != old_status:
@@ -280,6 +293,8 @@ async def refresh_job_from_url(job_id: int, db: AsyncSession = Depends(get_db)):
         extracted = await extract_job_from_url(job.url)
         if extracted.get("description"):
             job.description = extracted["description"]
+            traps = detect_bot_traps(job.description)
+            job.bot_traps_json = json.dumps(traps) if traps else None
         if extracted.get("salary_min") and not job.salary_min:
             job.salary_min = extracted["salary_min"]
         if extracted.get("salary_max") and not job.salary_max:

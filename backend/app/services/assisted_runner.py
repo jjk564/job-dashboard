@@ -1,19 +1,22 @@
 """
 Interactive Desktop Browser Runner for JobPulse 'Open with Auto-Fill' and 'Speed-Run Queue'.
 
-Invoked in the user's interactive Windows desktop session so that Chromium
-opens visibly in the foreground with a persistent user profile (preserving cookies,
-session state, and Cloudflare clearance), pre-fills the ATS form, uploads tailored PDF
-documents, answers screening questions, monitors for Greenhouse security codes, and
-presents a floating JobPulse HUD for rapid review, application marking, and queue progression.
+Invoked in the user's interactive Windows desktop session so that Chromium opens visibly
+in the foreground with a persistent user profile, pre-fills the ATS form, uploads tailored
+PDF documents, answers screening questions, detects live Bot Traps, monitors for Greenhouse
+2FA codes, and presents a non-intrusive bottom-docked JobPulse HUD (with zero cross-frame
+CDP bindings or prototype tampering that could interfere with CAPTCHA widgets).
 """
 import json
-import logging
 import os
+import subprocess
 import sys
 import time
 import traceback
+import urllib.request
+import webbrowser
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
@@ -21,6 +24,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 LOG_PATH = BACKEND_DIR / "generated_packets" / "assisted_runner.log"
 BROWSER_DATA_DIR = BACKEND_DIR / "browser_data" / "chrome_user_profile"
+API_BASE = "http://127.0.0.1:8000"
 
 
 def log(msg: str) -> None:
@@ -37,11 +41,9 @@ def update_job_status_applied(job_id: int) -> None:
     if not job_id:
         return
     log(f"Updating job {job_id} to APPLIED...")
-    # 1. Attempt API patch
     try:
-        import urllib.request
         req = urllib.request.Request(
-            f"http://127.0.0.1:8000/api/jobs/{job_id}",
+            f"{API_BASE}/api/jobs/{job_id}",
             data=json.dumps({
                 "status": "APPLIED",
                 "autopilot_status": "auto_applied",
@@ -56,7 +58,6 @@ def update_job_status_applied(job_id: int) -> None:
     except Exception as api_err:
         log(f"API PATCH failed ({api_err}); using direct SQLite update.")
 
-    # 2. SQLite direct fallback
     try:
         import sqlite3
         db_file = BACKEND_DIR / "jobs.db"
@@ -79,6 +80,42 @@ def update_job_status_applied(job_id: int) -> None:
         log(f"Direct SQLite update error: {dbe}")
 
 
+def persist_live_bot_traps(job_id: Optional[int], bot_traps: List[Dict[str, Any]]) -> None:
+    """Saves any newly detected live-page bot traps back to the Job record."""
+    if not job_id or not bot_traps:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/api/jobs/{job_id}",
+            data=json.dumps({"bot_traps": bot_traps}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=4):
+            pass
+    except Exception:
+        pass
+
+
+def stage_job_for_regular_browser(job_id: Optional[int], target_url: str) -> None:
+    """Stages the active job for the native Chrome Extension before opening the regular browser."""
+    if job_id:
+        try:
+            req = urllib.request.Request(
+                f"{API_BASE}/api/assistant/stage-browser-queue",
+                data=json.dumps({"job_ids": [job_id], "open_browser": False}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=4):
+                log(f"Staged job {job_id} for native Chrome extension autofill.")
+        except Exception as st_err:
+            log(f"Note: could not stage job for Chrome extension: {st_err}")
+    webbrowser.open(target_url)
+
+
+# Bottom-docked, collapsible, non-intrusive HUD that communicates via a top-frame DOM attribute
+# (zero CDP Runtime.addBinding / expose_function injected into cross-origin CAPTCHA iframes!)
 HUD_INJECTION_SCRIPT = """
 (config) => {
   try {
@@ -87,156 +124,269 @@ HUD_INJECTION_SCRIPT = """
 
     const container = document.createElement('div');
     container.id = 'jobpulse-hud-overlay';
+    container.dataset.jobpulseAction = '';
+    container.dataset.dock = 'bottom';
     container.style.cssText = `
       position: fixed;
-      top: 14px;
+      bottom: 12px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 99999;
-      background: #0f172a;
+      z-index: 9999;
+      background: rgba(15, 23, 42, 0.96);
       color: #f8fafc;
       border: 1.5px solid #3b82f6;
       border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 15px rgba(59, 130, 246, 0.25);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 14px rgba(59, 130, 246, 0.25);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 8px 18px;
+      padding: 8px 14px;
       display: flex;
-      align-items: center;
-      gap: 16px;
+      flex-direction: column;
+      gap: 8px;
       user-select: none;
-      max-width: 95vw;
+      max-width: 96vw;
       box-sizing: border-box;
+      backdrop-filter: blur(8px);
     `;
 
-    // Left Section: Pill & Job Info
+    const dispatchAction = (payload) => {
+      container.dataset.jobpulseAction = JSON.stringify({ ...payload, ts: Date.now() });
+    };
+
+    // Optional Bot Trap Warning Strip (impossible to miss!)
+    const traps = Array.isArray(config.botTraps) ? config.botTraps : [];
+    if (traps.length > 0) {
+      const trapBanner = document.createElement('div');
+      trapBanner.id = 'jobpulse-hud-trap-banner';
+      const hasHoneypot = traps.some(t => t.type === 'ai_honeypot');
+      trapBanner.style.cssText = `
+        background: ${hasHoneypot ? 'rgba(153, 27, 27, 0.92)' : 'rgba(146, 64, 14, 0.94)'};
+        border: 1px solid ${hasHoneypot ? '#f87171' : '#fbbf24'};
+        border-radius: 8px;
+        padding: 7px 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        color: #fef3c7;
+        user-select: text;
+      `;
+
+      const primaryTrap = traps[0];
+      const leftTrap = document.createElement('div');
+      leftTrap.style.cssText = 'display: flex; flex-direction: column; gap: 2px; max-width: 720px;';
+
+      const trapTitle = document.createElement('div');
+      trapTitle.style.cssText = 'font-weight: 800; color: #fde68a; font-size: 12px;';
+      trapTitle.innerText = primaryTrap.type === 'ai_honeypot'
+        ? '🚫 AI HONEYPOT TRAP DETECTED — DO NOT FOLLOW:'
+        : `⚠️ BOT TRAP (${traps.length}) — ACTION REQUIRED BEFORE SUBMITTING:`;
+
+      const trapAction = document.createElement('div');
+      trapAction.style.cssText = 'font-weight: 600; color: #ffffff; font-size: 12px;';
+      trapAction.innerText = primaryTrap.action_required || 'Read the special instruction in the job description.';
+
+      const trapExcerpt = document.createElement('div');
+      trapExcerpt.style.cssText = 'font-size: 11px; color: #fde68a; opacity: 0.9; font-style: italic;';
+      trapExcerpt.innerText = `"${(primaryTrap.excerpt || '').slice(0, 200)}"`;
+
+      leftTrap.appendChild(trapTitle);
+      leftTrap.appendChild(trapAction);
+      if (primaryTrap.excerpt) leftTrap.appendChild(trapExcerpt);
+      trapBanner.appendChild(leftTrap);
+
+      if (primaryTrap.trigger_phrase && primaryTrap.type !== 'ai_honeypot') {
+        const copyPhraseBtn = document.createElement('button');
+        copyPhraseBtn.style.cssText = 'background: #f59e0b; color: #0f172a; border: none; border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;';
+        copyPhraseBtn.innerText = `📋 Copy "${primaryTrap.trigger_phrase}"`;
+        copyPhraseBtn.onclick = () => {
+          navigator.clipboard?.writeText(primaryTrap.trigger_phrase).catch(() => {});
+          dispatchAction({ action: 'copy_text', text: primaryTrap.trigger_phrase, jobId: config.jobId });
+          copyPhraseBtn.innerText = '✓ Copied!';
+          setTimeout(() => { copyPhraseBtn.innerText = `📋 Copy "${primaryTrap.trigger_phrase}"`; }, 2000);
+        };
+        trapBanner.appendChild(copyPhraseBtn);
+      }
+
+      container.appendChild(trapBanner);
+    }
+
+    // Main Control Row
+    const mainRow = document.createElement('div');
+    mainRow.id = 'jobpulse-hud-main-row';
+    mainRow.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 10px;';
+
+    // Left Section: Badge & Job Title
     const left = document.createElement('div');
-    left.style.cssText = 'display: flex; align-items: center; gap: 10px; font-size: 13px;';
+    left.style.cssText = 'display: flex; align-items: center; gap: 8px; font-size: 12px;';
 
     const badge = document.createElement('span');
-    badge.style.cssText = 'background: #2563eb; color: white; padding: 3px 9px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.5px; white-space: nowrap;';
+    badge.style.cssText = 'background: #2563eb; color: white; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.4px; white-space: nowrap;';
     badge.innerText = config.isSpeedRun ? `⚡ SPEED-RUN [${config.index + 1}/${config.total}]` : '⚡ AUTOPILOT';
 
-    const info = document.createElement('div');
-    info.style.cssText = 'display: flex; flex-direction: column; max-width: 280px;';
-
     const title = document.createElement('span');
-    title.style.cssText = 'font-weight: 700; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px;';
+    title.style.cssText = 'font-weight: 700; color: #f1f5f9; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px;';
     title.innerText = config.company ? `${config.company} — ${config.title}` : config.title;
     title.title = title.innerText;
 
-    info.appendChild(title);
     left.appendChild(badge);
-    left.appendChild(info);
-    container.appendChild(left);
+    left.appendChild(title);
+    mainRow.appendChild(left);
 
-    // Center Section: Status Note
+    // Status Note
     const status = document.createElement('div');
     status.id = 'jobpulse-hud-status';
-    status.style.cssText = 'font-size: 12px; color: #94a3b8; border-left: 1px solid #334155; padding-left: 14px; white-space: nowrap;';
-    status.innerText = config.statusText || 'Auto-filled. Review & submit, or advance:';
-    container.appendChild(status);
+    status.style.cssText = 'font-size: 11.5px; color: #cbd5e1; border-left: 1px solid #334155; padding-left: 10px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    status.innerText = config.statusText || 'Auto-filled. Review & submit:';
+    status.title = status.innerText;
+    mainRow.appendChild(status);
 
-    // Right Section: Action Buttons
+    // Action Buttons
     const right = document.createElement('div');
-    right.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+    right.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto;';
 
-    // Apply Button
-    const applyBtn = document.createElement('button');
-    applyBtn.id = 'jobpulse-hud-apply-btn';
-    applyBtn.style.cssText = 'background: #10b981; color: white; border: none; border-radius: 7px; padding: 7px 15px; font-size: 12px; font-weight: 700; cursor: pointer; transition: background 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
-    applyBtn.innerText = config.isSpeedRun ? '✓ Mark Applied & Next' : '✓ Mark Applied';
-    applyBtn.onmouseover = () => { applyBtn.style.background = '#059669'; };
-    applyBtn.onmouseout = () => { applyBtn.style.background = '#10b981'; };
-    applyBtn.onclick = () => {
-      applyBtn.disabled = true;
-      applyBtn.innerText = 'Advancing...';
-      applyBtn.style.opacity = '0.7';
-      if (window.onJobPulseAction) {
-        window.onJobPulseAction({ action: 'apply_and_next', jobId: config.jobId });
-      }
+    const makeBtn = (id, text, styleCss, titleText, onClick) => {
+      const b = document.createElement('button');
+      b.id = id;
+      b.type = 'button';
+      b.style.cssText = styleCss + ' cursor: pointer; white-space: nowrap; font-family: inherit;';
+      b.innerText = text;
+      if (titleText) b.title = titleText;
+      b.onclick = onClick;
+      return b;
     };
+
+    const applyBtn = makeBtn(
+      'jobpulse-hud-apply-btn',
+      config.isSpeedRun ? '✓ Mark Applied & Next' : '✓ Mark Applied',
+      'background: #10b981; color: white; border: none; border-radius: 7px; padding: 6px 12px; font-size: 11.5px; font-weight: 700;',
+      'Mark this job Applied and advance',
+      () => {
+        applyBtn.disabled = true;
+        applyBtn.innerText = 'Advancing...';
+        applyBtn.style.opacity = '0.7';
+        dispatchAction({ action: 'apply_and_next', jobId: config.jobId });
+      }
+    );
     right.appendChild(applyBtn);
 
-    // Open in Standard Browser Button (for sites where Turnstile or Cloudflare blocks automation)
-    const browserBtn = document.createElement('button');
-    browserBtn.id = 'jobpulse-hud-browser-btn';
-    browserBtn.style.cssText = 'background: #1e293b; color: #38bdf8; border: 1px solid #0284c7; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
-    browserBtn.innerText = '🌐 Open in Regular Browser';
-    browserBtn.title = 'Open this application form in your standard desktop browser if Cloudflare Turnstile CAPTCHA verification is looping';
-    browserBtn.onmouseover = () => { browserBtn.style.background = '#0369a1'; browserBtn.style.color = '#ffffff'; };
-    browserBtn.onmouseout = () => { browserBtn.style.background = '#1e293b'; browserBtn.style.color = '#38bdf8'; };
-    browserBtn.onclick = () => {
-      if (window.onJobPulseAction) {
-        window.onJobPulseAction({ action: 'open_standard_browser', jobId: config.jobId });
-      }
-    };
+    const browserBtn = makeBtn(
+      'jobpulse-hud-browser-btn',
+      config.hasCaptcha ? '🌐 Finish in Regular Chrome (CAPTCHA)' : '🌐 Regular Chrome',
+      config.hasCaptcha
+        ? 'background: #0284c7; color: #ffffff; border: 1px solid #38bdf8; border-radius: 7px; padding: 6px 11px; font-size: 11.5px; font-weight: 700;'
+        : 'background: #1e293b; color: #38bdf8; border: 1px solid #0284c7; border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 600;',
+      'Opens in your regular Chrome browser (zero Playwright/CAPTCHA interference) and stages auto-fill for the JobPulse Chrome Extension',
+      () => dispatchAction({ action: 'open_standard_browser', jobId: config.jobId })
+    );
     right.appendChild(browserBtn);
 
-    // Show Resume PDF in Windows Explorer
-    const folderBtn = document.createElement('button');
-    folderBtn.id = 'jobpulse-hud-folder-btn';
-    folderBtn.style.cssText = 'background: #1e293b; color: #a78bfa; border: 1px solid #7c3aed; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
-    folderBtn.innerText = '📂 Show Resume PDF';
-    folderBtn.title = 'Open Windows Explorer with your tailored Resume PDF selected so you can drag-and-drop it';
-    folderBtn.onmouseover = () => { folderBtn.style.background = '#6d28d9'; folderBtn.style.color = '#ffffff'; };
-    folderBtn.onmouseout = () => { folderBtn.style.background = '#1e293b'; folderBtn.style.color = '#a78bfa'; };
-    folderBtn.onclick = () => {
-      if (window.onJobPulseAction) {
-        window.onJobPulseAction({ action: 'open_resume_folder', jobId: config.jobId });
-      }
-    };
+    const folderBtn = makeBtn(
+      'jobpulse-hud-folder-btn',
+      '📂 Resume PDF',
+      'background: #1e293b; color: #c4b5fd; border: 1px solid #7c3aed; border-radius: 7px; padding: 6px 9px; font-size: 11.5px; font-weight: 500;',
+      'Reveal tailored Resume PDF in Windows Explorer',
+      () => dispatchAction({ action: 'open_resume_folder', jobId: config.jobId })
+    );
     right.appendChild(folderBtn);
 
-    // Copy Cover Letter Button
-    const copyBtn = document.createElement('button');
-    copyBtn.id = 'jobpulse-hud-copy-btn';
-    copyBtn.style.cssText = 'background: #1e293b; color: #f59e0b; border: 1px solid #d97706; border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;';
-    copyBtn.innerText = '📋 Copy Cover Letter';
-    copyBtn.title = 'Copy your tailored Cover Letter text to clipboard';
-    copyBtn.onmouseover = () => { copyBtn.style.background = '#b45309'; copyBtn.style.color = '#ffffff'; };
-    copyBtn.onmouseout = () => { copyBtn.style.background = '#1e293b'; copyBtn.style.color = '#f59e0b'; };
-    copyBtn.onclick = () => {
-      copyBtn.innerText = '✓ Copied!';
-      setTimeout(() => { copyBtn.innerText = '📋 Copy Cover Letter'; }, 2000);
-      if (window.onJobPulseAction) {
-        window.onJobPulseAction({ action: 'copy_cover_letter', jobId: config.jobId });
+    const copyBtn = makeBtn(
+      'jobpulse-hud-copy-btn',
+      '📋 Cover Letter',
+      'background: #1e293b; color: #fbbf24; border: 1px solid #d97706; border-radius: 7px; padding: 6px 9px; font-size: 11.5px; font-weight: 500;',
+      'Copy tailored Cover Letter to clipboard',
+      () => {
+        copyBtn.innerText = '✓ Copied!';
+        setTimeout(() => { copyBtn.innerText = '📋 Cover Letter'; }, 2000);
+        dispatchAction({ action: 'copy_cover_letter', jobId: config.jobId });
       }
-    };
+    );
     right.appendChild(copyBtn);
 
-    // Skip Button (Speed-Run only)
     if (config.isSpeedRun) {
-      const skipBtn = document.createElement('button');
-      skipBtn.id = 'jobpulse-hud-skip-btn';
-      skipBtn.style.cssText = 'background: #334155; color: #cbd5e1; border: 1px solid #475569; border-radius: 7px; padding: 7px 12px; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.15s; white-space: nowrap;';
-      skipBtn.innerText = '⏭ Skip';
-      skipBtn.onmouseover = () => { skipBtn.style.background = '#475569'; };
-      skipBtn.onmouseout = () => { skipBtn.style.background = '#334155'; };
-      skipBtn.onclick = () => {
-        skipBtn.disabled = true;
-        skipBtn.innerText = 'Skipping...';
-        if (window.onJobPulseAction) {
-          window.onJobPulseAction({ action: 'skip', jobId: config.jobId });
+      const skipBtn = makeBtn(
+        'jobpulse-hud-skip-btn',
+        '⏭ Skip',
+        'background: #334155; color: #e2e8f0; border: 1px solid #475569; border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 500;',
+        'Skip to next job in queue',
+        () => {
+          skipBtn.disabled = true;
+          skipBtn.innerText = 'Skipping...';
+          dispatchAction({ action: 'skip', jobId: config.jobId });
         }
-      };
+      );
       right.appendChild(skipBtn);
     }
 
-    // Exit Button
-    const exitBtn = document.createElement('button');
-    exitBtn.id = 'jobpulse-hud-exit-btn';
-    exitBtn.style.cssText = 'background: transparent; color: #94a3b8; border: 1px solid #334155; border-radius: 7px; padding: 7px 10px; font-size: 12px; cursor: pointer; transition: all 0.15s; white-space: nowrap;';
-    exitBtn.innerText = config.isSpeedRun ? '✕ Exit' : '✕ Close';
-    exitBtn.onmouseover = () => { exitBtn.style.color = '#ef4444'; exitBtn.style.borderColor = '#ef4444'; };
-    exitBtn.onmouseout = () => { exitBtn.style.color = '#94a3b8'; exitBtn.style.borderColor = '#334155'; };
-    exitBtn.onclick = () => {
-      if (window.onJobPulseAction) {
-        window.onJobPulseAction({ action: 'exit', jobId: config.jobId });
+    // Dock Top / Bottom Toggle (so HUD never covers CAPTCHAs or Submit buttons)
+    const dockBtn = makeBtn(
+      'jobpulse-hud-dock-btn',
+      '⇅',
+      'background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 7px; padding: 6px 8px; font-size: 11.5px;',
+      'Move HUD between bottom and top of screen',
+      () => {
+        if (container.dataset.dock === 'bottom') {
+          container.dataset.dock = 'top';
+          container.style.bottom = 'auto';
+          container.style.top = '12px';
+        } else {
+          container.dataset.dock = 'bottom';
+          container.style.top = 'auto';
+          container.style.bottom = '12px';
+        }
       }
-    };
+    );
+    right.appendChild(dockBtn);
+
+    // Minimize / Expand Toggle
+    let minimized = false;
+    const minBtn = makeBtn(
+      'jobpulse-hud-min-btn',
+      '—',
+      'background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 7px; padding: 6px 8px; font-size: 11.5px;',
+      'Minimize HUD out of the way',
+      () => {
+        minimized = !minimized;
+        const trapEl = document.getElementById('jobpulse-hud-trap-banner');
+        if (minimized) {
+          left.style.display = 'none';
+          status.style.display = 'none';
+          if (trapEl) trapEl.style.display = 'none';
+          Array.from(right.children).forEach(ch => {
+            if (ch !== minBtn) ch.style.display = 'none';
+          });
+          minBtn.innerText = '⚡ JobPulse HUD';
+          container.style.left = 'auto';
+          container.style.right = '14px';
+          container.style.transform = 'none';
+          container.style.padding = '5px 10px';
+        } else {
+          left.style.display = 'flex';
+          status.style.display = 'block';
+          if (trapEl) trapEl.style.display = 'flex';
+          Array.from(right.children).forEach(ch => { ch.style.display = ''; });
+          minBtn.innerText = '—';
+          container.style.right = 'auto';
+          container.style.left = '50%';
+          container.style.transform = 'translateX(-50%)';
+          container.style.padding = '8px 14px';
+        }
+      }
+    );
+    right.appendChild(minBtn);
+
+    const exitBtn = makeBtn(
+      'jobpulse-hud-exit-btn',
+      '✕',
+      'background: transparent; color: #94a3b8; border: 1px solid #334155; border-radius: 7px; padding: 6px 9px; font-size: 11.5px;',
+      config.isSpeedRun ? 'Exit Speed-Run' : 'Close HUD session',
+      () => dispatchAction({ action: 'exit', jobId: config.jobId })
+    );
     right.appendChild(exitBtn);
 
-    container.appendChild(right);
+    mainRow.appendChild(right);
+    container.appendChild(mainRow);
     document.body.appendChild(container);
   } catch (err) {
     console.error('JobPulse HUD injection error:', err);
@@ -257,6 +407,36 @@ HUD_DONE_SCRIPT = """
 }
 """
 
+READ_AND_CLEAR_HUD_ACTION_SCRIPT = """
+() => {
+  try {
+    const el = document.getElementById('jobpulse-hud-overlay');
+    if (!el || !el.dataset.jobpulseAction) return null;
+    const raw = el.dataset.jobpulseAction;
+    el.dataset.jobpulseAction = '';
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+"""
+
+
+def _copy_text_to_windows_clipboard(text: str) -> None:
+    if not text:
+        return
+    try:
+        import pyperclip
+        pyperclip.copy(text)
+        return
+    except Exception:
+        pass
+    try:
+        proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
+        proc.communicate(input=text.encode("utf-16le"))
+    except Exception:
+        pass
+
 
 def run_interactive_browser(payload_path: str) -> None:
     log(f"Starting interactive browser for payload: {payload_path}")
@@ -271,7 +451,6 @@ def run_interactive_browser(payload_path: str) -> None:
         log(f"Error reading payload JSON: {e}")
         return
 
-    # Check for queue (Speed-Run) vs single-job mode
     raw_jobs = data.get("jobs")
     if raw_jobs and isinstance(raw_jobs, list) and len(raw_jobs) > 0:
         queue = raw_jobs
@@ -316,7 +495,6 @@ def run_interactive_browser(payload_path: str) -> None:
                     log(f"Channel {ch} persistent launch failed: {ch_err}")
 
             if not context:
-                # If primary profile was locked by another running browser instance, try auxiliary profile
                 aux_profile_dir = BACKEND_DIR / "browser_data" / "chrome_user_profile_aux"
                 aux_profile_dir.mkdir(parents=True, exist_ok=True)
                 for ch in ["chrome", "msedge", None]:
@@ -345,98 +523,9 @@ def run_interactive_browser(payload_path: str) -> None:
                 )
                 context = browser.new_context(no_viewport=True)
 
-            try:
-                context.add_init_script("""
-                    (() => {
-                        try {
-                            const proto = Object.getPrototypeOf(navigator);
-                            delete proto.webdriver;
-                            delete navigator.webdriver;
-                        } catch (e) {}
-                        try {
-                            if (!window.chrome) {
-                                window.chrome = {};
-                            }
-                            if (!window.chrome.runtime) {
-                                window.chrome.runtime = {
-                                    PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
-                                    PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
-                                    PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
-                                    RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
-                                    OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
-                                    OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }
-                                };
-                            }
-                        } catch (e) {}
-                        try {
-                            if (!navigator.languages || navigator.languages.length === 0) {
-                                Object.defineProperty(navigator, 'languages', {
-                                    get: () => ['en-US', 'en'],
-                                    configurable: true
-                                });
-                            }
-                        } catch (e) {}
-                    })()
-                """)
-            except Exception:
-                pass
-
+            # Note: Do NOT inject prototype-deleting init scripts or context.expose_function
+            # CDP bindings into all frames, as doing so corrupts cross-origin CAPTCHA iframes!
             page = context.pages[0] if context.pages else context.new_page()
-
-            # Global action tracker received from browser HUD buttons
-            current_action = {"action": None, "job_id": None}
-            current_context = {"item": None, "url": None}
-
-            def handle_hud_action(action_data):
-                log(f"HUD event received from browser: {action_data}")
-                action = None
-                act_job_id = None
-                if isinstance(action_data, dict):
-                    action = action_data.get("action")
-                    act_job_id = action_data.get("jobId")
-                elif isinstance(action_data, str):
-                    action = action_data
-
-                if action == "open_standard_browser":
-                    import webbrowser
-                    target_url = getattr(page, "url", None) or current_context.get("url") or "https://apply.workable.com"
-                    log(f"Opening target URL in standard desktop browser: {target_url}")
-                    webbrowser.open(target_url)
-                    return
-
-                if action == "open_resume_folder":
-                    cur_item = current_context.get("item") or {}
-                    cur_files = cur_item.get("files") or {}
-                    res_path = cur_files.get("resume_pdf") or cur_files.get("legacy_resume_pdf")
-                    if res_path and os.path.exists(res_path):
-                        import subprocess
-                        abs_res = os.path.abspath(res_path)
-                        log(f"Opening Windows Explorer with resume selected: {abs_res}")
-                        subprocess.Popen(f'explorer.exe /select,"{abs_res}"')
-                    return
-
-                if action == "copy_cover_letter":
-                    cur_item = current_context.get("item") or {}
-                    cur_files = cur_item.get("files") or {}
-                    cl_path = cur_files.get("cover_letter_txt") or cur_files.get("cover_letter_md")
-                    if cl_path and os.path.exists(cl_path):
-                        try:
-                            cl_text = Path(cl_path).read_text(encoding="utf-8").strip()
-                            if cl_text:
-                                import pyperclip
-                                pyperclip.copy(cl_text)
-                                log("Cover letter copied to Windows clipboard.")
-                        except Exception as cp_err:
-                            log(f"Error copying cover letter: {cp_err}")
-                    return
-
-                current_action["action"] = action
-                current_action["job_id"] = act_job_id
-
-            try:
-                context.expose_function("onJobPulseAction", handle_hud_action)
-            except Exception as exp_err:
-                log(f"Note on expose_function: {exp_err}")
 
             total_jobs = len(queue)
             for idx, item in enumerate(queue):
@@ -457,25 +546,6 @@ def run_interactive_browser(payload_path: str) -> None:
                 log(f"\n--- Queue [{idx + 1}/{total_jobs}]: {company} - {title} ---")
                 log(f"Target URL: {job_url}")
 
-                current_action["action"] = None
-                current_action["job_id"] = job_id
-                current_context["item"] = item
-                current_context["url"] = job_url
-
-                # Anti-automation bypass script on page load
-                try:
-                    page.add_init_script("""
-                        (() => {
-                            try {
-                                const proto = Object.getPrototypeOf(navigator);
-                                delete proto.webdriver;
-                                delete navigator.webdriver;
-                            } catch (e) {}
-                        })()
-                    """)
-                except Exception:
-                    pass
-
                 try:
                     log(f"Navigating to {job_url}...")
                     page.goto(job_url, timeout=35000, wait_until="domcontentloaded")
@@ -485,6 +555,7 @@ def run_interactive_browser(payload_path: str) -> None:
                     log(f"Navigation warning: {nav_e}")
 
                 target = page
+                fill_res: Dict[str, Any] = {}
                 filled_count = 0
                 try:
                     log("Filling form fields & uploading documents...")
@@ -501,33 +572,42 @@ def run_interactive_browser(payload_path: str) -> None:
                     log(
                         f"Form filled: {filled_count} fields filled "
                         f"(resume_uploaded={fill_res.get('resume_uploaded')}, "
-                        f"cover_letter_uploaded={fill_res.get('cover_letter_uploaded')})."
+                        f"cover_letter_uploaded={fill_res.get('cover_letter_uploaded')}, "
+                        f"has_captcha={fill_res.get('has_captcha')}, "
+                        f"manual_review={len(fill_res.get('manual_review_fields') or [])}, "
+                        f"bot_traps={len(fill_res.get('bot_traps') or [])})."
                     )
                 except Exception as fill_e:
                     log(f"Form filling error: {fill_e}\n{traceback.format_exc()}")
 
-                # Scroll to Submit button so the user sees the filled form ready for submission
+                bot_traps = fill_res.get("bot_traps") or job_data.get("bot_traps") or []
+                if bot_traps and job_id:
+                    persist_live_bot_traps(job_id, bot_traps)
+
+                # Dismiss any cookie banner and ensure no focus/dropdown blocks user clicks
                 try:
                     _dismiss_cookie_banners(page)
-                    submit_btn = target.locator(
-                        "button[type='submit']:visible, input[type='submit']:visible, "
-                        "button:has-text('Submit Application'):visible, button:has-text('Submit application'):visible, "
-                        "button:has-text('Submit'):visible"
-                    ).first
-                    if submit_btn.count() > 0:
-                        submit_btn.scroll_into_view_if_needed(timeout=2000)
-                        log("Scrolled Submit button into view.")
-                except Exception as scroll_e:
-                    log(f"Scroll to submit warning: {scroll_e}")
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
 
-                # Inject HUD
+                # Inject clean bottom-docked HUD
                 try:
+                    unanswered = fill_res.get("unanswered_required") or []
+                    has_captcha = bool(fill_res.get("has_captcha"))
                     if fill_res.get("is_closed_posting"):
-                        status_text = "⚠️ Posting closed or redirected. Click Skip or Next."
+                        status_text = "⚠️ Posting closed or redirected. Click Skip."
+                    elif has_captcha and unanswered:
+                        status_text = f"Filled {filled_count} · {len(unanswered)} field(s) in amber · 🛡️ CAPTCHA present (use Regular Chrome if it loops)"
+                    elif has_captcha:
+                        status_text = f"Filled {filled_count} fields · 🛡️ CAPTCHA detected (click Regular Chrome if it loops)"
+                    elif unanswered:
+                        status_text = f"Filled {filled_count} · {len(unanswered)} required box(es) outlined in amber need review"
                     elif filled_count > 0:
-                        status_text = f"Auto-filled {filled_count} fields. Review form & submit, or advance:"
+                        status_text = f"Auto-filled {filled_count} fields. Review & submit:"
                     else:
-                        status_text = "Page loaded. Review form & submit, or advance:"
+                        status_text = "Page loaded. Review form & submit:"
+
                     page.evaluate(
                         HUD_INJECTION_SCRIPT,
                         {
@@ -538,17 +618,21 @@ def run_interactive_browser(payload_path: str) -> None:
                             "title": title,
                             "jobId": job_id,
                             "statusText": status_text,
+                            "hasCaptcha": has_captcha,
+                            "botTraps": bot_traps,
+                            "unansweredRequired": unanswered,
                         },
                     )
-                    log("Injected floating JobPulse HUD overlay.")
+                    log("Injected bottom-docked JobPulse HUD overlay.")
                 except Exception as hud_e:
                     log(f"HUD injection warning: {hud_e}")
 
-                # Watch loop for this job
+                # Watch loop for this job (top-frame only, zero iframe polling on non-Greenhouse pages)
                 start_job_ts = time.time()
                 code_filled = False
                 job_completed = False
                 notified_gate = False
+                is_greenhouse_page = "greenhouse" in (job_url or "").lower() or "gh_jid=" in (job_url or "").lower()
 
                 while time.time() - start_job_ts < 1800:
                     try:
@@ -556,23 +640,41 @@ def run_interactive_browser(payload_path: str) -> None:
                             log("Browser page was closed by user.")
                             return
 
-                        # Check if user clicked a HUD action
-                        act = current_action.get("action")
-                        if act in ("apply_and_next", "mark_applied"):
-                            log(f"Action '{act}' triggered by user for job {job_id}.")
-                            update_job_status_applied(job_id)
-                            job_completed = True
-                            break
-                        elif act == "skip":
-                            log(f"Job {job_id} skipped by user.")
-                            job_completed = True
-                            break
-                        elif act == "exit":
-                            log("User requested exit from queue.")
-                            return
+                        # Read and consume any user HUD action from top-frame DOM attribute
+                        hud_evt = page.evaluate(READ_AND_CLEAR_HUD_ACTION_SCRIPT)
+                        if isinstance(hud_evt, dict):
+                            act = hud_evt.get("action")
+                            log(f"HUD event received: {hud_evt}")
+                            if act == "open_standard_browser":
+                                target_url = getattr(page, "url", None) or job_url
+                                stage_job_for_regular_browser(job_id, target_url)
+                            elif act == "open_resume_folder":
+                                cur_files = files or {}
+                                res_path = cur_files.get("resume_pdf") or cur_files.get("legacy_resume_pdf")
+                                if res_path and os.path.exists(res_path):
+                                    abs_res = os.path.abspath(res_path)
+                                    subprocess.Popen(f'explorer.exe /select,"{abs_res}"')
+                            elif act == "copy_cover_letter":
+                                cur_files = files or {}
+                                cl_path = cur_files.get("cover_letter_txt") or cur_files.get("cover_letter_md")
+                                if cl_path and os.path.exists(cl_path):
+                                    _copy_text_to_windows_clipboard(Path(cl_path).read_text(encoding="utf-8").strip())
+                            elif act == "copy_text":
+                                _copy_text_to_windows_clipboard(str(hud_evt.get("text") or ""))
+                            elif act in ("apply_and_next", "mark_applied"):
+                                update_job_status_applied(job_id)
+                                job_completed = True
+                                break
+                            elif act == "skip":
+                                log(f"Job {job_id} skipped by user.")
+                                job_completed = True
+                                break
+                            elif act == "exit":
+                                log("User requested exit from queue.")
+                                return
 
                         # Detect submission via URL change
-                        curr_url = page.url.lower()
+                        curr_url = (page.url or "").lower()
                         if any(sig in curr_url for sig in ["/confirmation", "/thank_you", "/thank-you", "/applied", "/submitted"]):
                             log("Detected confirmation URL change!")
                             try:
@@ -587,39 +689,40 @@ def run_interactive_browser(payload_path: str) -> None:
                         if "weworkremotely.com/job-seekers" in curr_url or "register?alert=" in curr_url:
                             if not notified_gate:
                                 notified_gate = True
-                                log("Detected aggregator account registration gate.")
                                 try:
                                     page.evaluate(
                                         HUD_DONE_SCRIPT,
-                                        "⚠️ Third-party account gate detected (WeWorkRemotely). Log in, or click [⏭ Skip] / [✓ Mark Applied]."
+                                        "⚠️ Third-party account gate detected. Log in, or click [⏭ Skip]."
                                     )
                                 except Exception:
                                     pass
 
-                        # Check Greenhouse 2FA security code box
-                        if not code_filled:
-                            sec_box = target.locator("#security-input-0:visible")
-                            if sec_box.count() > 0 and not (sec_box.input_value() or "").strip():
-                                log("Detected Greenhouse security code box! Polling Gmail via IMAP...")
-                                code = poll_for_security_code_sync(
-                                    imap_server=imap_cfg.get("imap_server") or "imap.gmail.com",
-                                    imap_email=imap_cfg.get("imap_email"),
-                                    imap_password=imap_cfg.get("imap_password"),
-                                    min_timestamp=start_job_ts - 60,
-                                    max_wait_seconds=15,
-                                )
-                                if code:
-                                    log(f"Retrieved security code {code}! Auto-filling code inputs...")
-                                    if _fill_greenhouse_security_code_sync(target, code):
-                                        log("Successfully filled security code!")
-                                        code_filled = True
+                        # Check Greenhouse 2FA security code box ONLY on Greenhouse pages
+                        if not code_filled and (is_greenhouse_page or "greenhouse" in curr_url):
+                            try:
+                                sec_box = target.locator("#security-input-0:visible")
+                                if sec_box.count() > 0 and not (sec_box.input_value() or "").strip():
+                                    log("Detected Greenhouse security code box! Polling Gmail via IMAP...")
+                                    code = poll_for_security_code_sync(
+                                        imap_server=imap_cfg.get("imap_server") or "imap.gmail.com",
+                                        imap_email=imap_cfg.get("imap_email"),
+                                        imap_password=imap_cfg.get("imap_password"),
+                                        min_timestamp=start_job_ts - 60,
+                                        max_wait_seconds=15,
+                                    )
+                                    if code:
+                                        log(f"Retrieved security code {code}! Auto-filling code inputs...")
+                                        if _fill_greenhouse_security_code_sync(target, code):
+                                            log("Successfully filled security code!")
+                                            code_filled = True
+                            except Exception:
+                                pass
                     except Exception as loop_e:
                         log(f"Watch loop warning: {loop_e}")
 
-                    time.sleep(1.2)
+                    time.sleep(1.0)
 
                 if not job_completed and not is_speed_run:
-                    # In single-job mode, if time expired or user finished, wrap up
                     break
 
             log("Queue execution complete!")

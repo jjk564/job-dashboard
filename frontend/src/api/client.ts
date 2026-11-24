@@ -249,15 +249,34 @@ export const api = {
     return res.json();
   },
 
-  async startSpeedRun(jobIds?: number[]): Promise<{ success: boolean; message: string; count: number }> {
+  async startSpeedRun(
+    jobIds?: number[],
+    mode: 'playwright' | 'native_chrome' = 'playwright'
+  ): Promise<{ success: boolean; message: string; count: number; mode?: string; active_url?: string }> {
     const res = await fetch(`${API_BASE}/assistant/speed-run/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(jobIds ? { job_ids: jobIds } : {}),
+      body: JSON.stringify({ ...(jobIds ? { job_ids: jobIds } : {}), mode }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Failed to start speed-run' }));
       throw new Error(err.detail || 'Failed to start speed-run');
+    }
+    return res.json();
+  },
+
+  async stageNativeBrowserQueue(
+    jobIds?: number[],
+    openBrowser: boolean = true
+  ): Promise<{ success: boolean; message: string; count: number; active_url?: string }> {
+    const res = await fetch(`${API_BASE}/assistant/stage-browser-queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: jobIds, open_browser: openBrowser }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to stage Regular Chrome autofill' }));
+      throw new Error(err.detail || 'Failed to stage Regular Chrome autofill');
     }
     return res.json();
   },

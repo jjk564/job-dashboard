@@ -95,6 +95,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [isRunningAutopilot, setIsRunningAutopilot] = useState(false);
   const [isSpeedRunning, setIsSpeedRunning] = useState(false);
+  const [speedRunMode, setSpeedRunMode] = useState<'native_chrome' | 'playwright'>('native_chrome');
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [searchProfiles, setSearchProfiles] = useState<SearchProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<number | 'all'>('all');
@@ -275,17 +276,22 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
   };
 
-  const handleStartSpeedRun = async (specificJobIds?: number[]) => {
+  const handleStartSpeedRun = async (specificJobIds?: number[], modeOverride?: 'native_chrome' | 'playwright') => {
+    const activeMode = modeOverride || speedRunMode;
     setIsSpeedRunning(true);
-    setVerifyMessage('⚡ Starting Speed-Run Queue...');
+    setVerifyMessage(
+      activeMode === 'native_chrome'
+        ? '⚡ Opening Speed-Run in Regular Chrome (Zero CAPTCHA loops)...'
+        : '⚡ Starting Playwright Speed-Run Queue...'
+    );
     try {
-      const res = await api.startSpeedRun(specificJobIds);
+      const res = await api.startSpeedRun(specificJobIds, activeMode);
       if (res.success) {
-        setVerifyMessage(`⚡ Speed-Run active (${res.count} jobs)! Check the Chromium window on your screen.`);
+        setVerifyMessage(res.message || `⚡ Speed-Run active (${res.count} jobs)!`);
       } else {
         setVerifyMessage(res.message);
       }
-      setTimeout(() => setVerifyMessage(null), 8000);
+      setTimeout(() => setVerifyMessage(null), 9000);
     } catch (err: any) {
       console.error('Failed to start speed run:', err);
       setVerifyMessage(err?.message || 'Failed to start Speed-Run');
@@ -376,16 +382,31 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             <span>{isRunningAutopilot ? 'Autopilot Running...' : 'Run Autopilot'}</span>
           </button>
 
-          {/* Speed-Run Queue Apply Button */}
-          <button
-            onClick={() => handleStartSpeedRun()}
-            disabled={isSpeedRunning}
-            className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600/30 to-indigo-600/30 hover:from-blue-600/40 hover:to-indigo-600/40 px-3 py-1.5 rounded-lg border border-blue-500/50 text-blue-300 hover:text-white font-semibold transition text-xs shadow-xs disabled:opacity-50 cursor-pointer"
-            title="Rapidly loop through all jobs in Need to Apply with pre-filled forms and top HUD"
-          >
-            <Zap className={`w-3.5 h-3.5 text-yellow-400 fill-yellow-400 ${isSpeedRunning ? 'animate-bounce' : ''}`} />
-            <span>{isSpeedRunning ? 'Speed-Run Opening...' : '⚡ Speed-Run Apply'}</span>
-          </button>
+          {/* Speed-Run Queue Apply Button + Mode Selector */}
+          <div className="flex items-center rounded-lg border border-blue-500/50 overflow-hidden bg-slate-900">
+            <button
+              onClick={() => handleStartSpeedRun()}
+              disabled={isSpeedRunning}
+              className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600/35 to-indigo-600/35 hover:from-blue-600/50 hover:to-indigo-600/50 px-3 py-1.5 text-blue-200 hover:text-white font-semibold transition text-xs disabled:opacity-50 cursor-pointer"
+              title={
+                speedRunMode === 'native_chrome'
+                  ? 'Opens Speed-Run in your regular Chrome browser (with JobPulse Extension — zero CAPTCHA interference!)'
+                  : 'Opens Speed-Run in managed Playwright Chromium window'
+              }
+            >
+              <Zap className={`w-3.5 h-3.5 text-yellow-400 fill-yellow-400 ${isSpeedRunning ? 'animate-bounce' : ''}`} />
+              <span>{isSpeedRunning ? 'Opening...' : '⚡ Speed-Run'}</span>
+            </button>
+            <select
+              value={speedRunMode}
+              onChange={(e) => setSpeedRunMode(e.target.value as 'native_chrome' | 'playwright')}
+              className="bg-slate-900 border-l border-blue-500/40 px-2 py-1.5 text-[11px] text-sky-300 font-semibold focus:outline-none cursor-pointer"
+              title="Choose Regular Chrome (Native Extension — Zero CAPTCHA Loops) or Playwright"
+            >
+              <option value="native_chrome">Chrome Ext</option>
+              <option value="playwright">Playwright</option>
+            </select>
+          </div>
 
           {/* Verify Postings Button */}
           <button

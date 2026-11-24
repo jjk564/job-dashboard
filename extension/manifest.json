@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "JobPulse Native Auto-Fill & Speed-Run",
+  "version": "1.0.0",
+  "description": "Auto-fills ATS job applications, attaches tailored PDFs, and surfaces Bot Trap alerts inside your regular Chrome browser with zero CAPTCHA interference.",
+  "permissions": ["activeTab", "storage", "clipboardWrite"],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JobPulse Auto-Fill"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.greenhouse.io/*",
+        "https://*.lever.co/*",
+        "https://*.ashbyhq.com/*",
+        "https://*.workable.com/*",
+        "https://*.bamboohr.com/*",
+        "https://*.breezy.hr/*",
+        "https://*.applytojob.com/*",
+        "https://*.jazzhr.com/*",
+        "https://*.recruitee.com/*",
+        "https://*.jobvite.com/*",
+        "https://*.dover.com/*",
+        "https://*.gem.com/*",
+        "https://*.pinpointhq.com/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://*.icims.com/*",
+        "https://*.rippling.com/*",
+        "https://*.smartrecruiters.com/*",
+        "https://*.indeed.com/*",
+        "https://*.linkedin.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

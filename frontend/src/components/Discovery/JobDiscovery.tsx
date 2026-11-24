@@ -23,7 +23,8 @@ import {
   EyeOff,
   Eye,
   Undo2,
-  Navigation
+  Navigation,
+  ShieldAlert
 } from 'lucide-react';
 import { DiscoveredJob, Job } from '../../types';
 import { api } from '../../api/client';
@@ -2703,6 +2704,19 @@ export const JobDiscovery: React.FC<JobDiscoveryProps> = ({ pipelineJobs, onJobA
                     <h3 className="font-bold text-slate-100 text-base leading-snug line-clamp-2">
                       {job.title}
                     </h3>
+
+                    {/* Bot Trap Alert Indicator */}
+                    {job.bot_traps && job.bot_traps.length > 0 && (
+                      <div
+                        className="px-2.5 py-1.5 rounded-lg bg-amber-950/60 border border-amber-500/50 text-[11px] text-amber-200 flex items-start space-x-1.5"
+                        title={job.bot_traps[0].action_required}
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <span className="line-clamp-2 leading-snug">
+                          <strong className="text-amber-300">Bot Trap:</strong> {job.bot_traps[0].action_required}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Meta info */}
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">

@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from .bot_trap_detector import detect_bot_traps, merge_bot_traps
 from .email_code_reader import poll_for_security_code_sync
-from .question_answerer import PACKETS_DIR, answer_single_question
+from .question_answerer import PACKETS_DIR, _extract_current_company, answer_single_question
 
 logger = logging.getLogger(__name__)
 
@@ -230,15 +231,55 @@ def resolve_direct_ats_url(company: str, title: str, original_url: Optional[str]
 
 def _select_active_form_target(page: Any) -> Any:
     """
-    If the page embeds a Greenhouse, Ashby, or Lever application form inside an iframe
-    (e.g., #grnhse_iframe or boards.greenhouse.io/embed/job_app), returns that Frame;
-    otherwise returns the main Page.
+    If the page embeds an ATS application form inside an iframe (Greenhouse, Ashby, Lever,
+    Workable, BambooHR, JazzHR, Breezy, etc.), returns that Frame; otherwise checks whether
+    any non-CAPTCHA iframe hosts the application form when the main page has no inputs.
     """
+    ats_iframe_hints = (
+        "greenhouse.io/embed",
+        "ashbyhq.com",
+        "lever.co",
+        "workable.com",
+        "bamboohr.com",
+        "breezy.hr",
+        "applytojob.com",
+        "jazzhr.com",
+        "recruitee.com",
+        "jobvite.com",
+        "dover.com",
+        "pinpointhq.com",
+        "gem.com",
+    )
+    captcha_iframe_hints = ("recaptcha", "hcaptcha", "turnstile", "challenges.cloudflare.com", "arkoselabs")
     try:
         for frame in page.frames:
+            if frame == page.main_frame:
+                continue
             f_url = (frame.url or "").lower()
-            if any(d in f_url for d in ("greenhouse.io/embed", "ashbyhq.com", "lever.co", "workable.com")):
+            if any(c in f_url for c in captcha_iframe_hints):
+                continue
+            if any(d in f_url for d in ats_iframe_hints):
                 return frame
+        # Fallback: if main page has no form inputs, find any non-CAPTCHA iframe with form inputs
+        main_inputs = page.locator("form input:visible, input[type='email']:visible, input[type='file']").count()
+        if main_inputs == 0:
+            best_frame = None
+            best_count = 0
+            for frame in page.frames:
+                if frame == page.main_frame:
+                    continue
+                f_url = (frame.url or "").lower()
+                if not f_url or f_url == "about:blank" or any(c in f_url for c in captcha_iframe_hints):
+                    continue
+                try:
+                    cnt = frame.locator("form input, input[type='email'], input[type='file'], textarea").count()
+                    if cnt > best_count:
+                        best_count = cnt
+                        best_frame = frame
+                except Exception:
+                    pass
+            if best_frame is not None and best_count >= 2:
+                return best_frame
     except Exception:
         pass
     return page
@@ -339,10 +380,36 @@ def _fill_form_sync(
 
     # Use visible body text (excluding script tags) to avoid false positives on i18n translation JSON bundles
     visible_body_text = ""
+    raw_visible_text = ""
     try:
-        visible_body_text = (target.inner_text("body") or "").lower()
+        raw_visible_text = target.inner_text("body") or ""
+        visible_body_text = raw_visible_text.lower()
     except Exception:
+        raw_visible_text = ""
         visible_body_text = page_content_low
+
+    # Live scan for bot traps / human-read instructions on the ATS page + job description
+    live_traps = detect_bot_traps(
+        description=job_data.get("description") or "",
+        page_text=raw_visible_text,
+    )
+    detected_bot_traps = merge_bot_traps(job_data.get("bot_traps"), live_traps)
+    manual_review_fields: List[str] = []
+
+    def _highlight_manual_field(loc_el: Any, reason_label: str) -> None:
+        try:
+            loc_el.evaluate(
+                """(el, lbl) => {
+                    const box = el.closest('[role="radiogroup"], .select__control, fieldset') || el;
+                    box.style.outline = '2px dashed #f59e0b';
+                    box.style.outlineOffset = '2px';
+                    box.setAttribute('data-jobpulse-needs-input', lbl || 'Needs review');
+                    if (!box.title) box.title = 'JobPulse left this blank for you to verify: ' + (lbl || '');
+                }""",
+                reason_label[:100],
+            )
+        except Exception:
+            pass
 
     # A page that contains active form inputs or an Apply button is NOT a 404/closed posting
     has_form_or_apply = False
@@ -382,7 +449,7 @@ def _fill_form_sync(
     except Exception:
         pass
 
-    # 3. Fill standard contact fields (handles both first_name and firstname conventions)
+    # 3. Fill standard contact fields (strict selectors so unrelated custom/referral boxes are never overwritten!)
     full_name = (profile_data.get("full_name") or "").strip()
     parts = full_name.split()
     first_name = parts[0] if parts else ""
@@ -390,46 +457,97 @@ def _fill_form_sync(
     email = (profile_data.get("email") or "").strip()
     phone = (profile_data.get("phone") or "").strip()
     location = (profile_data.get("location") or "").strip()
-    company = (profile_data.get("company") or profile_data.get("current_company") or "Hyperice").strip()
+    company = _extract_current_company(profile_data)
     linkedin = (profile_data.get("linkedin_url") or "").strip()
     github = (profile_data.get("github_url") or "").strip()
     portfolio = (profile_data.get("portfolio_url") or github or linkedin).strip()
+
+    has_split_name = False
+    try:
+        has_split_name = target.locator(
+            'input[name*="first_name" i]:visible, input[id*="first_name" i]:visible, '
+            'input[name*="firstname" i]:visible, input[id*="firstname" i]:visible, '
+            'input[autocomplete="given-name"]:visible'
+        ).count() > 0
+    except Exception:
+        pass
 
     field_mappings = [
         (
             'input[name*="first_name" i], input[id*="first_name" i], '
             'input[name*="firstname" i], input[id*="firstname" i], input[autocomplete="given-name"]',
             first_name,
+            ("refer", "manager", "supervisor", "emergency"),
         ),
         (
             'input[name*="last_name" i], input[id*="last_name" i], '
             'input[name*="lastname" i], input[id*="lastname" i], input[autocomplete="family-name"]',
             last_name,
+            ("refer", "manager", "supervisor", "emergency"),
         ),
-        ('input[name="name" i], input[id="name" i], input[autocomplete="name"], input[name*="full_name" i]', full_name),
-        ('input[type="email"], input[name*="email" i], input[id*="email" i]', email),
-        ('input[type="tel"], input[name*="phone" i], input[id*="phone" i]', phone),
         (
-            'input[name="org" i], input[name*="current_company" i], input[name*="company" i], '
-            'input[id*="current_company" i], input[id*="company" i], input[placeholder*="company" i], '
-            'input[name*="employer" i]',
-            company,
+            'input[name="name" i], input[id="name" i], input[autocomplete="name"], input[name*="full_name" i], input[id*="full_name" i]',
+            "" if has_split_name else full_name,
+            ("refer", "company", "employer", "school", "university", "manager", "emergency"),
         ),
-        ('input[name*="linkedin" i], input[id*="linkedin" i], input[placeholder*="linkedin" i]', linkedin),
-        ('input[name*="github" i], input[id*="github" i], input[placeholder*="github" i]', github),
-        ('input[name*="website" i], input[id*="portfolio" i], input[placeholder*="portfolio" i], input[name*="portfolio" i]', portfolio),
+        (
+            'input[type="email"], input[name="email" i], input[id="email" i], input[autocomplete="email"]',
+            email,
+            ("refer", "manager", "supervisor", "emergency"),
+        ),
+        (
+            'input[type="tel"], input[name="phone" i], input[id="phone" i], input[autocomplete="tel"]',
+            phone,
+            ("refer", "manager", "supervisor", "emergency", "country", "ext", "code"),
+        ),
+        (
+            'input[name="org" i], input[name*="current_company" i], input[id*="current_company" i], '
+            'input[name*="current_employer" i], input[id*="current_employer" i]',
+            company,
+            ("refer", "website", "url", "search"),
+        ),
+        (
+            'input[name*="linkedin" i], input[id*="linkedin" i], input[placeholder*="linkedin" i]',
+            linkedin,
+            ("how did you", "hear", "source", "refer"),
+        ),
+        (
+            'input[name*="github" i], input[id*="github" i], input[placeholder*="github" i]',
+            github,
+            ("how did you", "hear", "source", "refer"),
+        ),
+        (
+            'input[id*="portfolio" i], input[placeholder*="portfolio" i], input[name*="portfolio" i], '
+            'input[name*="personal_website" i], input[id*="personal_website" i]',
+            portfolio,
+            ("company website", "how did you", "hear", "source"),
+        ),
     ]
 
-    for selector, val in field_mappings:
+    for selector, val, exclude_terms in field_mappings:
         if not val:
             continue
         try:
-            loc = target.locator(selector).first
-            if loc.count() > 0 and loc.is_visible():
-                current_val = loc.input_value()
+            locs = target.locator(selector)
+            cnt = min(locs.count(), 5)
+            for idx_m in range(cnt):
+                loc = locs.nth(idx_m)
+                if not loc.is_visible() or loc.is_disabled():
+                    continue
+                if loc.get_attribute("readonly") is not None:
+                    continue
+                # Guard against matching referral/unrelated inputs
+                ctx_hint = loc.evaluate("""el => {
+                    const lbl = (el.labels && el.labels.length) ? Array.from(el.labels).map(l => l.innerText).join(' ') : '';
+                    return `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${lbl}`.toLowerCase();
+                }""")
+                if any(ex in ctx_hint for ex in exclude_terms):
+                    continue
+                current_val = (loc.input_value() or "").strip()
                 if not current_val:
                     loc.fill(val, timeout=1500)
                     filled_count += 1
+                    break
         except Exception:
             pass
 
@@ -440,20 +558,20 @@ def _fill_form_sync(
         try:
             loc_input = target.locator(
                 '#location-input:visible, input[name="location"]:visible, '
-                'input[name*="location" i]:visible, input[id*="location" i]:visible, '
-                'input[name*="city" i]:visible, input[id*="city" i]:visible'
+                'input[name*="candidate_location" i]:visible, input[id*="candidate_location" i]:visible, '
+                'input[id="location"]:visible, input[placeholder*="location" i]:visible'
             ).first
-            if loc_input.count() > 0:
+            if loc_input.count() > 0 and not loc_input.is_disabled() and loc_input.get_attribute("readonly") is None:
                 current_loc_val = (loc_input.input_value() or "").strip()
                 if not current_loc_val:
                     loc_input.click()
                     # Use press_sequentially with clean location string to trigger Lever / Google Places / Ashby typeahead
                     try:
-                        loc_input.press_sequentially(loc_type_str, delay=70)
+                        loc_input.press_sequentially(loc_type_str, delay=60)
                     except Exception:
                         loc_input.fill(loc_type_str)
                     filled_count += 1
-                    time.sleep(1.0)
+                    time.sleep(0.9)
                     try:
                         suggs = target.locator(
                             '.dropdown-location:visible, #location-0:visible, .dropdown-results:visible, '
@@ -474,9 +592,11 @@ def _fill_form_sync(
                         else:
                             loc_input.fill(clean_location)
                             loc_input.dispatch_event("change")
+                            loc_input.press("Escape")
                             loc_input.blur()
                     except Exception:
                         try:
+                            loc_input.press("Escape")
                             loc_input.dispatch_event("change")
                             loc_input.blur()
                         except Exception:
@@ -665,53 +785,94 @@ def _fill_form_sync(
     # 5. Discover and answer Radio Button groups (`input[type="radio"]`)
     try:
         radios = target.locator("input[type='radio']")
-        r_count = min(radios.count(), 30)
+        r_count = min(radios.count(), 120)
         radio_groups: Dict[str, List[Dict[str, Any]]] = {}
         for i in range(r_count):
             r_el = radios.nth(i)
             r_name = r_el.get_attribute("name") or f"group_{i}"
             info = r_el.evaluate(
                 """el => {
-                    let optLabel = (
-                        el.closest('[role="radio"]')?.innerText ||
-                        el.closest('[data-testid*="radio-label"]')?.innerText ||
-                        el.closest('label')?.innerText ||
-                        el.getAttribute('aria-label') ||
-                        el.value ||
-                        ''
-                    ).trim();
+                    const isChecked = Boolean(el.checked);
+                    let optLabel = '';
+                    if (el.labels && el.labels.length > 0) {
+                        optLabel = Array.from(el.labels).map(l => l.innerText).join(' ').trim();
+                    }
+                    if (!optLabel) {
+                        optLabel = (
+                            el.closest('[role="radio"]')?.innerText ||
+                            el.closest('[data-testid*="radio-label"]')?.innerText ||
+                            el.closest('label')?.innerText ||
+                            el.getAttribute('aria-label') ||
+                            el.value ||
+                            ''
+                        ).trim();
+                    }
                     if (!optLabel && el.parentElement) {
                         optLabel = (el.parentElement.innerText || '').trim();
                     }
-                    let cur = el;
                     let promptText = '';
-                    while (cur && cur !== document.body) {
-                        if (cur.getAttribute('data-testid') === 'field' || cur.classList.contains('eun831x1') || cur.parentElement?.classList?.contains('application-question')) {
-                            if (cur.previousElementSibling) {
-                                const txt = (cur.previousElementSibling.innerText || '').trim();
-                                if (txt && txt.length > 2) {
-                                    promptText = txt;
-                                    break;
-                                }
+                    // 1. Check fieldset > legend
+                    const fs = el.closest('fieldset');
+                    if (fs) {
+                        const leg = fs.querySelector('legend');
+                        if (leg && leg.innerText.trim()) promptText = leg.innerText.trim();
+                    }
+                    // 2. Check [role="radiogroup"] aria-labelledby / aria-label
+                    if (!promptText) {
+                        const rg = el.closest('[role="radiogroup"]');
+                        if (rg) {
+                            const lblBy = rg.getAttribute('aria-labelledby');
+                            if (lblBy) {
+                                const parts = lblBy.split(/\s+/).map(id => document.getElementById(id)?.innerText?.trim()).filter(Boolean);
+                                if (parts.length) promptText = parts.join(' ');
+                            }
+                            if (!promptText && rg.getAttribute('aria-label')) {
+                                promptText = rg.getAttribute('aria-label').trim();
                             }
                         }
-                        if (cur.previousElementSibling) {
-                            const prev = (cur.previousElementSibling.innerText || '').trim();
-                            if (prev && prev.length > 2 && prev.toLowerCase() !== optLabel.toLowerCase()) {
-                                promptText = prev;
+                    }
+                    // 3. Scoped field-container walk (never cross <form> / <section> boundaries)
+                    if (!promptText) {
+                        let cur = el.parentElement;
+                        for (let k = 0; k < 8 && cur && !['FORM', 'BODY', 'MAIN', 'SECTION'].includes(cur.tagName); k++) {
+                            const isField = (
+                                cur.getAttribute('data-testid') === 'field' ||
+                                cur.classList.contains('application-question') ||
+                                cur.classList.contains('eun831x1') ||
+                                /(?:field|question|form-group|form-item)/i.test(String(cur.className || ''))
+                            );
+                            if (isField) {
+                                const lbl = cur.querySelector('legend, label:not(:has(input[type="radio"])), [class*="label"]:not(:has(input)), [class*="question-text"], p, h3, h4, h5');
+                                if (lbl) {
+                                    const txt = (lbl.innerText || '').trim();
+                                    if (txt && txt.length > 2 && txt.toLowerCase() !== optLabel.toLowerCase()) {
+                                        promptText = txt;
+                                        break;
+                                    }
+                                }
+                                if (cur.previousElementSibling) {
+                                    const prev = (cur.previousElementSibling.innerText || '').trim();
+                                    if (prev && prev.length > 2 && prev.length < 300 && prev.toLowerCase() !== optLabel.toLowerCase()) {
+                                        promptText = prev;
+                                        break;
+                                    }
+                                }
                                 break;
                             }
+                            cur = cur.parentElement;
                         }
-                        cur = cur.parentElement;
                     }
-                    const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true';
-                    return { optLabel, promptText, isReq };
+                    const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true' || (promptText && promptText.includes('*'));
+                    return { optLabel, promptText, isReq, isChecked };
                 }"""
             )
             radio_groups.setdefault(r_name, []).append({"index": i, **info})
 
         for r_name, items in radio_groups.items():
-            prompt = next((it["promptText"] for it in items if it.get("promptText")), r_name)
+            # Skip radio groups that already have a selection
+            if any(it.get("isChecked") for it in items):
+                continue
+            prompt = next((it["promptText"] for it in items if it.get("promptText")), r_name).replace("*", "").strip()
             options_list = [it["optLabel"] for it in items if it.get("optLabel")]
             is_req = any(it.get("isReq") for it in items)
 
@@ -727,15 +888,23 @@ def _fill_form_sync(
             )
             discovered_qa.append(qa)
 
-            if qa["confidence"] == "manual_needed" and is_req:
-                unanswered_required.append(prompt)
+            if qa["confidence"] == "manual_needed" or not (qa.get("answer") or "").strip():
+                if is_req:
+                    unanswered_required.append(prompt)
+                manual_review_fields.append(prompt)
+                _highlight_manual_field(radios.nth(items[0]["index"]), prompt)
                 continue
 
             desired_ans = (qa.get("answer") or "").strip().lower()
             matched_item = next(
-                (it for it in items if it["optLabel"].lower() == desired_ans or desired_ans in it["optLabel"].lower() or it["optLabel"].lower() in desired_ans),
+                (it for it in items if it["optLabel"].lower() == desired_ans),
                 None,
             )
+            if not matched_item:
+                matched_item = next(
+                    (it for it in items if desired_ans in it["optLabel"].lower() or it["optLabel"].lower() in desired_ans),
+                    None,
+                )
             if not matched_item and desired_ans.startswith("yes"):
                 matched_item = next(
                     (it for it in items if "yes" in it["optLabel"].lower() or it["optLabel"].lower() == "true"),
@@ -746,7 +915,6 @@ def _fill_form_sync(
                 checked_ok = False
                 try:
                     r_loc = radios.nth(matched_item["index"])
-                    # On React/Rippling, click the enclosing custom radio component or label
                     r_loc.evaluate("el => (el.closest('[role=\"radio\"]') || el.closest('label') || el).click()")
                     checked_ok = True
                     filled_count += 1
@@ -762,7 +930,6 @@ def _fill_form_sync(
                     except Exception:
                         pass
 
-                # If native input is visually hidden / aria-hidden, click visible text or label
                 if not checked_ok:
                     try:
                         lbl_text = matched_item["optLabel"]
@@ -776,114 +943,322 @@ def _fill_form_sync(
                         pass
             elif is_req:
                 unanswered_required.append(prompt)
+                manual_review_fields.append(prompt)
+                _highlight_manual_field(radios.nth(items[0]["index"]), prompt)
     except Exception as e:
         logger.debug(f"Radio group discovery error: {e}")
+
+    # 5.5 Custom Button-based Radio / Yes-No Toggle Groups (Ashby, Workable, Greenhouse React, Lever)
+    try:
+        custom_groups = target.locator(
+            "[role='radiogroup']:visible, "
+            "[class*='yesno' i]:visible, "
+            "[class*='yes-no' i]:visible, "
+            "[data-testid*='yes-no' i]:visible, "
+            "[data-testid*='boolean' i]:visible"
+        )
+        cg_count = min(custom_groups.count(), 40)
+        for g_idx in range(cg_count):
+            grp = custom_groups.nth(g_idx)
+            try:
+                # Skip if this group already wraps native <input type="radio"> handled above
+                if grp.locator("input[type='radio']").count() > 0:
+                    continue
+                btns = grp.locator("button:visible, [role='radio']:visible")
+                b_cnt = btns.count()
+                if b_cnt < 2 or b_cnt > 10:
+                    continue
+                g_info = grp.evaluate("""el => {
+                    const opts = Array.from(el.querySelectorAll('button, [role="radio"]'))
+                        .filter(b => b.offsetParent !== null)
+                        .map(b => ({
+                            text: (b.innerText || b.getAttribute('aria-label') || '').trim(),
+                            active: b.getAttribute('aria-checked') === 'true' || b.getAttribute('aria-pressed') === 'true' || /active|selected|checked/i.test(String(b.className || ''))
+                        }));
+                    let prompt = '';
+                    const lblBy = el.getAttribute('aria-labelledby');
+                    if (lblBy) {
+                        prompt = lblBy.split(/\s+/).map(id => document.getElementById(id)?.innerText?.trim()).filter(Boolean).join(' ');
+                    }
+                    if (!prompt && el.getAttribute('aria-label')) prompt = el.getAttribute('aria-label').trim();
+                    if (!prompt) {
+                        let cur = el.parentElement;
+                        for (let k = 0; k < 5 && cur && !['FORM', 'BODY', 'MAIN', 'SECTION'].includes(cur.tagName); k++) {
+                            const lbl = cur.querySelector('label, legend, [class*="label"], [class*="question"], p, h3, h4');
+                            if (lbl && !el.contains(lbl) && (lbl.innerText || '').trim().length > 2) {
+                                prompt = lbl.innerText.trim();
+                                break;
+                            }
+                            cur = cur.parentElement;
+                        }
+                    }
+                    const isReq = el.getAttribute('aria-required') === 'true' || (prompt && prompt.includes('*'));
+                    return { opts, prompt, isReq };
+                }""")
+                opts_meta = g_info.get("opts") or []
+                if any(o.get("active") for o in opts_meta):
+                    continue
+                prompt = (g_info.get("prompt") or "").replace("*", "").strip()
+                opt_texts = [o["text"] for o in opts_meta if o.get("text")]
+                if not prompt or len(opt_texts) < 2:
+                    continue
+                qa = answer_single_question(
+                    question_text=prompt,
+                    job_data=job_data,
+                    profile_data=profile_data,
+                    candidate_skills=candidate_skills,
+                    app_kit=app_kit,
+                    options=opt_texts,
+                    field_type="radio",
+                    required=bool(g_info.get("isReq")),
+                )
+                discovered_qa.append(qa)
+                if qa["confidence"] == "manual_needed" or not (qa.get("answer") or "").strip():
+                    if g_info.get("isReq"):
+                        unanswered_required.append(prompt)
+                    manual_review_fields.append(prompt)
+                    _highlight_manual_field(grp, prompt)
+                    continue
+                desired = (qa.get("answer") or "").strip().lower()
+                target_idx = next((idx for idx, txt in enumerate(opt_texts) if txt.lower() == desired), None)
+                if target_idx is None:
+                    target_idx = next((idx for idx, txt in enumerate(opt_texts) if desired in txt.lower() or txt.lower() in desired), None)
+                if target_idx is not None:
+                    btns.nth(target_idx).click(timeout=1500)
+                    filled_count += 1
+            except Exception as cg_err:
+                logger.debug(f"[CUSTOM RADIO ERR] idx={g_idx}: {cg_err}")
+    except Exception as e:
+        logger.debug(f"Custom radio group error: {e}")
+
+    # 5.7 Checkboxes (Privacy Policy, Terms, GDPR, Certifications, SMS Consent)
+    try:
+        checkboxes = target.locator("input[type='checkbox'], [role='checkbox']:visible")
+        cb_count = min(checkboxes.count(), 40)
+        for c_idx in range(cb_count):
+            cb = checkboxes.nth(c_idx)
+            try:
+                cb_info = cb.evaluate("""el => {
+                    const isInput = el.tagName.toLowerCase() === 'input';
+                    const isChecked = isInput ? Boolean(el.checked) : (el.getAttribute('aria-checked') === 'true');
+                    const isDisabled = isInput ? Boolean(el.disabled) : (el.getAttribute('aria-disabled') === 'true');
+                    const idStr = `${el.id || ''} ${el.name || ''} ${el.className || ''}`.toLowerCase();
+                    // Never touch CAPTCHA checkboxes!
+                    const isCaptcha = idStr.includes('captcha') || idStr.includes('turnstile') || Boolean(el.closest('.g-recaptcha, .h-captcha, .cf-turnstile'));
+                    let labelText = '';
+                    if (isInput && el.labels && el.labels.length > 0) {
+                        labelText = Array.from(el.labels).map(l => l.innerText).join(' ').trim();
+                    }
+                    if (!labelText) {
+                        const lbl = el.closest('label');
+                        if (lbl) labelText = (lbl.innerText || '').trim();
+                    }
+                    if (!labelText && el.getAttribute('aria-label')) {
+                        labelText = el.getAttribute('aria-label').trim();
+                    }
+                    if (!labelText && el.parentElement) {
+                        labelText = (el.parentElement.innerText || '').trim().slice(0, 260);
+                    }
+                    const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true' || labelText.includes('*');
+                    return { isInput, isChecked, isDisabled, isCaptcha, labelText, isReq };
+                }""")
+                if cb_info.get("isCaptcha") or cb_info.get("isChecked") or cb_info.get("isDisabled"):
+                    continue
+                cb_label = (cb_info.get("labelText") or "").replace("*", "").strip()
+                if not cb_label or len(cb_label) < 3:
+                    continue
+                qa = answer_single_question(
+                    question_text=cb_label,
+                    job_data=job_data,
+                    profile_data=profile_data,
+                    candidate_skills=candidate_skills,
+                    app_kit=app_kit,
+                    options=["Yes", "No"],
+                    field_type="checkbox",
+                    required=bool(cb_info.get("isReq")),
+                )
+                ans_low = (qa.get("answer") or "").strip().lower()
+                if qa["confidence"] != "manual_needed" and ans_low in ("yes", "true", "i agree", "i acknowledge", "i consent", "accept", "agree"):
+                    try:
+                        if cb_info.get("isInput"):
+                            cb.check(force=True, timeout=1200)
+                        else:
+                            cb.click(force=True, timeout=1200)
+                        filled_count += 1
+                    except Exception:
+                        try:
+                            cb.evaluate("el => (el.closest('label') || el).click()")
+                            filled_count += 1
+                        except Exception:
+                            pass
+                elif cb_info.get("isReq") and qa["confidence"] == "manual_needed":
+                    unanswered_required.append(cb_label[:80])
+                    manual_review_fields.append(cb_label[:80])
+                    _highlight_manual_field(cb, cb_label[:80])
+            except Exception as cb_err:
+                logger.debug(f"[CHECKBOX ERR] idx={c_idx}: {cb_err}")
+    except Exception as e:
+        logger.debug(f"Checkbox discovery error: {e}")
 
     # 6. Inspect and answer remaining labeled text inputs, textareas, selects, and React/Custom comboboxes
     try:
         elements = target.locator(
-            "input:visible:not([type='file']):not([type='radio']):not([type='checkbox']):not([type='hidden']):not([type='submit']):not([type='button']), "
-            "textarea:visible, select:visible, div[role='combobox']:visible, button[role='combobox']:visible"
+            "input:visible:not([type='file']):not([type='radio']):not([type='checkbox']):not([type='hidden']):not([type='submit']):not([type='button']):not([type='search']), "
+            "textarea:visible, select:visible, "
+            "div[role='combobox']:visible, button[role='combobox']:visible, "
+            "button[aria-haspopup='listbox']:visible, div[aria-haspopup='listbox']:visible"
         )
-        el_count = min(elements.count(), 45)
+        el_count = min(elements.count(), 150)
+        handled_containers = set()
         logger.debug(f"[LOOP START] total elements={el_count}")
         for i in range(el_count):
             el = elements.nth(i)
+            el_id = ""
             try:
+                if el.is_disabled():
+                    continue
+                if el.get_attribute("readonly") is not None and (el.get_attribute("role") or "").lower() != "combobox":
+                    continue
                 tag_name = (el.evaluate("el => el.tagName.toLowerCase()")) or "input"
                 inp_type = (el.get_attribute("type") or "text").lower()
                 role_attr = (el.get_attribute("role") or "").lower()
+                aria_popup = (el.get_attribute("aria-haspopup") or "").lower()
                 el_id = el.get_attribute("id") or ""
                 el_name = el.get_attribute("name") or ""
-                logger.debug(f"[LOOP ITEM] i={i}/{el_count}, tag={tag_name}, id={el_id}, role={role_attr}")
-                if not el_id and not el_name and role_attr == "combobox" and tag_name == "input":
-                    # Internal dummy React-Select input
-                    continue
+                is_combobox = role_attr == "combobox" or aria_popup == "listbox"
+
+                # Deduplicate React-Select wrapper + inner <input role="combobox"> so each combobox is handled once
+                if is_combobox:
+                    container_sig = el.evaluate("""el => {
+                        const c = el.closest('.select__control, [data-testid="field"], .application-question, [class*="select-container"]');
+                        if (!c) return '';
+                        if (!c.dataset.jpSig) c.dataset.jpSig = 'jp_' + Math.random().toString(36).slice(2, 9);
+                        return c.dataset.jpSig;
+                    }""")
+                    if container_sig and container_sig in handled_containers:
+                        continue
+                    if container_sig:
+                        handled_containers.add(container_sig)
+
+                logger.debug(f"[LOOP ITEM] i={i}/{el_count}, tag={tag_name}, id={el_id}, role={role_attr}, combo={is_combobox}")
 
                 is_req = (
                     el.get_attribute("required") is not None
                     or el.get_attribute("aria-required") == "true"
                 )
 
-                if tag_name in ("input", "textarea") and role_attr != "combobox":
+                if tag_name in ("input", "textarea") and not is_combobox:
                     existing_val = (el.input_value() or "").strip()
                     if existing_val:
                         continue
-                elif role_attr == "combobox":
+                elif tag_name == "select":
+                    cur_sel = el.evaluate("""el => {
+                        const opt = el.options[el.selectedIndex];
+                        const txt = opt ? (opt.text || '').trim().toLowerCase() : '';
+                        const val = (el.value || '').trim();
+                        const isPlaceholder = !val || !txt || /^(select|choose|--|please select|none|-+)$/i.test(txt) || txt.startsWith('select ') || txt.startsWith('choose ');
+                        return { isPlaceholder, txt };
+                    }""")
+                    if not cur_sel.get("isPlaceholder"):
+                        continue
+                elif is_combobox:
                     existing_txt = (el.inner_text() or "").strip().lower()
                     if not existing_txt:
                         try:
                             existing_txt = el.evaluate("""el => {
-                                const c = el.closest('.select__value-container, [class*="value-container"]');
-                                return c ? (c.innerText || '').trim() : '';
+                                const c = el.closest('.select__value-container, [class*="value-container"], .select__control');
+                                if (!c) return '';
+                                const singleVal = c.querySelector('.select__single-value, [class*="singleValue"], [class*="selected"]');
+                                return singleVal ? (singleVal.innerText || '').trim() : '';
                             }""").lower()
                         except Exception:
                             pass
-                    if existing_txt and existing_txt not in ("select", "choose", "--", "search", ""):
+                    is_placeholder_cb = (
+                        not existing_txt
+                        or existing_txt in ("select", "select...", "select an option", "choose", "choose...", "--", "search", "type to search")
+                        or existing_txt.startswith(("select ", "choose "))
+                    )
+                    if not is_placeholder_cb:
                         continue
 
+                # Accurate, scoped label extraction (never climbs across whole form; never rejects labels containing "select"!)
                 label_text = el.evaluate(
                     """el => {
-                        // 1. Native labels
+                        const isPlaceholderOnly = (txt) => {
+                            const t = (txt || '').trim().toLowerCase();
+                            return !t || t.length < 2 || ['select', 'select...', 'select an option', 'select one', 'choose', 'choose...', 'choose an option', '--', 'search', 'textbox', 'combobox', 'option', 'please select'].includes(t);
+                        };
+                        // 1. Native el.labels
                         if (el.labels && el.labels.length > 0) {
                             const t = Array.from(el.labels).map(l => l.innerText).join(' ').trim();
-                            if (t) return t;
+                            if (!isPlaceholderOnly(t)) return t;
                         }
-                        // 2. aria-labelledby
+                        // 2. aria-labelledby (supports space-separated multi-ID lists!)
                         const ariaLbl = el.getAttribute('aria-labelledby');
                         if (ariaLbl) {
-                            const target = document.getElementById(ariaLbl);
-                            if (target && target.innerText.trim()) return target.innerText.trim();
+                            const parts = ariaLbl.split(/\s+/).map(id => document.getElementById(id)?.innerText?.trim()).filter(Boolean);
+                            const joined = parts.join(' ').trim();
+                            if (!isPlaceholderOnly(joined)) return joined;
                         }
-                        // 3. aria-label (unless generic)
+                        // 3. aria-label (unless placeholder-only)
                         const aria = (el.getAttribute('aria-label') || '').trim();
-                        if (aria && !['select', 'search', 'textbox', 'combobox', 'option'].includes(aria.toLowerCase())) {
-                            return aria;
-                        }
+                        if (!isPlaceholderOnly(aria)) return aria;
                         // 4. label[for=id]
                         if (el.id) {
-                            const forLbl = document.querySelector(`label[for="${el.id}"]`);
-                            if (forLbl && forLbl.innerText.trim()) return forLbl.innerText.trim();
+                            try {
+                                const forLbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                                if (forLbl && !isPlaceholderOnly(forLbl.innerText)) return forLbl.innerText.trim();
+                            } catch (e) {}
                         }
-                        // 5. Container walk & previousElementSibling (critical for Rippling & React forms!)
-                        let cur = el;
-                        for (let k = 0; k < 12 && cur; k++) {
-                            const isFieldContainer = (
-                                cur.getAttribute('data-testid') === 'field' ||
-                                (cur.className && String(cur.className).includes('eun831x1')) ||
-                                (cur.parentElement && cur.parentElement.getAttribute('data-testid') === 'field')
-                            );
-                            if (isFieldContainer) {
-                                if (cur.previousElementSibling) {
-                                    const txt = (cur.previousElementSibling.innerText || '').trim();
-                                    if (txt && txt.length > 2) return txt;
-                                }
-                            }
-                            if (cur.previousElementSibling) {
-                                const prev = (cur.previousElementSibling.innerText || '').trim();
-                                if (prev && prev.length > 2 && !prev.toLowerCase().includes('select')) {
-                                    return prev;
-                                }
-                            }
-                            const headings = cur.querySelectorAll('label, h1, h2, h3, h4, h5, h6, legend, p[class*="label"], span[class*="label"], [data-testid*="label"], [class*="question"]');
-                            for (const h of headings) {
-                                const ht = (h.innerText || '').trim();
-                                if (ht && ht.length > 2 && ht !== el.innerText && !ht.toLowerCase().includes('select')) {
+                        // 5. Closest fieldset > legend
+                        const fs = el.closest('fieldset');
+                        if (fs) {
+                            const leg = fs.querySelector('legend');
+                            if (leg && !isPlaceholderOnly(leg.innerText)) return leg.innerText.trim();
+                        }
+                        // 6. Scoped field-container walk (STOP before crossing <form>/<section>/<main> or multi-field wrappers!)
+                        let cur = el.parentElement;
+                        for (let k = 0; k < 8 && cur && !['FORM', 'BODY', 'MAIN', 'SECTION'].includes(cur.tagName); k++) {
+                            // Stop if this wrapper contains more than 1 distinct top-level input/select/textarea/combobox
+                            const siblingControls = cur.querySelectorAll('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), textarea, select, [role="combobox"], [aria-haspopup="listbox"]');
+                            const distinctControls = new Set(Array.from(siblingControls).map(c => c.closest('.select__control') || c));
+                            if (distinctControls.size > 1) break;
+
+                            const candidates = cur.querySelectorAll('label, legend, [data-testid*="label"], [class*="label"], [class*="question"], h3, h4, h5, h6, p');
+                            for (const c of candidates) {
+                                if (c === el || el.contains(c)) continue;
+                                // Only take text that precedes the control or wraps it cleanly
+                                const ht = (c.innerText || '').trim();
+                                if (!isPlaceholderOnly(ht) && ht !== (el.innerText || '').trim() && ht.length <= 320) {
                                     return ht;
+                                }
+                            }
+                            // Check immediate preceding label-like sibling
+                            if (cur.previousElementSibling) {
+                                const prevTag = cur.previousElementSibling.tagName;
+                                if (['LABEL', 'SPAN', 'P', 'H3', 'H4', 'H5', 'DIV'].includes(prevTag) &&
+                                    !cur.previousElementSibling.querySelector('input, select, textarea, [role="combobox"]')) {
+                                    const prevTxt = (cur.previousElementSibling.innerText || '').trim();
+                                    if (!isPlaceholderOnly(prevTxt) && prevTxt.length <= 300) {
+                                        return prevTxt;
+                                    }
                                 }
                             }
                             cur = cur.parentElement;
                         }
-                        return el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('id') || '';
+                        return (el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('id') || '').trim();
                     }"""
                 )
                 label_clean = (label_text or "").replace("*", "").strip()
-                if not label_clean or len(label_clean) < 2 or label_clean.lower() in ("select", "choose", "first option"):
+                if "*" in (label_text or ""):
+                    is_req = True
+
+                if not label_clean or len(label_clean) < 2 or label_clean.lower() in ("select", "choose", "first option", "select..."):
                     raw_id = (el.get_attribute("id") or el.get_attribute("name") or "").replace("_", " ").replace("-", " ")
-                    if any(k in raw_id.lower() for k in ("race", "ethnicity", "hispanic", "veteran", "disability", "gender", "pronoun")):
+                    if any(k in raw_id.lower() for k in ("race", "ethnicity", "hispanic", "veteran", "disability", "gender", "pronoun", "country", "state", "city", "school", "degree", "major", "salary")):
                         label_clean = raw_id
 
-                # Sanitize EEO select labels on Lever / Greenhouse so option text in parent container doesn't pollute the label
+                # Sanitize EEO select labels on Lever / Greenhouse so option text never pollutes the label
                 raw_name = (el.get_attribute("name") or "").lower()
                 raw_id_attr = (el.get_attribute("id") or "").lower()
                 if "eeo[race]" in raw_name or "race" in raw_id_attr or "job_application_race" in raw_name:
@@ -899,10 +1274,46 @@ def _fill_form_sync(
                     continue
 
                 options_list: Optional[List[str]] = None
+                menu_locators: List[Any] = []
+                combobox_opened = False
+
                 if tag_name == "select":
                     options_list = el.evaluate(
                         "el => Array.from(el.options).map(o => o.text.trim()).filter(Boolean)"
                     )
+                elif is_combobox:
+                    # Open combobox FIRST so we can read its actual options and pass them to answer_single_question!
+                    try:
+                        el.scroll_into_view_if_needed(timeout=1500)
+                        el.click(force=True, timeout=1200)
+                        combobox_opened = True
+                        time.sleep(0.3)
+                    except Exception as click_err:
+                        logger.debug(f"[COMBOBOX OPEN ERR] {el_id}: {click_err}")
+
+                    aria_ctrl = el.get_attribute("aria-controls") or el.get_attribute("aria-owns") or ""
+                    if aria_ctrl:
+                        menu_locators.append(target.locator(f"#{aria_ctrl}"))
+                    if el_id:
+                        menu_locators.append(target.locator(f"#{el_id}-list"))
+                    menu_locators.append(target.locator("[role='listbox']:visible, .select__menu:visible, ul[data-testid='menuList']:visible").first)
+
+                    for m_loc in menu_locators:
+                        try:
+                            opts_found = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").all_inner_texts()
+                            cleaned_opts = [o.strip() for o in opts_found if o and o.strip()]
+                            if cleaned_opts:
+                                options_list = cleaned_opts
+                                break
+                        except Exception:
+                            pass
+
+                effective_ftype = (
+                    "combobox" if is_combobox else
+                    ("number" if inp_type == "number" else
+                     ("date" if inp_type == "date" else
+                      ("url" if inp_type == "url" else tag_name)))
+                )
 
                 qa = answer_single_question(
                     question_text=label_clean,
@@ -911,20 +1322,44 @@ def _fill_form_sync(
                     candidate_skills=candidate_skills,
                     app_kit=app_kit,
                     options=options_list,
-                    field_type="number" if inp_type == "number" else tag_name,
+                    field_type=effective_ftype,
                     required=is_req,
                 )
-                logger.debug(f"[LOOP QA] {el_id}: ans={qa.get('answer')}, conf={qa.get('confidence')}")
+                logger.debug(f"[LOOP QA] {el_id or label_clean[:30]}: ans={qa.get('answer')}, conf={qa.get('confidence')}")
                 discovered_qa.append(qa)
 
-                if qa["confidence"] == "manual_needed" and is_req:
-                    unanswered_required.append(label_clean)
+                # NEVER paste low-confidence guesses or generic essays into unrecognized fields!
+                ans_val = (qa.get("answer") or "").strip()
+                if qa["confidence"] == "manual_needed" or not ans_val:
+                    if combobox_opened:
+                        try:
+                            el.press("Escape")
+                            el.blur()
+                        except Exception:
+                            pass
+                    if is_req or qa["confidence"] == "manual_needed":
+                        if is_req:
+                            unanswered_required.append(label_clean)
+                        manual_review_fields.append(label_clean)
+                        _highlight_manual_field(el, label_clean)
+                    continue
 
-                ans_val = qa.get("answer") or ""
-                if not ans_val:
+                # Type-safe formatting guards before filling
+                if effective_ftype == "number":
+                    num_clean = re.sub(r"[^0-9.]", "", ans_val.split("-")[0])
+                    if not num_clean:
+                        if is_req:
+                            unanswered_required.append(label_clean)
+                        _highlight_manual_field(el, label_clean)
+                        continue
+                    ans_val = num_clean
+                elif effective_ftype == "date" and not re.match(r"^\d{4}-\d{2}-\d{2}$", ans_val):
                     if is_req:
                         unanswered_required.append(label_clean)
+                    _highlight_manual_field(el, label_clean)
                     continue
+                elif effective_ftype == "url" and not ans_val.lower().startswith(("http://", "https://")):
+                    ans_val = "https://" + ans_val
 
                 logger.debug(f"[LOOP APPLYING] {el_id}: role={role_attr}, ans={ans_val}")
                 if tag_name == "select":
@@ -952,104 +1387,103 @@ def _fill_form_sync(
                             if matched_val is not None:
                                 el.select_option(value=matched_val, timeout=1500)
                                 filled_count += 1
+                            elif is_req:
+                                unanswered_required.append(label_clean)
+                                _highlight_manual_field(el, label_clean)
                         except Exception as sel_err:
                             logger.debug(f"[SELECT FALLBACK ERR] {el_id}: {sel_err}")
-                elif role_attr == "combobox":
-                    # 1. Scroll combobox into view and click to open its menu
-                    try:
-                        el.scroll_into_view_if_needed(timeout=1500)
-                        el.click(force=True, timeout=1200)
-                        time.sleep(0.35)
-                    except Exception as click_err:
-                        logger.debug(f"[COMBOBOX OPEN ERR] {el_id}: {click_err}")
-
-                    # 2. STRICTLY scope option search to THIS combobox's menu container!
-                    # Put aria-controls FIRST as it references the exact opened listbox
+                elif is_combobox:
                     opt_loc = None
-                    aria_ctrl = el.get_attribute("aria-controls") or ""
-                    menu_locators = []
-                    if aria_ctrl:
-                        menu_locators.append(target.locator(f"#{aria_ctrl}"))
-                    if el_id:
-                        menu_locators.append(target.locator(f"#{el_id}-list"))
-                    if not menu_locators:
-                        menu_locators.append(target.locator("[role='listbox']:visible, ul[data-testid='menuList']:visible").first)
+                    ans_lower = str(ans_val).strip().lower()
 
-                    for m_loc in menu_locators:
-                        try:
-                            candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
-                            candidate.wait_for(state="visible", timeout=1200)
-                            opt_loc = candidate
-                            break
-                        except Exception:
-                            pass
+                    def _find_matching_option(loc_list: List[Any], search_val: str) -> Any:
+                        sv_low = search_val.strip().lower()
+                        for m_loc in loc_list:
+                            try:
+                                opt_els = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option")
+                                o_cnt = min(opt_els.count(), 40)
+                                exact_el = None
+                                partial_el = None
+                                for oi in range(o_cnt):
+                                    cand = opt_els.nth(oi)
+                                    if not cand.is_visible():
+                                        continue
+                                    otxt = (cand.inner_text() or "").strip().lower()
+                                    if not otxt:
+                                        continue
+                                    if otxt == sv_low:
+                                        exact_el = cand
+                                        break
+                                    if not partial_el and (sv_low in otxt or otxt in sv_low):
+                                        partial_el = cand
+                                if exact_el is not None:
+                                    return exact_el
+                                if partial_el is not None:
+                                    return partial_el
+                            except Exception:
+                                pass
+                        return None
 
-                    # 3. If no candidate found yet (e.g. async/filterable search input like candidate-location),
-                    # type sequential search term into the input to trigger option loading!
-                    if not opt_loc and tag_name == "input":
+                    opt_loc = _find_matching_option(menu_locators, str(ans_val))
+
+                    # Async/searchable combobox (e.g. School or Location): type search term to load options
+                    if opt_loc is None and tag_name == "input":
                         try:
-                            # Use first component (e.g. "Boston" from "Boston, Massachusetts") for search
                             search_term = str(ans_val).split(",")[0].strip()
                             if search_term:
                                 el.press_sequentially(search_term, delay=35)
-                                time.sleep(0.4)
-                                if not aria_ctrl:
-                                    aria_ctrl = el.get_attribute("aria-controls") or ""
-                                    if aria_ctrl:
-                                        menu_locators.insert(0, target.locator(f"#{aria_ctrl}"))
-                                for m_loc in menu_locators:
-                                    try:
-                                        candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=search_term).first
-                                        candidate.wait_for(state="visible", timeout=1500)
-                                        opt_loc = candidate
-                                        break
-                                    except Exception:
-                                        pass
+                                time.sleep(0.45)
+                                aria_ctrl_after = el.get_attribute("aria-controls") or el.get_attribute("aria-owns") or ""
+                                if aria_ctrl_after:
+                                    menu_locators.insert(0, target.locator(f"#{aria_ctrl_after}"))
+                                opt_loc = _find_matching_option(menu_locators, search_term)
                         except Exception as type_err:
                             logger.debug(f"[COMBOBOX TYPE ERR] {el_id}: {type_err}")
 
-                    # Fallback retry: click el again if menu was not open
-                    if not opt_loc:
+                    if opt_loc is not None:
                         try:
-                            el.scroll_into_view_if_needed(timeout=1000)
-                            el.click(force=True, timeout=1200)
-                            time.sleep(0.35)
-                            for m_loc in menu_locators:
-                                candidate = m_loc.locator("[role='option'], li, div[data-testid='menuListLabel'], .select__option").filter(has_text=str(ans_val)).first
-                                candidate.wait_for(state="visible", timeout=1200)
-                                opt_loc = candidate
-                                break
-                        except Exception:
-                            pass
-
-                    if opt_loc:
-                        try:
-                            parent_id = opt_loc.evaluate("el => el.parentElement.id || el.parentElement.tagName")
-                            logger.debug(f"[COMBOBOX CLICK ATTEMPT] {el_id}: target opt parent={parent_id}")
                             opt_loc.click(force=True, timeout=1500)
                             filled_count += 1
-                            time.sleep(0.3)
-                            logger.debug(f"[COMBOBOX FILL] {el_id}: selected {ans_val}, new val={el.inner_text()}")
+                            time.sleep(0.25)
                         except Exception as e:
                             logger.debug(f"[COMBOBOX FILL error] {el_id}: {e}")
-                    else:
-                        logger.debug(f"[COMBOBOX NO OPT_LOC FOUND] {el_id}: ans={ans_val}")
-                        if tag_name == "input":
-                            el.fill(str(ans_val), timeout=1000)
-                            time.sleep(0.2)
-                            target.locator(".select__option:visible, [role='option']:visible").filter(has_text=str(ans_val)).first.click(timeout=1000)
-                        else:
                             try:
                                 el.press("Escape")
+                                el.blur()
                             except Exception:
                                 pass
+                    else:
+                        logger.debug(f"[COMBOBOX NO OPT_LOC FOUND] {el_id}: ans={ans_val}")
+                        # Always close menu cleanly so an open dropdown NEVER blocks clicks below!
+                        try:
+                            if tag_name == "input":
+                                el.fill("", timeout=800)
+                            el.press("Escape")
+                            el.blur()
+                        except Exception:
+                            pass
+                        if is_req:
+                            unanswered_required.append(label_clean)
+                            manual_review_fields.append(label_clean)
+                            _highlight_manual_field(el, label_clean)
                 else:
                     el.fill(str(ans_val), timeout=1500)
                     filled_count += 1
             except Exception as item_err:
                 logger.debug(f"[LOOP ITEM ERROR] i={i}, id={el_id}: {item_err}")
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
     except Exception as e:
         logger.debug(f"Custom field discovery error: {e}")
+
+    # Close any lingering dropdowns / popovers / sticky focus so user clicks (CAPTCHAs & Submit) are never obstructed
+    try:
+        page.keyboard.press("Escape")
+        target.evaluate("() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }")
+    except Exception:
+        pass
 
     return {
         "target": target,
@@ -1059,7 +1493,9 @@ def _fill_form_sync(
         "has_captcha": has_captcha,
         "login_wall": login_wall,
         "is_closed_posting": is_closed_posting,
-        "unanswered_required": unanswered_required,
+        "unanswered_required": list(dict.fromkeys(unanswered_required)),
+        "manual_review_fields": list(dict.fromkeys(manual_review_fields)),
+        "bot_traps": detected_bot_traps,
         "discovered_qa": discovered_qa,
     }
 
@@ -1122,33 +1558,6 @@ def _attempt_submission_sync(
         )
         page = context.new_page()
         try:
-            page.add_init_script("""
-                (() => {
-                    try {
-                        const proto = Object.getPrototypeOf(navigator);
-                        delete proto.webdriver;
-                        delete navigator.webdriver;
-                    } catch (e) {}
-                    try {
-                        if (!window.chrome) {
-                            window.chrome = {};
-                        }
-                        if (!window.chrome.runtime) {
-                            window.chrome.runtime = {
-                                PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
-                                PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
-                                PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64', MIPS: 'mips', MIPS64: 'mips64' },
-                                RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
-                                OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
-                                OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }
-                            };
-                        }
-                    } catch (e) {}
-                })()
-            """)
-        except Exception:
-            pass
-        try:
             resp = page.goto(job_url, timeout=14000, wait_until="domcontentloaded")
             page.set_default_timeout(2500)
             if resp and resp.status >= 400:
@@ -1160,6 +1569,7 @@ def _attempt_submission_sync(
                     "reason": f"Need to Apply: Posting returned HTTP {resp.status} (Tailored Resume, Cover Letter & Q&A ready)",
                     "filled_count": 0,
                     "discovered_qa": [],
+                    "bot_traps": [],
                 }
 
             time.sleep(1.5)
@@ -1172,6 +1582,7 @@ def _attempt_submission_sync(
                 files=files,
             )
             target = fill_res["target"]
+            found_traps = fill_res.get("bot_traps") or []
 
             if fill_res["is_closed_posting"]:
                 browser.close()
@@ -1182,6 +1593,21 @@ def _attempt_submission_sync(
                     "reason": "Posting closed: External career page indicates this posting is closed, removed, or redirected",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
+                    "bot_traps": found_traps,
+                }
+
+            human_traps = [t for t in found_traps if t.get("type") == "human_check"]
+            if human_traps:
+                trap_action = human_traps[0].get("action_required") or "Employer attention-check instruction detected"
+                browser.close()
+                return {
+                    "submitted": False,
+                    "status_target": "TO_APPLY",
+                    "autopilot_status": "needs_manual_apply",
+                    "reason": f"⚠️ Bot Trap Detected: {trap_action}",
+                    "filled_count": fill_res["filled_count"],
+                    "discovered_qa": fill_res["discovered_qa"],
+                    "bot_traps": found_traps,
                 }
 
             if fill_res["login_wall"]:
@@ -1193,6 +1619,7 @@ def _attempt_submission_sync(
                     "reason": "Need to Apply: Portal requires candidate account login / password (documents & Q&A ready)",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
+                    "bot_traps": found_traps,
                 }
 
             if fill_res["has_captcha"]:
@@ -1204,6 +1631,7 @@ def _attempt_submission_sync(
                     "reason": "Need to Apply: CAPTCHA verification challenge requires manual completion (documents & Q&A ready)",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
+                    "bot_traps": found_traps,
                 }
 
             if require_full_qa_confidence and fill_res["unanswered_required"]:
@@ -1216,6 +1644,7 @@ def _attempt_submission_sync(
                     "reason": f"Need to Apply: Required field(s) need manual entry ({missing_str}) — Tailored Resume, Cover Letter & Q&A ready",
                     "filled_count": fill_res["filled_count"],
                     "discovered_qa": fill_res["discovered_qa"],
+                    "bot_traps": found_traps,
                 }
 
             if fill_res["filled_count"] < 2:
