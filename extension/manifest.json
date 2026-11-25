@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobPulse Native Auto-Fill & Speed-Run",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Auto-fills ATS job applications (including Shadow DOM forms like SmartRecruiters & Workday), attaches tailored PDFs, and surfaces Bot Trap alerts inside regular Chrome with zero CAPTCHA interference.",
   "permissions": ["activeTab", "scripting", "storage", "clipboardWrite"],
   "host_permissions": [

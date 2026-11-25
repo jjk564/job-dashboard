@@ -1028,6 +1028,119 @@ async def test_ziprecruiter_sponsorship_explanatory_text_and_react_controlled_in
     }
     assert out["continueDisabled"] is False
 
+    # 3. Verify Greenhouse-style React-Select comboboxes (open via Toggle flyout, read real options like "White",
+    #    and cascading conditional Race dropdown appearing after Hispanic/Latino = No)
+    def _run_greenhouse_react_select():
+        gh_html = """<!doctype html><html><body>
+        <form id="gh-form">
+          <div class="field">
+            <label for="4028769003">How do you identify? (race/ethnicity)</label>
+            <div class="select__control" data-field="race_custom">
+              <div class="select__placeholder">Select...</div>
+              <input id="4028769003" type="text" role="combobox" class="select__input" />
+              <button type="button" aria-label="Toggle flyout" class="icon-button">v</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="hispanic_ethnicity">Are you Hispanic/Latino?</label>
+            <div class="select__control" data-field="hisp">
+              <div class="select__placeholder">Select...</div>
+              <input id="hispanic_ethnicity" type="text" role="combobox" class="select__input" />
+              <button type="button" aria-label="Toggle flyout" class="icon-button">v</button>
+            </div>
+          </div>
+          <div id="conditional-race-slot"></div>
+        </form>
+        <script>
+          const OPTIONS = {
+            race_custom: ['Black/African American', 'East Asian', 'White', 'I prefer not to say'],
+            hisp: ['Yes', 'No', 'Decline To Self Identify'],
+            race: ['Asian', 'Black or African American', 'White', 'Decline To Self Identify'],
+          };
+          function wireSelect(ctrl) {
+            const key = ctrl.getAttribute('data-field');
+            const btn = ctrl.querySelector('button[aria-label="Toggle flyout"]');
+            btn.addEventListener('mousedown', () => {
+              document.querySelectorAll('.select__menu').forEach(m => m.remove());
+              const menu = document.createElement('div');
+              menu.className = 'select__menu';
+              menu.setAttribute('role', 'listbox');
+              for (const opt of OPTIONS[key]) {
+                const div = document.createElement('div');
+                div.className = 'select__option';
+                div.setAttribute('role', 'option');
+                div.innerText = opt;
+                div.addEventListener('click', () => {
+                  let sv = ctrl.querySelector('.select__single-value');
+                  if (!sv) {
+                    sv = document.createElement('div');
+                    sv.className = 'select__single-value';
+                    ctrl.prepend(sv);
+                  }
+                  sv.innerText = opt;
+                  ctrl.querySelector('.select__placeholder')?.remove();
+                  menu.remove();
+                  if (key === 'hisp' && opt === 'No' && !document.getElementById('race')) {
+                    const slot = document.getElementById('conditional-race-slot');
+                    slot.innerHTML = `
+                      <div class="field">
+                        <label for="race">Please identify your race</label>
+                        <div class="select__control" data-field="race">
+                          <div class="select__placeholder">Select...</div>
+                          <input id="race" type="text" role="combobox" class="select__input" />
+                          <button type="button" aria-label="Toggle flyout" class="icon-button">v</button>
+                        </div>
+                      </div>
+                    `;
+                    wireSelect(slot.querySelector('.select__control'));
+                  }
+                });
+                menu.appendChild(div);
+              }
+              ctrl.parentElement.appendChild(menu);
+            });
+          }
+          document.querySelectorAll('.select__control').forEach(wireSelect);
+        </script></body></html>"""
+
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(gh_html)
+
+            def handle_msg(msg):
+                if msg["type"] == "GET_ACTIVE_AUTOFILL":
+                    return {"ok": True, "data": {"matched": True, "job": job, "queue": {"is_speed_run": False, "index": 0, "total": 1}}}
+                if msg["type"] == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            f["label"], job, profile, ["Python"],
+                            options=f.get("options"), field_type=f.get("field_type", "text"), required=f.get("required", False),
+                        )
+                        out.append({"id": f["id"], "label": f["label"], "answer": qa["answer"], "confidence": qa["confidence"], "category": qa["category"]})
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = { runtime: { lastError: null, sendMessage: (m, cb) => window.__pySendMsg(m).then(cb), onMessage: { addListener: () => {} } } };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(3200)
+            res = page.evaluate("""() => ({
+                raceCustom: document.querySelector('[data-field="race_custom"] .select__single-value')?.innerText || '',
+                hisp: document.querySelector('[data-field="hisp"] .select__single-value')?.innerText || '',
+                race: document.querySelector('[data-field="race"] .select__single-value')?.innerText || '',
+            })""")
+            b.close()
+            return res
+
+    gh_out = await asyncio.to_thread(_run_greenhouse_react_select)
+    assert gh_out == {"raceCustom": "White", "hisp": "No", "race": "White"}
+    assert answer_single_question("How did you first learn about Affirm as an employer?", job, profile, ["Python"], options=["Job Board", "Other"])["answer"] == "Job Board"
+    assert answer_single_question("Have you previously been employed at Affirm for any length of time?", job, profile, ["Python"], options=["Yes", "No"])["answer"] == "No"
+
 
 
 

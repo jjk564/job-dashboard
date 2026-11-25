@@ -456,8 +456,9 @@ def answer_single_question(
         }
 
     if any(k in q for k in (
-        "how did you hear", "how did you learn about", "how did you find", "where did you see",
-        "where did you hear", "where did you find", "referred by", "application source", "job source",
+        "how did you hear", "how did you learn about", "how did you first learn", "first learn about",
+        "how did you find", "where did you see", "where did you hear", "where did you find",
+        "where did you learn", "referred by", "application source", "job source",
     )) or (q in ("source", "referral source", "lead source") and "open source" not in q):
         src = job_data.get("source") or "Company Career Board"
         preferred = ["job board", "company website", "career page", "careers page", "linkedin", "indeed", "online job board", "other"]
@@ -993,10 +994,12 @@ def answer_single_question(
             "confidence": "high",
         }
     if any(k in q for k in (
-        "previously worked", "ever worked for", "ever been employed", "previously employed",
+        "previously worked", "ever worked for", "ever worked at", "ever been employed",
+        "previously employed", "previously been employed", "been employed at", "been employed by",
         "former employee", "applied before", "previously applied", "non-compete", "noncompete",
-        "restrictive covenant", "government official", "related to anyone", "family member working",
-        "relative working", "conflict of interest", "affiliated with", "worked for us",
+        "non-disclosure", "non-solicit", "restrictive covenant", "government official",
+        "related to anyone", "family member working", "relative working", "conflict of interest",
+        "affiliated with", "worked for us",
     )):
         opt = _match_option(options, ["no", "never", "none", "n/a", "neither"])
         return {

@@ -554,6 +554,14 @@
     );
   }
 
+  function isReactSelectInput(el) {
+    if (!el || el.tagName !== 'INPUT') return false;
+    return Boolean(
+      el.classList?.contains('select__input') ||
+      closestDeep(el, '.select__control, [class*="react-select"]')
+    );
+  }
+
   function collectVisibleFormControls() {
     const raw = querySelectorAllDeep(
       'input:not([type="file"]):not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select'
@@ -561,6 +569,9 @@
     return raw.filter((el) => {
       if (!isVisible(el) || el.disabled || el.readOnly) return false;
       if (el.closest && el.closest('#jobpulse-native-hud')) return false;
+      // Route React-Select <input class="select__input" role="combobox"> to Step 5 combobox handler
+      // so we open the menu & read real options BEFORE matching instead of typing unverified strings!
+      if (isReactSelectInput(el)) return false;
       if (!isFormSearchInput(el)) return false;
       return true;
     });
@@ -723,7 +734,7 @@
       const ctrls = collectVisibleFormControls();
       const files = querySelectorAllDeep('input[type="file"]');
       const radios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, [role="radio"]').filter(isVisible);
-      const combos = querySelectorAllDeep('div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], spl-select, spl-dropdown').filter(isVisible);
+      const combos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown').filter(isControlOrHostVisible);
       if (ctrls.length > 0 || files.length > 0 || radios.length > 0 || combos.length > 0) {
         // Brief settle wait so sibling async fields finish mounting
         await sleep(450);
@@ -1046,54 +1057,64 @@
       }
     }
 
-    // 5. Handle React-Select & Shadow DOM Custom Comboboxes (spl-select, ukg-select, [role="combobox"])
+    // 5. Handle React-Select & Shadow DOM Custom Comboboxes (spl-select, ukg-select, input.select__input, [role="combobox"])
     //    CRITICAL: Exclude header/nav/language menus and pre-check labels BEFORE clicking open
     //    so we never flash modal/dropdown backdrop overlays ("page filter") on unrecognized controls!
-    const comboControls = querySelectorAllDeep(
-      'div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], div[aria-haspopup="listbox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, ukg-combobox'
-    ).filter((el) => (
-      isControlOrHostVisible(el) &&
-      !el.disabled &&
-      !(el.closest && el.closest('#jobpulse-native-hud')) &&
-      !isNonFormChromeControl(el)
-    ));
-    totalControls += comboControls.length;
+    //    Runs up to 2 passes so conditional dropdowns revealed after an earlier selection
+    //    (e.g. Greenhouse "Please identify your race" appearing after "Are you Hispanic/Latino?" = "No")
+    //    are filled immediately in the same pass!
+    const COMBO_SELECTOR = 'input.select__input, .select__control input[role="combobox"], div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], div[aria-haspopup="listbox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, ukg-combobox';
     const seenContainers = new Set();
-    const pendingCombos = [];
+    let comboControls = [];
 
-    for (const el of comboControls.slice(0, 35)) {
-      if (el.__jpComboTried) continue;
-      const container = closestDeep(el, '.select__control, [data-testid="field"], .application-question, [class*="select-container"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, ukg-combobox') || el;
-      if (seenContainers.has(container)) continue;
-      seenContainers.add(container);
+    for (let comboPass = 0; comboPass < 2; comboPass++) {
+      const currentCombos = querySelectorAllDeep(COMBO_SELECTOR).filter((el) => (
+        isControlOrHostVisible(el) &&
+        !el.disabled &&
+        el.getAttribute('aria-disabled') !== 'true' &&
+        !(el.closest && el.closest('#jobpulse-native-hud')) &&
+        !isNonFormChromeControl(el)
+      ));
+      comboControls = currentCombos;
+      if (comboPass === 0) totalControls += currentCombos.length;
 
-      const existingTxt = (
-        container.querySelector?.('.select__single-value, [class*="singleValue"]')?.innerText ||
-        el.value ||
-        el.innerText || ''
-      ).toString().trim().toLowerCase();
-      if (existingTxt && !isPlaceholderOnly(existingTxt)) continue;
+      const pendingCombos = [];
+      for (const el of currentCombos.slice(0, 45)) {
+        if (el.__jpComboTried) continue;
+        const container = closestDeep(el, '.select__control, [data-testid="field"], .application-question, [class*="select-container"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, ukg-combobox') || el;
+        if (seenContainers.has(container)) continue;
+        seenContainers.add(container);
 
-      const rawLabel = extractLabel(el);
-      let label = cleanCandidateLabel(rawLabel);
-      const sig = `${el.id || ''} ${el.name || ''} ${el.getAttribute('data-test') || ''} ${el.getAttribute('data-automation') || ''}`.toLowerCase();
-      if (sig.includes('race')) label = 'Race';
-      else if (sig.includes('gender')) label = 'Gender';
-      else if (sig.includes('veteran')) label = 'Veteran status';
-      else if (sig.includes('disability')) label = 'Disability status';
-      if (!label || label.length < 2 || isNonFormChromeControl(el, label)) continue;
+        const singleValEl = container.querySelector?.('.select__single-value, [class*="singleValue"], .select__multi-value');
+        const existingTxt = (
+          singleValEl?.innerText ||
+          (el.tagName === 'INPUT' ? '' : (el.value || el.innerText || ''))
+        ).toString().trim().toLowerCase();
+        if (existingTxt && !isPlaceholderOnly(existingTxt)) continue;
 
-      pendingCombos.push({
-        id: `pre_cb_${pendingCombos.length}`,
-        el,
-        label,
-        required: Boolean(rawLabel.includes('*') || el.getAttribute('aria-required') === 'true' || el.hasAttribute?.('required')),
-      });
-    }
+        const rawLabel = extractLabel(el);
+        let label = cleanCandidateLabel(rawLabel);
+        const sig = `${el.id || ''} ${el.name || ''} ${el.getAttribute('data-test') || ''} ${el.getAttribute('data-automation') || ''}`.toLowerCase();
+        if (sig.includes('hispanic')) label = 'Are you Hispanic/Latino?';
+        else if (sig === 'race' || sig.includes('eeo[race]')) label = 'Race';
+        else if (sig === 'gender' || sig.includes('eeo[gender]')) label = 'Gender';
+        else if (sig.includes('veteran')) label = 'Veteran status';
+        else if (sig.includes('disability')) label = 'Disability status';
+        if (!label || label.length < 2 || isNonFormChromeControl(el, label)) continue;
 
-    // Batch pre-check candidate comboboxes BEFORE clicking any open (zero flicker for unknown/optional widgets!)
-    const preAnsMap = new Map();
-    if (pendingCombos.length > 0) {
+        pendingCombos.push({
+          id: `pre_cb_${comboPass}_${pendingCombos.length}`,
+          el,
+          container,
+          label,
+          required: Boolean(rawLabel.includes('*') || el.getAttribute('aria-required') === 'true' || el.hasAttribute?.('required')),
+        });
+      }
+
+      if (pendingCombos.length === 0) break;
+
+      // Batch pre-check candidate comboboxes BEFORE clicking any open (zero flicker for unknown/optional widgets!)
+      const preAnsMap = new Map();
       const preResp = await sendBg({
         type: 'ANSWER_FIELDS',
         payload: {
@@ -1111,73 +1132,105 @@
       if (preResp.ok && Array.isArray(preResp.data?.answers)) {
         for (const a of preResp.data.answers) preAnsMap.set(a.id, a);
       }
-    }
 
-    for (const item of pendingCombos) {
-      const { el, label } = item;
-      el.__jpComboTried = true;
-      const pre = preAnsMap.get(item.id);
-      if (pre) {
-        const preText = (pre.answer || '').trim();
-        if (!preText && pre.confidence === 'high') {
-          // Optional blank dropdown (e.g. Prefix/Suffix): skip silently without opening!
-          continue;
+      let filledThisPass = 0;
+      for (const item of pendingCombos) {
+        const { el, container, label } = item;
+        el.__jpComboTried = true;
+        const pre = preAnsMap.get(item.id);
+        if (pre) {
+          const preText = (pre.answer || '').trim();
+          if (!preText && pre.confidence === 'high') {
+            // Optional blank dropdown (e.g. Prefix/Suffix): skip silently without opening!
+            continue;
+          }
+          if (pre.confidence === 'manual_needed' && !preText) {
+            // Unknown question: flag amber without opening/flashing dropdown overlay!
+            manualFields.push(label);
+            highlightManual(el, label);
+            continue;
+          }
         }
-        if (pre.confidence === 'manual_needed' && !preText) {
-          // Unknown question: flag amber without opening/flashing dropdown overlay!
-          manualFields.push(label);
-          highlightManual(el, label);
-          continue;
-        }
-      }
-      try {
-        const clickTrigger = el.shadowRoot?.querySelector('button, [role="combobox"], [role="button"], input') || el;
-        clickTrigger.click();
-        await sleep(260);
+        try {
+          const isRS = isReactSelectInput(el);
+          const rsToggle = isRS
+            ? (container.querySelector('button[aria-label="Toggle flyout"], .select__dropdown-indicator, .select__indicator, button') || container)
+            : null;
+          const clickTrigger = isRS
+            ? rsToggle
+            : (el.shadowRoot?.querySelector('button, [role="combobox"], [role="button"], input') || el);
 
-        const root = el.getRootNode ? el.getRootNode() : document;
-        const ctrlId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
-        const menuEl = (ctrlId && ((root.getElementById && root.getElementById(ctrlId)) || document.getElementById(ctrlId)))
-          || querySelectorAllDeep('[role="listbox"], .select__menu, ul[data-testid="menuList"], spl-dropdown-list, ukg-list, [class*="k-list-container"]').find(isVisible);
-        const optEls = menuEl
-          ? querySelectorAllDeep('[role="option"], li, div[data-testid="menuListLabel"], .select__option, spl-dropdown-item, ukg-list-item', menuEl).filter(isVisible)
-          : querySelectorAllDeep('[role="option"], .select__option, spl-dropdown-item, ukg-list-item').filter(isVisible);
-        const optTexts = optEls.map((o) => cleanCandidateLabel(o.innerText || o.textContent || '')).filter(Boolean);
+          if (isRS) {
+            try { el.focus(); } catch (_) {}
+            clickTrigger.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }));
+            clickTrigger.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true, cancelable: true }));
+            clickTrigger.click();
+          } else {
+            clickTrigger.click();
+          }
+          await sleep(260);
 
-        const oneResp = await sendBg({
-          type: 'ANSWER_FIELDS',
-          payload: {
-            job_id: job?.id || null,
-            url: window.location.href,
-            fields: [{ id: 'cb', label, options: optTexts.length ? optTexts : null, field_type: 'combobox', required: item.required }],
-          },
-        });
-        const ansItem = oneResp.ok ? oneResp.data?.answers?.[0] : null;
-        const ans = (ansItem?.answer || '').trim();
-        if (!ans || ansItem?.confidence === 'manual_needed') {
-          clickTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
-          clickTrigger.blur?.();
-          manualFields.push(label);
-          highlightManual(el, label);
-          continue;
-        }
-        const ansLow = ans.toLowerCase();
-        const matchOpt = optEls.find((o) => cleanCandidateLabel(o.innerText || o.textContent || '').toLowerCase() === ansLow)
-          || optEls.find((o) => {
-            const t = cleanCandidateLabel(o.innerText || o.textContent || '').toLowerCase();
-            return t && (t.includes(ansLow) || ansLow.includes(t));
+          const root = el.getRootNode ? el.getRootNode() : document;
+          const ctrlId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+          let menuEl = (ctrlId && ((root.getElementById && root.getElementById(ctrlId)) || document.getElementById(ctrlId)))
+            || (isRS && (container.parentElement?.querySelector('.select__menu, [role="listbox"]') || document.querySelector('.select__menu')))
+            || querySelectorAllDeep('[role="listbox"], .select__menu, ul[data-testid="menuList"], spl-dropdown-list, ukg-list, [class*="k-list-container"]').find((m) => isVisible(m) && !m.classList?.contains('iti__country-list'));
+
+          // Fallback for React-Select if mousedown didn't open menu: press ArrowDown on the input
+          if (!menuEl && isRS) {
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true, composed: true }));
+            await sleep(220);
+            menuEl = document.querySelector('.select__menu') || querySelectorAllDeep('[role="listbox"]').find((m) => isVisible(m) && !m.classList?.contains('iti__country-list'));
+          }
+
+          const optEls = menuEl
+            ? querySelectorAllDeep('.select__option, [role="option"], li, div[data-testid="menuListLabel"], spl-dropdown-item, ukg-list-item', menuEl).filter((o) => isVisible(o) && !o.classList?.contains('iti__country'))
+            : querySelectorAllDeep('.select__option, [role="option"], spl-dropdown-item, ukg-list-item').filter((o) => isVisible(o) && !o.classList?.contains('iti__country'));
+          const optTexts = optEls.map((o) => cleanCandidateLabel(o.innerText || o.textContent || '')).filter(Boolean);
+
+          const oneResp = await sendBg({
+            type: 'ANSWER_FIELDS',
+            payload: {
+              job_id: job?.id || null,
+              url: window.location.href,
+              fields: [{ id: 'cb', label, options: optTexts.length ? optTexts : null, field_type: 'combobox', required: item.required }],
+            },
           });
-        if (matchOpt) {
-          matchOpt.click();
-          filledCount++;
-          await sleep(160);
-        } else {
-          clickTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
-          clickTrigger.blur?.();
-          manualFields.push(label);
-          highlightManual(el, label);
-        }
-      } catch (_) {}
+          const ansItem = oneResp.ok ? oneResp.data?.answers?.[0] : null;
+          const ans = (ansItem?.answer || '').trim();
+          if (!ans || ansItem?.confidence === 'manual_needed') {
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
+            clickTrigger.blur?.();
+            el.blur?.();
+            manualFields.push(label);
+            highlightManual(el, label);
+            continue;
+          }
+          const ansLow = ans.toLowerCase();
+          const matchOpt = optEls.find((o) => cleanCandidateLabel(o.innerText || o.textContent || '').toLowerCase() === ansLow)
+            || optEls.find((o) => {
+              const t = cleanCandidateLabel(o.innerText || o.textContent || '').toLowerCase();
+              return t && (t.includes(ansLow) || ansLow.includes(t));
+            });
+          if (matchOpt) {
+            matchOpt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            matchOpt.click();
+            filledCount++;
+            filledThisPass++;
+            await sleep(220);
+          } else {
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
+            clickTrigger.blur?.();
+            el.blur?.();
+            manualFields.push(label);
+            highlightManual(el, label);
+          }
+        } catch (_) {}
+      }
+
+      if (filledThisPass === 0) break;
+      // Give conditional fields (e.g. Greenhouse Race after Hispanic=No) a moment to mount before Pass 2
+      await sleep(300);
     }
 
     // 6. Cover letter / Hiring team message textarea fallback if still empty
@@ -1501,7 +1554,7 @@
     const newRadios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, ukg-radio-group, [role="radio"]').filter(
       (el) => isControlOrHostVisible(el) && !el.__jpSeen && !(el.closest && el.closest('#jobpulse-native-hud'))
     );
-    const newCombos = querySelectorAllDeep('spl-select, spl-dropdown, ukg-select, ukg-dropdown, div[role="combobox"], button[role="combobox"]').filter(
+    const newCombos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, div[role="combobox"], button[role="combobox"]').filter(
       (el) => isControlOrHostVisible(el) && !el.__jpSeen && !(el.closest && el.closest('#jobpulse-native-hud')) && !isNonFormChromeControl(el)
     );
     return (newInputs.length + newRadios.length + newCombos.length) > 0;
