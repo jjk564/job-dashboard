@@ -607,18 +607,14 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # Questions asking if the candidate is legally authorized/eligible to work (including "...without sponsorship")
+    # 4a. Positive "...without sponsorship" phrasing (e.g. "Are you eligible to work without required sponsorship?")
     is_work_without_sponsorship_q = (
         "without" in q
         and any(k in q for k in ("sponsorship", "visa"))
         and any(k in q for k in ("work", "employ", "eligible", "authorized", "able"))
     )
-    if is_work_without_sponsorship_q or any(k in q for k in (
-        "authorized to work", "legally authorized", "work authorization",
-        "right to work", "eligible to work", "legally eligible",
-        "legally permitted to work", "permitted to work",
-    )):
-        desired_auth = "No" if (is_work_without_sponsorship_q and needs_sponsorship) else "Yes"
+    if is_work_without_sponsorship_q:
+        desired_auth = "No" if needs_sponsorship else "Yes"
         opt = _match_option(
             options,
             ["yes", "authorized", "u.s. citizen", "us citizen", "citizen", "permanent resident"]
@@ -632,13 +628,37 @@ def answer_single_question(
             "confidence": "high",
         }
 
-    # Questions asking if candidate requires sponsorship
-    if any(k in q for k in ("require sponsorship", "need sponsorship", "require visa", "sponsorship for employment", "sponsorship now or in the future", "will you now or in the future require", "require any visa")):
+    # 4b. Questions asking if candidate requires sponsorship — MUST run BEFORE generic "work authorization" check,
+    #     because sponsorship helper text frequently mentions "current work authorization" / OPT / CPT!
+    has_negated_sponsorship = any(
+        neg in q for neg in ("not require sponsorship", "no sponsorship", "don't require sponsorship", "do not require sponsorship")
+    )
+    if not has_negated_sponsorship and any(k in q for k in (
+        "require sponsorship", "need sponsorship", "require visa", "require immigration",
+        "sponsorship for employment", "sponsorship now or in the future",
+        "sponsorship in the future", "in the future require sponsorship",
+        "will you in the future require", "will you now or in the future require",
+        "require any visa",
+    )):
         desired = "Yes" if needs_sponsorship else "No"
         opt = _match_option(options, [desired, "no", "do not require", "not require"] if not needs_sponsorship else ["yes", "require"])
         return {
             "question": q_raw,
             "answer": opt or desired,
+            "category": "work_authorization",
+            "confidence": "high",
+        }
+
+    # 4c. Questions asking if the candidate is legally authorized/eligible to work
+    if any(k in q for k in (
+        "authorized to work", "legally authorized", "work authorization",
+        "right to work", "eligible to work", "legally eligible",
+        "legally permitted to work", "permitted to work",
+    )):
+        opt = _match_option(options, ["yes", "authorized", "u.s. citizen", "us citizen", "citizen", "permanent resident"])
+        return {
+            "question": q_raw,
+            "answer": opt or ("Yes" if options is not None or "?" in q_raw or ftype in ("select", "combobox", "radio") else work_auth),
             "category": "work_authorization",
             "confidence": "high",
         }

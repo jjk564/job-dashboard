@@ -366,30 +366,69 @@
     return '';
   }
 
-  function setNativeValue(el, val) {
+  function isAutocompleteInput(el) {
+    return Boolean(
+      el.getAttribute('role') === 'combobox' ||
+      el.getAttribute('aria-autocomplete') ||
+      el.getAttribute('aria-controls') ||
+      el.type === 'search' ||
+      closestDeep(el, 'spl-autocomplete, [class*="autocomplete"], [data-test*="location"], [data-test*="city"]')
+    );
+  }
+
+  function setNativeValue(el, val, skipBlur = false) {
     const strVal = String(val ?? '');
-    const win = el.ownerDocument?.defaultView || window;
+    const doc = el.ownerDocument || document;
+    const win = doc.defaultView || window;
     const tag = el.tagName.toLowerCase();
     const proto = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
-    try { el.focus(); } catch (_) {}
-
-    if (setter) {
-      setter.call(el, strVal);
-    } else {
-      el.value = strVal;
-    }
-
-    // CRITICAL: composed: true allows events to cross Shadow DOM boundaries to Angular / Stencil / Lit hosts!
     try {
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: strVal }));
-    } catch (_) {
-      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      el.focus();
+      el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+    } catch (_) {}
+
+    // 1. Prefer Blink's native editing pipeline (execCommand('insertText')) so controlled React 16/17/18/19,
+    //    React Hook Form, Formik, and ZipRecruiter inputs update their Main-World _valueTracker state even when
+    //    executed from Chrome's Isolated World content script!
+    let usedNativeExec = false;
+    const inpType = (el.getAttribute('type') || 'text').toLowerCase();
+    const supportsExecInsert = tag === 'textarea' || ['text', 'email', 'tel', 'url', 'search', 'password'].includes(inpType);
+    if (supportsExecInsert) {
+      try {
+        if (typeof el.select === 'function') el.select();
+        usedNativeExec = Boolean(doc.execCommand && doc.execCommand('insertText', false, strVal));
+      } catch (_) {
+        usedNativeExec = false;
+      }
     }
+
+    // 2. Fallback to native prototype value setter + synthetic beforeinput/input when execCommand didn't apply
+    //    (e.g. date/number inputs, or Shadow DOM inputs that reject execCommand).
+    if (!usedNativeExec || el.value !== strVal) {
+      if (setter) {
+        setter.call(el, strVal);
+      } else {
+        el.value = strVal;
+      }
+      // CRITICAL: composed: true allows events to cross Shadow DOM boundaries to Angular / Stencil / Lit hosts!
+      try {
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: strVal }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: strVal }));
+      } catch (_) {
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      }
+    }
+
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, composed: true, key: 'Unidentified' }));
-    el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
+    if (!skipBlur) {
+      // React's onBlur listens to focusout (which bubbles), plus real el.blur() triggers native validation
+      el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+      el.dispatchEvent(new FocusEvent('blur', { bubbles: false, composed: true }));
+      try { el.blur(); } catch (_) {}
+    }
 
     // Sync Shadow Host wrapper property if custom component (e.g. <spl-input>, <spl-textarea>) didn't reflect it
     const host = getShadowHost(el);
@@ -414,30 +453,25 @@
   }
 
   async function trySelectAutocompleteSuggestion(el, answerText) {
-    const isAutocomplete = Boolean(
-      el.getAttribute('role') === 'combobox' ||
-      el.getAttribute('aria-autocomplete') ||
-      el.getAttribute('aria-controls') ||
-      el.type === 'search' ||
-      closestDeep(el, 'spl-autocomplete, [class*="autocomplete"], [data-test*="location"], [data-test*="city"]')
-    );
-    if (!isAutocomplete) return;
+    if (!isAutocompleteInput(el)) return;
 
     await sleep(450);
     const optEls = querySelectorAllDeep(
       '[role="option"], [role="listbox"] li, .pac-item, spl-dropdown-item, [class*="suggestion-item"], [class*="autocomplete-item"], ul[class*="dropdown"] li'
     ).filter(isVisible);
-    if (!optEls.length) return;
-
-    const ansLow = (answerText || '').toLowerCase().trim();
-    const firstToken = ansLow.split(',')[0].trim();
-    const best = optEls.find((o) => (o.innerText || o.textContent || '').trim().toLowerCase() === ansLow)
-      || optEls.find((o) => firstToken && (o.innerText || o.textContent || '').trim().toLowerCase().includes(firstToken))
-      || optEls[0];
-    if (best) {
-      best.click();
-      await sleep(180);
+    if (optEls.length) {
+      const ansLow = (answerText || '').toLowerCase().trim();
+      const firstToken = ansLow.split(',')[0].trim();
+      const best = optEls.find((o) => (o.innerText || o.textContent || '').trim().toLowerCase() === ansLow)
+        || optEls.find((o) => firstToken && (o.innerText || o.textContent || '').trim().toLowerCase().includes(firstToken))
+        || optEls[0];
+      if (best) {
+        best.click();
+        await sleep(180);
+      }
     }
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+    try { el.blur(); } catch (_) {}
   }
 
   async function attachFiles(job) {
@@ -931,8 +965,9 @@
           if (meta.inpType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(valToSet)) {
             manualFields.push(meta.label); highlightManual(meta.el, meta.label); continue;
           }
-          setNativeValue(meta.el, valToSet);
-          if (meta.kind === 'input') {
+          const isAuto = meta.kind === 'input' && isAutocompleteInput(meta.el);
+          setNativeValue(meta.el, valToSet, isAuto);
+          if (isAuto) {
             await trySelectAutocompleteSuggestion(meta.el, valToSet);
           }
           filledCount++;
@@ -946,9 +981,21 @@
             });
           if (match) {
             if (meta.el.value !== match.value) {
-              meta.el.value = match.value;
+              const selWin = meta.el.ownerDocument?.defaultView || window;
+              const selSetter = Object.getOwnPropertyDescriptor(selWin.HTMLSelectElement.prototype, 'value')?.set;
+              try {
+                meta.el.focus();
+                meta.el.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+              } catch (_) {}
+              if (selSetter) {
+                selSetter.call(meta.el, match.value);
+              } else {
+                meta.el.value = match.value;
+              }
               meta.el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
               meta.el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+              meta.el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true }));
+              try { meta.el.blur(); } catch (_) {}
               // If changing Country triggered a cascading State/Address AJAX overlay (e.g. UKG/UltiPro), let it settle
               if (meta.label.toLowerCase().includes('country')) {
                 await waitForOverlayToClear(2200);

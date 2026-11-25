@@ -890,6 +890,145 @@ async def test_ukg_ultipro_profile_fields_and_no_combobox_overlay_flicker():
     assert res["unknownOutlined"] is True
 
 
+@pytest.mark.asyncio
+async def test_ziprecruiter_sponsorship_explanatory_text_and_react_controlled_inputs():
+    import asyncio
+    from pathlib import Path
+    from playwright.sync_api import sync_playwright
+    from app.services.question_answerer import answer_single_question
+
+    profile = {
+        "full_name": "Justin Kilpatrick",
+        "email": "jkilpatrick50@gmail.com",
+        "phone": "781-879-4389",
+        "location": "Boston, Massachusetts (Remote)",
+        "work_authorization": "Authorized to work in the US without sponsorship",
+        "title": "Software Engineer",
+    }
+    job = {"title": "Software Engineer", "company": "Acme"}
+
+    # 1. Exact sponsorship paragraph from ZipRecruiter/Greenhouse screenshot mentioning "current work authorization" MUST answer "No"!
+    spon_q = (
+        '"Will you in the future require sponsorship" means that even if you currently have U.S. employment '
+        'authorization (for example, through F-1 Optional Practical Training (OPT) or Curricular Practical '
+        'Training (CPT)), you will require sponsorship in the future to continue working when your current '
+        'work authorization ends. *'
+    )
+    res_spon = answer_single_question(spon_q, job, profile, ["Python"], options=["Select...", "Yes", "No"], field_type="select")
+    assert res_spon["answer"] == "No"
+
+    # Positive work-auth & without-sponsorship questions MUST still answer "Yes"
+    assert answer_single_question(
+        "Are you legally authorized to work in the United States without the need for visa sponsorship?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="select",
+    )["answer"] == "Yes"
+    assert answer_single_question(
+        "Do you have unrestricted work authorization in the U.S. (i.e., you will not require sponsorship)?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="select",
+    )["answer"] == "Yes"
+    assert answer_single_question(
+        "Are you currently legally authorized to work in the United States?",
+        job, profile, ["Python"], options=["Yes", "No"], field_type="select",
+    )["answer"] == "Yes"
+
+    # 2. Real Chromium test: controlled inputs/selects with value-tracker + focusout/blur validation unlock Continue button
+    content_js = (Path(__file__).resolve().parents[2] / "extension" / "content.js").read_text(encoding="utf-8")
+
+    def _run_controlled_form():
+        html = f"""<!doctype html><html><body>
+        <form id="zr-form">
+          <label for="fn">First Name *</label><input id="fn" type="text" required />
+          <label for="ln">Last Name *</label><input id="ln" type="text" required />
+          <label for="em">Email *</label><input id="em" type="email" required />
+          <label for="ph">Phone *</label><input id="ph" type="tel" required />
+          <label for="sp">{spon_q}</label>
+          <select id="sp" required>
+            <option value="">Select...</option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+          <button id="continue-btn" type="submit" disabled>Continue</button>
+        </form>
+        <script>
+          // Simulate React 18 controlled value tracker + Formik onChange/onBlur validation
+          window.__formState = {{ fn: '', ln: '', em: '', ph: '', sp: '' }};
+          window.__blurred = {{}};
+          function bindControlled(id, isSelect) {{
+            const el = document.getElementById(id);
+            let tracked = el.value;
+            const proto = isSelect ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            Object.defineProperty(el, 'value', {{
+              get() {{ return desc.get.call(this); }},
+              set(v) {{ tracked = String(v); desc.set.call(this, v); }},
+              configurable: true,
+            }});
+            const sync = () => {{
+              const cur = desc.get.call(el);
+              if (cur !== tracked) {{
+                tracked = cur;
+                window.__formState[id] = cur;
+              }}
+              checkValid();
+            }};
+            el.addEventListener('input', sync);
+            el.addEventListener('change', sync);
+            el.addEventListener('focusout', () => {{ window.__blurred[id] = true; checkValid(); }});
+          }}
+          function checkValid() {{
+            const s = window.__formState;
+            const b = window.__blurred;
+            const ok = Boolean(s.fn && s.ln && s.em && s.ph && s.sp && b.fn && b.em && b.sp);
+            document.getElementById('continue-btn').disabled = !ok;
+          }}
+          ['fn', 'ln', 'em', 'ph'].forEach(id => bindControlled(id, false));
+          bindControlled('sp', true);
+        </script></body></html>"""
+
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(html)
+
+            def handle_msg(msg):
+                if msg["type"] == "GET_ACTIVE_AUTOFILL":
+                    return {"ok": True, "data": {"matched": True, "job": job, "queue": {"is_speed_run": False, "index": 0, "total": 1}}}
+                if msg["type"] == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            f["label"], job, profile, ["Python"],
+                            options=f.get("options"), field_type=f.get("field_type", "text"), required=f.get("required", False),
+                        )
+                        out.append({"id": f["id"], "label": f["label"], "answer": qa["answer"], "confidence": qa["confidence"], "category": qa["category"]})
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = { runtime: { lastError: null, sendMessage: (m, cb) => window.__pySendMsg(m).then(cb), onMessage: { addListener: () => {} } } };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(1600)
+            res = page.evaluate("""() => ({
+                state: window.__formState,
+                blurred: window.__blurred,
+                continueDisabled: document.getElementById('continue-btn').disabled,
+            })""")
+            b.close()
+            return res
+
+    out = await asyncio.to_thread(_run_controlled_form)
+    assert out["state"] == {
+        "fn": "Justin",
+        "ln": "Kilpatrick",
+        "em": "jkilpatrick50@gmail.com",
+        "ph": "781-879-4389",
+        "sp": "No",
+    }
+    assert out["continueDisabled"] is False
+
+
 
 
 
