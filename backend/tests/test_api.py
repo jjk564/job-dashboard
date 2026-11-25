@@ -1141,6 +1141,78 @@ async def test_ziprecruiter_sponsorship_explanatory_text_and_react_controlled_in
     assert answer_single_question("How did you first learn about Affirm as an employer?", job, profile, ["Python"], options=["Job Board", "Other"])["answer"] == "Job Board"
     assert answer_single_question("Have you previously been employed at Affirm for any length of time?", job, profile, ["Python"], options=["Yes", "No"])["answer"] == "No"
 
+    # 4. Verify ZipRecruiter-style top job search bar (Job title + Location + Search Jobs) is NEVER typed into,
+    #    and when an Apply modal [role="dialog"] is open, autofill scopes strictly inside the modal!
+    def _run_ziprecruiter_searchbar_guard():
+        zr_html = """<!doctype html><html><body>
+        <div class="top-bar">
+          <form action="/jobs-search" class="job-search-form">
+            <input id="zr-q" type="text" name="search" placeholder="Job title, keywords, or company" />
+            <input id="zr-loc" type="text" name="location" placeholder="City, state, or zip" />
+            <button type="submit">Search Jobs</button>
+          </form>
+        </div>
+        <main>
+          <h1>Software Engineer at Acme</h1>
+          <button id="open-apply" type="button">Quick Apply</button>
+        </main>
+        <div id="apply-modal" role="dialog" aria-modal="true" style="display:none; width:500px; height:400px;">
+          <form id="modal-form">
+            <label for="m-first">First Name *</label><input id="m-first" type="text" />
+            <label for="m-loc">City *</label><input id="m-loc" type="text" />
+            <button type="submit">Continue</button>
+          </form>
+        </div>
+        <script>
+          document.getElementById('open-apply').addEventListener('click', () => {
+            document.getElementById('apply-modal').style.display = 'block';
+          });
+        </script></body></html>"""
+
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            page = b.new_page()
+            page.set_content(zr_html)
+
+            def handle_msg(msg):
+                if msg["type"] == "GET_ACTIVE_AUTOFILL":
+                    return {"ok": True, "data": {"matched": True, "job": job, "queue": {"is_speed_run": False, "index": 0, "total": 1}}}
+                if msg["type"] == "ANSWER_FIELDS":
+                    out = []
+                    for f in msg["payload"]["fields"]:
+                        qa = answer_single_question(
+                            f["label"], job, profile, ["Python"],
+                            options=f.get("options"), field_type=f.get("field_type", "text"), required=f.get("required", False),
+                        )
+                        out.append({"id": f["id"], "label": f["label"], "answer": qa["answer"], "confidence": qa["confidence"], "category": qa["category"]})
+                    return {"ok": True, "data": {"answers": out, "bot_traps": []}}
+                return {"ok": False}
+
+            page.expose_function("__pySendMsg", handle_msg)
+            page.evaluate("""() => {
+                window.chrome = { runtime: { lastError: null, sendMessage: (m, cb) => window.__pySendMsg(m).then(cb), onMessage: { addListener: () => {} } } };
+            }""")
+            page.add_script_tag(content=content_js)
+            page.wait_for_timeout(1200)
+            before_modal = page.evaluate("""() => ({
+                q: document.getElementById('zr-q').value,
+                loc: document.getElementById('zr-loc').value,
+            })""")
+            page.click("#open-apply")
+            page.wait_for_timeout(2400)
+            after_modal = page.evaluate("""() => ({
+                q: document.getElementById('zr-q').value,
+                loc: document.getElementById('zr-loc').value,
+                mFirst: document.getElementById('m-first').value,
+                mLoc: document.getElementById('m-loc').value,
+            })""")
+            b.close()
+            return before_modal, after_modal
+
+    before_modal, after_modal = await asyncio.to_thread(_run_ziprecruiter_searchbar_guard)
+    assert before_modal == {"q": "", "loc": ""}
+    assert after_modal == {"q": "", "loc": "", "mFirst": "Justin", "mLoc": "Boston"}
+
 
 
 

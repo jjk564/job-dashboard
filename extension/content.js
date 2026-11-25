@@ -474,12 +474,12 @@
     try { el.blur(); } catch (_) {}
   }
 
-  async function attachFiles(job) {
+  async function attachFiles(job, scopeRoot = document) {
     let uploaded = 0;
     if (!job || (!job.resume_pdf_url && !job.cover_letter_pdf_url)) return 0;
 
     // Pierces Shadow DOM (e.g. SmartRecruiters <spl-dropzone> / <spl-file-picker>)
-    const fileInputs = querySelectorAllDeep('input[type="file"]').filter((inp) => {
+    const fileInputs = querySelectorAllDeep('input[type="file"]', scopeRoot).filter((inp) => {
       const accept = (inp.getAttribute('accept') || '').toLowerCase();
       if (accept && !accept.includes('pdf') && !accept.includes('doc') && (accept.includes('image') || accept.includes('.png') || accept.includes('.jpg'))) {
         return false;
@@ -542,16 +542,79 @@
     return uploaded;
   }
 
-  function isFormSearchInput(el) {
-    if ((el.getAttribute('type') || '').toLowerCase() !== 'search') return true;
-    // Skip global nav / header site-search bars, but KEEP location/autocomplete search fields inside forms!
-    if (closestDeep(el, 'header, nav, [role="navigation"]')) return false;
-    const lbl = extractLabel(el).toLowerCase();
-    if (!lbl || lbl === 'search' || lbl.includes('search jobs') || lbl.includes('keyword')) return false;
-    return Boolean(
-      closestDeep(el, 'form, spl-autocomplete, spl-input, spl-select, [role="combobox"], [data-test*="field"], [class*="application"], [class*="form"]')
-      || el.getAttribute('role') === 'combobox'
-    );
+  function getActiveFormScope() {
+    // If an application modal/dialog (e.g. ZipRecruiter Quick Apply, LinkedIn Easy Apply, Indeed Apply)
+    // is open on top of a job board page, scope autofill strictly to that modal so background search bars
+    // and page chrome are never touched!
+    const dialogs = querySelectorAllDeep('[role="dialog"], [aria-modal="true"], dialog[open]').filter((d) => {
+      if (!isVisible(d)) return false;
+      if (d.id === 'jobpulse-native-hud' || (d.closest && d.closest('#jobpulse-native-hud'))) return false;
+      const rect = d.getBoundingClientRect();
+      if (rect.width < 220 || rect.height < 140) return false;
+      const txt = (d.innerText || '').slice(0, 300).toLowerCase();
+      if (/\bcookie\s+(?:settings|preferences|policy|consent)\b/.test(txt)) return false;
+      const hasControls = querySelectorAllDeep(
+        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, select, [role="combobox"], [role="radio"]',
+        d
+      ).some((c) => isControlOrHostVisible(c) || c.type === 'file');
+      return hasControls;
+    });
+    return dialogs.length > 0 ? dialogs[dialogs.length - 1] : document;
+  }
+
+  function isSiteSearchBarInput(el) {
+    if (!el) return true;
+    // 1. Never type into header/nav/footer/search-landmark chrome (regardless of type="text" vs type="search"!)
+    if (closestDeep(el, 'header, nav, footer, [role="search"], [role="navigation"], [role="banner"], [role="menubar"], [role="toolbar"]')) {
+      return true;
+    }
+
+    // 2. Check enclosing <form> for site/job-search semantics (e.g. ZipRecruiter / Indeed top job search bar)
+    const form = closestDeep(el, 'form');
+    if (form) {
+      const formSig = `${form.id || ''} ${form.className || ''} ${form.getAttribute('action') || ''} ${form.getAttribute('role') || ''} ${form.getAttribute('data-testid') || ''}`.toLowerCase();
+      if (
+        form.getAttribute('role') === 'search' ||
+        /\/(?:jobs?-?search|search-?jobs?|search|find-?jobs?)\b/.test(formSig) ||
+        /\b(?:search[-_]?bar|job[-_]?search|site[-_]?search|header[-_]?search|nav[-_]?search|search[-_]?form)\b/.test(formSig)
+      ) {
+        return true;
+      }
+      // If form has a "Search Jobs" / "Find Jobs" / "Search" submit button and NO Apply/Submit/Continue button, it's a search bar!
+      const formBtns = Array.from(form.querySelectorAll('button, input[type="submit"]')).filter(isVisible);
+      const hasSearchBtn = formBtns.some((b) => {
+        const bt = cleanCandidateLabel(b.innerText || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+        return /^(search|search jobs|find jobs|search openings|filter jobs)$/.test(bt);
+      });
+      const hasApplyBtn = formBtns.some((b) => {
+        const bt = cleanCandidateLabel(b.innerText || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+        return /\b(apply|submit|continue|next|save|finish|send)\b/.test(bt);
+      });
+      if (hasSearchBtn && !hasApplyBtn) return true;
+    }
+
+    // 3. Check container class/id for search-bar wrappers (even without <form>)
+    if (closestDeep(el, '[class*="search-bar" i], [class*="search_bar" i], [class*="searchbar" i], [class*="job-search" i], [class*="job_search" i], [data-testid*="search-bar" i]')) {
+      return true;
+    }
+
+    // 4. Check input's own name / placeholder / aria-label / label for job-search bar hints
+    const nm = (el.getAttribute('name') || '').trim().toLowerCase();
+    if (['search', 'q', 'query', 'keywords', 'keyword', 'search_term', 'search_query', 'job_search'].includes(nm)) {
+      return true;
+    }
+    const hintSig = `${el.getAttribute('placeholder') || ''} ${el.getAttribute('aria-label') || ''} ${el.id || ''} ${el.getAttribute('data-testid') || ''}`.toLowerCase();
+    if (/\b(job title,\s*keywords|keywords,\s*or\s*company|search\s+jobs|find\s+jobs|search\s+by\s+title|search\s+keyword|search\s+positions|city,\s*state,\s*or\s*(?:zip|remote))\b/.test(hintSig)) {
+      return true;
+    }
+
+    // 5. Extra check for type="search": allow only genuine form field autocompletes (like SmartRecruiters city/location)
+    if ((el.getAttribute('type') || '').toLowerCase() === 'search') {
+      const lbl = extractLabel(el).toLowerCase();
+      if (!lbl || lbl === 'search' || lbl.includes('search jobs') || lbl.includes('keyword')) return true;
+    }
+
+    return false;
   }
 
   function isReactSelectInput(el) {
@@ -562,9 +625,10 @@
     );
   }
 
-  function collectVisibleFormControls() {
+  function collectVisibleFormControls(scopeRoot = document) {
     const raw = querySelectorAllDeep(
-      'input:not([type="file"]):not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select'
+      'input:not([type="file"]):not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select',
+      scopeRoot
     );
     return raw.filter((el) => {
       if (!isVisible(el) || el.disabled || el.readOnly) return false;
@@ -572,7 +636,7 @@
       // Route React-Select <input class="select__input" role="combobox"> to Step 5 combobox handler
       // so we open the menu & read real options BEFORE matching instead of typing unverified strings!
       if (isReactSelectInput(el)) return false;
-      if (!isFormSearchInput(el)) return false;
+      if (isSiteSearchBarInput(el)) return false;
       return true;
     });
   }
@@ -588,7 +652,7 @@
       const txt = cleanCandidateLabel(el.innerText || el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
       if (!txt || txt.length > 40) continue;
       const href = (el.getAttribute('href') || '').toLowerCase();
-      if (/^(i'?m interested|apply now|apply for this (job|role|position)|apply|start application)$/.test(txt)) {
+      if (/^(i'?m interested|1-?click apply|quick apply|easy apply|apply now|apply for this (job|role|position)|apply|start application)$/.test(txt)) {
         // Prefer direct ATS apply over smartr/linkedin login redirects
         if (href.includes('smartr.me') || href.includes('linkedin.com')) {
           if (!fallback) fallback = el;
@@ -731,10 +795,11 @@
   async function waitForFormControls(maxMs = 5000) {
     const started = Date.now();
     while (Date.now() - started < maxMs) {
-      const ctrls = collectVisibleFormControls();
-      const files = querySelectorAllDeep('input[type="file"]');
-      const radios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, [role="radio"]').filter(isVisible);
-      const combos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown').filter(isControlOrHostVisible);
+      const scope = getActiveFormScope();
+      const ctrls = collectVisibleFormControls(scope);
+      const files = querySelectorAllDeep('input[type="file"]', scope);
+      const radios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, [role="radio"]', scope).filter(isControlOrHostVisible);
+      const combos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], div[role="combobox"], button[role="combobox"], button[aria-haspopup="listbox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown', scope).filter((el) => isControlOrHostVisible(el) && !isNonFormChromeControl(el) && !isSiteSearchBarInput(el));
       if (ctrls.length > 0 || files.length > 0 || radios.length > 0 || combos.length > 0) {
         // Brief settle wait so sibling async fields finish mounting
         await sleep(450);
@@ -750,18 +815,19 @@
     const fieldsMeta = [];
     const elById = new Map();
     let seq = 0;
+    const scopeRoot = getActiveFormScope();
 
     // 0. Attach tailored Resume & Cover Letter PDFs FIRST!
     //    On ATS platforms with auto-resume parsers (UKG/UltiPro, Workday, SmartRecruiters), uploading the PDF
     //    triggers a brief white loading scrim & auto-fills/re-renders fields; doing this FIRST prevents the
     //    ATS parser from flashing over or overwriting the fields we fill next!
-    const filesAttached = await attachFiles(job);
+    const filesAttached = await attachFiles(job, scopeRoot);
     if (filesAttached > 0) {
       await waitForOverlayToClear(3500);
     }
 
-    // 1. Collect native & Shadow DOM inputs, textareas, selects
-    const controls = collectVisibleFormControls();
+    // 1. Collect native & Shadow DOM inputs, textareas, selects (scoped to active apply modal if open!)
+    const controls = collectVisibleFormControls(scopeRoot);
     let totalControls = controls.length;
 
     for (const el of controls) {
@@ -806,7 +872,7 @@
 
     // 2. Collect native & Shadow DOM radio groups
     const radioGroups = new Map();
-    const allRadios = querySelectorAllDeep('input[type="radio"]').filter((r) => !(r.closest && r.closest('#jobpulse-native-hud')));
+    const allRadios = querySelectorAllDeep('input[type="radio"]', scopeRoot).filter((r) => !(r.closest && r.closest('#jobpulse-native-hud')));
     totalControls += allRadios.length;
     allRadios.forEach((r) => {
       const grpContainer = closestDeep(r, 'fieldset, [role="radiogroup"], spl-radio-group, [class*="radio-group"], [data-test*="radio"]');
@@ -847,7 +913,7 @@
     }
 
     // 2.5 Collect custom button-toggle & Shadow DOM radio groups (SmartRecruiters spl-radio-group, Ashby, Greenhouse, Workable)
-    const btnRadioGroups = querySelectorAllDeep('[role="radiogroup"], spl-radio-group').filter((g) => {
+    const btnRadioGroups = querySelectorAllDeep('[role="radiogroup"], spl-radio-group', scopeRoot).filter((g) => {
       if (!isControlOrHostVisible(g)) return false;
       if (g.closest && g.closest('#jobpulse-native-hud')) return false;
       if (querySelectorAllDeep('input[type="radio"]', g).length > 0) return false;
@@ -898,7 +964,7 @@
     }
 
     // 3. Collect native & Shadow DOM checkboxes (skip CAPTCHAs & already-checked)
-    const checkboxes = querySelectorAllDeep('input[type="checkbox"]').filter((cb) => {
+    const checkboxes = querySelectorAllDeep('input[type="checkbox"]', scopeRoot).filter((cb) => {
       if (cb.checked || cb.disabled) return false;
       const sig = `${cb.id} ${cb.name} ${cb.className}`.toLowerCase();
       if (sig.includes('captcha') || sig.includes('turnstile') || closestDeep(cb, '.g-recaptcha, .h-captcha, .cf-turnstile')) return false;
@@ -1068,12 +1134,13 @@
     let comboControls = [];
 
     for (let comboPass = 0; comboPass < 2; comboPass++) {
-      const currentCombos = querySelectorAllDeep(COMBO_SELECTOR).filter((el) => (
+      const currentCombos = querySelectorAllDeep(COMBO_SELECTOR, scopeRoot).filter((el) => (
         isControlOrHostVisible(el) &&
         !el.disabled &&
         el.getAttribute('aria-disabled') !== 'true' &&
         !(el.closest && el.closest('#jobpulse-native-hud')) &&
-        !isNonFormChromeControl(el)
+        !isNonFormChromeControl(el) &&
+        !isSiteSearchBarInput(el)
       ));
       comboControls = currentCombos;
       if (comboPass === 0) totalControls += currentCombos.length;
@@ -1550,12 +1617,13 @@
 
   function hasNewlyMountedFormStep() {
     if (isPageBusyWithOverlay()) return false;
-    const newInputs = collectVisibleFormControls().filter((el) => !el.__jpSeen && !(el.value || '').trim());
-    const newRadios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, ukg-radio-group, [role="radio"]').filter(
+    const scope = getActiveFormScope();
+    const newInputs = collectVisibleFormControls(scope).filter((el) => !el.__jpSeen && !(el.value || '').trim());
+    const newRadios = querySelectorAllDeep('input[type="radio"], [role="radiogroup"], spl-radio-group, ukg-radio-group, [role="radio"]', scope).filter(
       (el) => isControlOrHostVisible(el) && !el.__jpSeen && !(el.closest && el.closest('#jobpulse-native-hud'))
     );
-    const newCombos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, div[role="combobox"], button[role="combobox"]').filter(
-      (el) => isControlOrHostVisible(el) && !el.__jpSeen && !(el.closest && el.closest('#jobpulse-native-hud')) && !isNonFormChromeControl(el)
+    const newCombos = querySelectorAllDeep('input.select__input, .select__control input[role="combobox"], spl-select, spl-dropdown, ukg-select, ukg-dropdown, div[role="combobox"], button[role="combobox"]', scope).filter(
+      (el) => isControlOrHostVisible(el) && !el.__jpSeen && !(el.closest && el.closest('#jobpulse-native-hud')) && !isNonFormChromeControl(el) && !isSiteSearchBarInput(el)
     );
     return (newInputs.length + newRadios.length + newCombos.length) > 0;
   }
